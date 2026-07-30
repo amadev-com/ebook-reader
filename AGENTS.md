@@ -81,3 +81,66 @@ Potential future work:
 - Voice sample management: CLI command to list/add/preview voices on the server.
 - Streaming synthesis: chunk long chapters to avoid timeouts and show progress.
 - Fine-tuned models: mount a custom XTTS v2 model via `tts-server/models/`.
+- **Character→voice mapping (postponed)**: see "Future: Character→voice mapping" below.
+
+## Future: Character→voice mapping (postponed)
+
+**Goal**: assign a distinct TTS voice to each character in the book, so dialogue
+is spoken in the character's voice and narration in the default/narrator voice.
+
+**Why postponed**: the translated text (`translation/chapter_NNN.ru.txt`) has no
+speaker markers. Switching voices per character during synthesis requires
+dialogue detection (heuristic quote/«...» detection + name-mention matching),
+which adds significant complexity. The feature was scoped but not implemented.
+
+**Design notes** (from discussion, ready to pick up):
+
+1. **Config section** — optional `tts.character_voices` map in `config.yaml`:
+   ```yaml
+   tts:
+     engine: xtts-http
+     speaker: eng/adult/male/MorganFreeman.wav  # default/narrator voice
+     character_voices:
+       "Джон": eng/adult/male/AaronDreschner.wav
+       "Мэри": eng/adult/female/AlexandraHisakawa.wav
+   ```
+   If a character isn't in the map, the default `speaker` is used.
+
+2. **New command: `bookai assign-voices`** — uses AI to match characters to
+   voices. Reads `ai/characters.json` (already has name, role, description
+   from `bookai analyze`), fetches the voice list from the TTS server
+   (`GET /voices`), and asks the helper model to pick the best voice for
+   each character. Writes the mapping to `ai/voice_mapping.json` (or directly
+   into `config.yaml`).
+
+3. **Voice characteristics** — the 119 bundled voices are organized as
+   `language/age/gender/name.wav` (e.g. `eng/adult/male/MorganFreeman.wav`).
+   Three options for describing voices to the AI:
+   - **Derive from path + name**: pass `eng/adult/male/MorganFreeman` →
+     "English, adult, male, Morgan Freeman" + let AI infer timbre from the
+     celebrity name. No extra files needed.
+   - **Pre-generated `voices.json`**: a metadata file in `tts-server/` with
+     a short description per voice (generated once via AI or manually).
+     Reusable across all books.
+   - **AI describes on-the-fly**: during `assign-voices`, ask the model to
+     describe each voice based on its name, then match.
+
+4. **Dialogue detection for TTS** — three approaches considered:
+   - **Full multi-voice**: detect which character speaks each quoted line
+     (match by name mention in the surrounding paragraph). Most complex.
+   - **Narrator vs dialogue split**: narrator gets default voice, any quoted
+     text gets a character voice (matched by name in paragraph). Simpler.
+   - **Postponed entirely**: just build the config + `assign-voices` command
+     now, use one voice for all text. Add dialogue detection later.
+
+5. **XTTS v2 server changes** — the current `/tts` endpoint takes one
+   `speaker_wav`. For multi-voice synthesis, either:
+   - Client-side: split text into segments, call `/tts` per segment with the
+     appropriate voice, concatenate WAVs. Simple but slower (more requests).
+   - Server-side: add a `/tts-multi` endpoint that accepts segments with
+     per-segment voice assignments. Faster, single inference pass.
+
+**Prerequisites before implementing**:
+- `ai/characters.json` must exist (run `bookai analyze` first).
+- TTS server must be running (for `GET /voices`).
+- Decide on dialogue detection approach (full vs narrator-split vs none).
