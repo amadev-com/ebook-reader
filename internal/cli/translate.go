@@ -74,11 +74,19 @@ func runTranslate(ctx context.Context, proj *project.Project, force bool, chapte
 	}
 	writeAll := ids == nil
 
-	// Load the glossary (may be empty if `bookai analyze` wasn't run).
+	// Load the glossary + characters and merge them for translation context.
+	// Characters are stored separately (characters.json) but need to be in the
+	// glossary block for consistent name translation.
 	glossary, err := translation.LoadGlossary(proj.AIDir())
 	if err != nil {
 		return err
 	}
+	characters, err := translation.LoadCharacters(proj.AIDir())
+	if err != nil {
+		slog.Warn("failed to load characters, continuing with glossary only", "error", err)
+		characters = &translation.Characters{}
+	}
+	glossary = glossary.WithCharacters(characters)
 	if len(glossary.Terms) == 0 {
 		slog.Warn("no glossary found — translations may be inconsistent. Run `bookai analyze` first.")
 	}

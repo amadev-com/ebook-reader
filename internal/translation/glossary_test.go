@@ -178,6 +178,52 @@ func TestGlossarySort(t *testing.T) {
 	}
 }
 
+func TestGlossaryWithCharacters(t *testing.T) {
+	t.Parallel()
+	g := &Glossary{
+		Terms: []GlossaryTerm{
+			{Source: "The Order", Target: "Орден", Type: "organization"},
+			{Source: "Dalki", Target: "Далки", Type: "term"},
+			// Stale character entry in glossary — should be dropped in favor of characters.json.
+			{Source: "Quinn", Target: "OLD", Type: "character"},
+		},
+	}
+	chars := &Characters{
+		Characters: []Character{
+			{Name: "Quinn", Translation: "Куинн"},
+			{Name: "Mona", Translation: "Мона"},
+		},
+	}
+	merged := g.WithCharacters(chars)
+
+	// Original glossary is not modified.
+	if len(g.Terms) != 3 {
+		t.Errorf("original glossary modified: %d terms, want 3", len(g.Terms))
+	}
+
+	// Merged has 4 terms: 2 characters + 2 non-character terms.
+	if len(merged.Terms) != 4 {
+		t.Fatalf("merged terms = %d, want 4", len(merged.Terms))
+	}
+
+	// Character from characters.json wins over stale glossary entry.
+	term, ok := merged.Find("Quinn")
+	if !ok {
+		t.Fatal("Find(Quinn) not found in merged")
+	}
+	if term.Target != "Куинн" {
+		t.Errorf("Quinn target = %q, want Куинн (from characters.json, not glossary)", term.Target)
+	}
+
+	// Non-character terms preserved.
+	if _, ok := merged.Find("The Order"); !ok {
+		t.Error("The Order missing from merged")
+	}
+	if _, ok := merged.Find("Dalki"); !ok {
+		t.Error("Dalki missing from merged")
+	}
+}
+
 // Ensure filepath is used (for potential path joins in future tests).
 var _ = filepath.Join
 

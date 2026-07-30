@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -39,8 +38,9 @@ func newPronounceCmd() *cobra.Command {
 	return cmd
 }
 
-// runPronounce loads the glossary and characters, builds a list of Russian
-// terms, asks the model for IPA phonemes, and writes ai/pronunciation.json.
+// runPronounce loads the glossary and characters (stored separately to avoid
+// duplication), merges them at runtime, asks the model for IPA phonemes, and
+// writes ai/pronunciation.json.
 func runPronounce(ctx context.Context, proj *project.Project, force bool) error {
 	pronPath := proj.AIDir() + "/pronunciation.json"
 	if project.Exists(pronPath) && !force {
@@ -48,17 +48,14 @@ func runPronounce(ctx context.Context, proj *project.Project, force bool) error 
 		return nil
 	}
 
-	// Load glossary.
+	// Load glossary (terms only — no characters, they're stored separately).
 	glossary, err := translation.LoadGlossary(proj.AIDir())
 	if err != nil {
 		return fmt.Errorf("load glossary: %w (run `bookai analyze` first)", err)
 	}
-	if len(glossary.Terms) == 0 {
-		return fmt.Errorf("glossary is empty — run `bookai analyze` first")
-	}
 	slog.Info("loaded glossary", "terms", len(glossary.Terms))
 
-	// Load characters (optional — may be empty).
+	// Load characters (separate file, no duplication with glossary).
 	characters, err := translation.LoadCharacters(proj.AIDir())
 	if err != nil {
 		slog.Warn("failed to load characters, continuing with glossary only", "error", err)
@@ -66,41 +63,25 @@ func runPronounce(ctx context.Context, proj *project.Project, force bool) error 
 	}
 	slog.Info("loaded characters", "count", len(characters.Characters))
 
-	// Build the list of Russian terms to pronounce. Characters are included
-	// as type "character"; glossary terms use their stored type.
-	var inputs []translation.PronunciationInput
-	seen := make(map[string]bool) // dedupe by Russian text (case-insensitive)
-	for _, c := range characters.Characters {
-		if c.Translation == "" {
-			continue
-		}
-		key := strings.ToLower(c.Translation)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		inputs = append(inputs, translation.PronunciationInput{
-			Russian: c.Translation,
-			Source:  c.Name,
-			Type:    "character",
-		})
+	// Merge characters into glossary at runtime.
+	merged := glossary.WithCharacters(characters)
+	if len(merged.Terms) == 0 {
+		return fmt.Errorf("glossary and characters are empty — run `bookai analyze` first")
 	}
-	for _, t := range glossary.Terms {
+
+	// Build the list of Russian terms to pronounce.
+	var inputs []translation.PronunciationInput
+	for _, t := range merged.Terms {
 		if t.Target == "" {
 			continue
 		}
-		key := strings.ToLower(t.Target)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
 		inputs = append(inputs, translation.PronunciationInput{
 			Russian: t.Target,
 			Source:  t.Source,
 			Type:    t.Type,
 		})
 	}
-	slog.Info("terms to pronounce", "count", len(inputs), "deduped_from", len(glossary.Terms)+len(characters.Characters))
+	slog.Info("terms to pronounce", "count", len(inputs))
 
 	// Create the OpenAI client.
 	client, err := translation.NewClient(proj.Cfg.OpenAI)

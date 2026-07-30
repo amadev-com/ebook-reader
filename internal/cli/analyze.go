@@ -155,18 +155,11 @@ func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter 
 		accumulated = result
 	}
 
-	// Build and save the glossary.
-	glossary := &translation.Glossary{}
-	for _, c := range accumulated.Characters {
-		glossary.Terms = append(glossary.Terms, translation.GlossaryTerm{
-			Source: c.Name,
-			Target: c.Translation,
-			Type:   "character",
-		})
-	}
-	glossary.Terms = append(glossary.Terms, accumulated.Terms...)
+	// Build and save the glossary (terms only — characters are stored
+	// separately in characters.json to avoid duplication).
+	glossary := &translation.Glossary{Terms: accumulated.Terms}
 	slog.Info("extracted glossary", "terms", len(glossary.Terms),
-		"characters", len(accumulated.Characters), "other_terms", len(accumulated.Terms))
+		"characters", len(accumulated.Characters))
 
 	if err := glossary.Save(proj.AIDir()); err != nil {
 		return err

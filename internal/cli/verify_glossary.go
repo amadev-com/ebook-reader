@@ -39,9 +39,9 @@ func newVerifyGlossaryCmd() *cobra.Command {
 
 // GlossaryViolation is one inconsistency found by verify-glossary.
 type GlossaryViolation struct {
-	ChapterID    int    `json:"chapter_id"`
-	SourceTerm   string `json:"source_term"`
-	ExpectedTarget string `json:"expected_target"`
+	ChapterID          int    `json:"chapter_id"`
+	SourceTerm         string `json:"source_term"`
+	ExpectedTarget     string `json:"expected_target"`
 	FoundInTranslation string `json:"found_in_translation,omitempty"`
 }
 
@@ -50,10 +50,16 @@ func runVerifyGlossary(_ context.Context, proj *project.Project) error {
 	if err != nil {
 		return err
 	}
+	characters, err := translation.LoadCharacters(proj.AIDir())
+	if err != nil {
+		slog.Warn("failed to load characters", "error", err)
+		characters = &translation.Characters{}
+	}
+	glossary = glossary.WithCharacters(characters)
 	if len(glossary.Terms) == 0 {
 		return fmt.Errorf("no glossary found — run `bookai analyze` first")
 	}
-	slog.Info("loaded glossary", "terms", len(glossary.Terms))
+	slog.Info("loaded glossary", "terms", len(glossary.Terms), "characters", len(characters.Characters))
 
 	translatedIDs, err := loadTranslatedChapters(proj)
 	if err != nil {

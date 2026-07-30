@@ -65,6 +65,38 @@ func (g *Glossary) Find(source string) (GlossaryTerm, bool) {
 	return GlossaryTerm{}, false
 }
 
+// WithCharacters returns a new Glossary that includes character entries
+// (converted to terms with type "character") merged with the existing terms.
+// Characters are stored separately in characters.json to avoid duplication;
+// this helper merges them at runtime for consumers that need the complete
+// term list (translate, verify-glossary, pronounce). The original glossary
+// is not modified.
+func (g *Glossary) WithCharacters(chars *Characters) *Glossary {
+	merged := &Glossary{Terms: make([]GlossaryTerm, 0, len(g.Terms)+len(chars.Characters))}
+	// Add character terms first.
+	for _, c := range chars.Characters {
+		if c.Name == "" || c.Translation == "" {
+			continue
+		}
+		merged.Terms = append(merged.Terms, GlossaryTerm{
+			Source: c.Name,
+			Target: c.Translation,
+			Type:   "character",
+		})
+	}
+	// Add non-character terms, skipping any that duplicate a character entry.
+	for _, t := range g.Terms {
+		if t.Type == "character" {
+			continue // characters come from chars, not glossary
+		}
+		if _, exists := merged.Find(t.Source); exists {
+			continue
+		}
+		merged.Terms = append(merged.Terms, t)
+	}
+	return merged
+}
+
 // Merge adds or updates terms from newTerms. If a term with the same source
 // (case-insensitive) already exists, its target is updated only if the
 // existing target is empty. Returns the number of terms actually added.
