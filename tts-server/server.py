@@ -117,12 +117,10 @@ async def health():
 async def list_voices():
     voices = []
     if os.path.isdir(SPEAKERS_DIR):
-        for f in sorted(glob.glob(os.path.join(SPEAKERS_DIR, "*.wav"))):
-            voices.append(os.path.basename(f))
-        for d in sorted(glob.glob(os.path.join(SPEAKERS_DIR, "*/"))):
-            wavs = sorted(glob.glob(os.path.join(d, "*.wav")))
-            if wavs:
-                voices.append(os.path.basename(d.rstrip("/")))
+        # Recursively find all .wav files, return relative paths.
+        for f in sorted(glob.glob(os.path.join(SPEAKERS_DIR, "**", "*.wav"), recursive=True)):
+            rel = os.path.relpath(f, SPEAKERS_DIR)
+            voices.append(rel)
     return {"voices": voices}
 
 

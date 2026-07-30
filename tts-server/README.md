@@ -13,8 +13,17 @@ ebook2audiobook Gradio app.
 
 ## Setup
 
-1. Place voice sample WAV files in `speakers/` (mono, 22050 Hz, 7-9 seconds).
-   The XTTS v2 server uses these for voice cloning.
+1. The container bundles 119 voice samples (English, Russian, Arabic, Czech,
+   German, Farsi, French, Japanese). They are copied to `speakers/` on first
+   run. To list available voices:
+
+   ```bash
+   curl http://localhost:8020/voices | python3 -m json.tool
+   ```
+
+   To add your own voice samples, place WAV files in `speakers/` (mono,
+   22050 Hz, 7-9 seconds). The directory structure is preserved — voices are
+   referenced by their relative path, e.g. `eng/adult/male/MorganFreeman.wav`.
 
 2. Start the server:
    ```bash
@@ -62,7 +71,7 @@ tts:
   engine: xtts-http
   language: ru
   server_url: http://localhost:8020
-  speaker: speaker_name.wav
+  speaker: eng/adult/male/MorganFreeman.wav  # or any voice from /voices
   speed: 1.0
 ```
 

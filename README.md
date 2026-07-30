@@ -80,7 +80,7 @@ tts:
   engine: xtts-http
   language: ru
   server_url: http://localhost:8020
-  speaker: your_voice.wav    # name of a file in tts-server/speakers/
+  speaker: eng/adult/male/MorganFreeman.wav  # or any voice from /voices
   speed: 1.0
 ```
 
