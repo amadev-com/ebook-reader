@@ -254,3 +254,88 @@ func TestParseChapterFilter(t *testing.T) {
 		t.Error("range 'abc' should error")
 	}
 }
+
+func TestSlugify(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"My Vampire System", "my-vampire-system"},
+		{"9kafe.com-my-vampire-system-c1-700", "9kafe-com-my-vampire-system-c1-700"},
+		{"Book_Title_With_Underscores", "book-title-with-underscores"},
+		{"  Multiple   Spaces  ", "multiple-spaces"},
+		{"Already-dashed", "already-dashed"},
+		{"UPPERCASE", "uppercase"},
+		{"Special!@#Characters", "special-characters"},
+		{"---leading-trailing---", "leading-trailing"},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		got := slugify(tc.input)
+		if got != tc.want {
+			t.Errorf("slugify(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestImportCreatesProjectDir(t *testing.T) {
+	// Not parallel — uses global flagProject and os.Chdir.
+	epubPath := buildTestEPUB(t)
+	parentDir := t.TempDir()
+
+	// Change to parent dir so the project is created there.
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(parentDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	// Reset the global flagProject to default for this test.
+	flagProject = "."
+	defer func() { flagProject = "." }()
+
+	// Build the import command and run it with a custom book name.
+	cmd := newImportCmd()
+	cmd.SetArgs([]string{epubPath, "My Test Book"})
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	// The project dir should be "my-test-book" under parentDir.
+	projDir := filepath.Join(parentDir, "my-test-book")
+	if !project.Exists(filepath.Join(projDir, "config.yaml")) {
+		t.Errorf("config.yaml not created in %s", projDir)
+	}
+	if !project.Exists(filepath.Join(projDir, "source", "original.epub")) {
+		t.Errorf("EPUB not copied to %s", projDir)
+	}
+}
+
+func TestImportWithExplicitProjectFlag(t *testing.T) {
+	// Not parallel — uses global flagProject.
+	epubPath := buildTestEPUB(t)
+	projDir := t.TempDir()
+
+	flagProject = "."
+	defer func() { flagProject = "." }()
+
+	// Use the root command so persistent flags are available.
+	root := NewRoot()
+	root.SetArgs([]string{"import", epubPath, "--project", projDir})
+	root.SilenceUsage = true
+	root.SilenceErrors = true
+	if err := root.Execute(); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	// Should use the explicit project dir, not auto-create one.
+	if !project.Exists(filepath.Join(projDir, "source", "original.epub")) {
+		t.Errorf("EPUB not in explicit project dir %s", projDir)
+	}
+}

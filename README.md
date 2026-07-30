@@ -71,41 +71,113 @@ See [`tts-server/README.md`](tts-server/README.md) for full details.
 
 ## Processing a book: step by step
 
-### Step 0 — Create a project directory
-
-Each book gets its own directory. Create one and `cd` into it:
-
-```bash
-mkdir ~/books/my-vampire-system
-cd ~/books/my-vampire-system
-```
-
-A `config.yaml` is auto-created with defaults on first run. To customize (e.g. pick a voice), create it upfront:
-
-```yaml
-project: my-vampire-system
-languages:
-  source: en
-  target: ru
-openai:
-  translation_model: gpt-4.1
-  helper_model: gpt-4.1-mini
-  max_retries: 3
-tts:
-  engine: xtts-http
-  language: ru
-  server_url: http://localhost:8020
-  speaker: eng/adult/male/MorganFreeman.wav  # any voice from /voices
-  speed: 1.0
-```
-
 ### Step 1 — Import the EPUB
 
 ```bash
 bookai import /path/to/book.epub
 ```
 
-Copies the EPUB to `source/original.epub` and extracts the spine, TOC, and per-item text blocks to `extracted/`.
+This creates a project directory named after the EPUB file (lowercase, dashes), copies the book inside, writes a default `config.yaml`, and extracts the spine, TOC, and per-item text blocks.
+
+For example, `my-vampire-system.epub` creates `./my-vampire-system/`. To use a custom name:
+
+```bash
+bookai import /path/to/book.epub "My Vampire System"   # creates ./my-vampire-system/
+```
+
+To import into an explicit directory (skips auto-creation):
+
+```bash
+bookai import /path/to/book.epub -p /existing/project-dir
+```
+
+> **Before continuing:** edit `my-vampire-system/config.yaml` to switch the TTS engine from `noop` to `xtts-http` and pick a voice (see [Configuration](#configuration) below).
+
+```bash
+bookai import /path/to/book.epub "My Vampire System"   # creates ./my-vampire-system/
+```
+
+To import into an explicit directory (skips auto-creation):
+
+```bash
+bookai import /path/to/book.epub -p /existing/project-dir
+```
+
+### Step 2 — Detect chapters
+
+```bash
+bookai analyze-chapters -p my-vampire-system
+```
+
+Writes `chapters/chapter_NNN.json` (one per chapter), `chapters/_index.json`, and `chapters/_skipped.json` (non-chapter sections like TOC/notes).
+
+### Step 3 — Extract glossary and characters
+
+```bash
+bookai analyze -p my-vampire-system
+```
+
+Uses `gpt-4.1-mini` to extract a glossary (terms + translations) and character list from chapter snippets. Writes `ai/glossary.json` and `ai/characters.json`.
+
+### Step 4 — Translate
+
+```bash
+bookai translate -p my-vampire-system
+```
+
+Translates each chapter to Russian using `gpt-4.1` with the glossary and previous chapter summaries as context. Writes `translation/chapter_NNN.ru.txt`, `memory/chapter_NNN.summary.txt`, and updates chapter status to `translated`.
+
+This is the most time-consuming and expensive stage. Use `--chapter` or `--range` to translate in batches:
+
+```bash
+bookai translate -p my-vampire-system --range 1-50
+bookai translate -p my-vampire-system --range 51-100
+```
+
+### Step 5 — Verify glossary (optional QA)
+
+```bash
+bookai verify-glossary -p my-vampire-system
+```
+
+Scans translations for untranslated English glossary terms. Writes `ai/glossary_violations.json`.
+
+### Step 6 — Generate SSML
+
+```bash
+bookai ssml -p my-vampire-system
+```
+
+Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C SSML with `<p>`/`<s>`/`<phoneme>` tags). Pronunciation hints from `ai/pronunciation.json` are applied if present.
+
+### Step 7 — Synthesize audio
+
+```bash
+bookai tts -p my-vampire-system
+```
+
+Synthesizes each `tts/chapter_NNN.ssml` into `audio/chapter_NNN.wav` via the XTTS v2 server. To merge all chapters into a single file:
+
+```bash
+bookai tts -p my-vampire-system --merge      # produces audio/book.wav via ffmpeg
+```
+
+### Check progress at any time
+
+```bash
+bookai status -p my-vampire-system
+```
+
+Shows a directory tree and per-stage artifact counts.
+
+> **Tip:** If you `cd` into the project directory, you can omit `-p` from all commands:
+> ```bash
+> cd my-vampire-system
+> bookai analyze-chapters
+> bookai analyze
+> bookai translate
+> bookai tts --merge
+> ```
 
 ### Step 2 — Detect chapters
 
@@ -176,16 +248,27 @@ Shows a directory tree and per-stage artifact counts.
 
 ## Working with multiple books
 
-Each book is an independent project directory. To process a different book:
+Each book is an independent project directory, auto-created by `import`. To process another book, just run import again from the same parent directory:
 
 ```bash
-mkdir ~/books/another-book
-cd ~/books/another-book
-bookai import /path/to/another.epub
-# ... repeat steps 2–7
+cd ~/books
+bookai import /path/to/first-book.epub       # creates ~/books/first-book/
+bookai import /path/to/second-book.epub      # creates ~/books/second-book/
 ```
 
-The TTS server (`tts-server/`) is shared across all books — don't start a second one. The `OPENAI_API_KEY` is also shared.
+Then run the remaining stages for each, pointing `-p` at the project directory:
+
+```bash
+bookai analyze-chapters -p first-book
+bookai translate -p first-book
+bookai tts -p first-book --merge
+
+bookai analyze-chapters -p second-book
+bookai translate -p second-book
+bookai tts -p second-book --merge
+```
+
+The TTS server (`tts-server/`) and `OPENAI_API_KEY` are shared across all books.
 
 ### Cleaning up a project
 
@@ -225,6 +308,29 @@ All stage commands support:
 | `--verbose` | Enable debug logging |
 
 The `tts` command also supports `--merge` to concatenate all chapter WAVs into `audio/book.wav`.
+
+## Configuration
+
+`bookai import` auto-creates a `config.yaml` with defaults in the project directory. Edit it to customize the TTS engine, voice, or models:
+
+```yaml
+project: my-vampire-system
+languages:
+  source: en
+  target: ru
+openai:
+  translation_model: gpt-4.1
+  helper_model: gpt-4.1-mini
+  max_retries: 3
+tts:
+  engine: xtts-http              # "noop" (default) or "xtts-http"
+  language: ru
+  server_url: http://localhost:8020
+  speaker: eng/adult/male/MorganFreeman.wav  # any voice from /voices
+  speed: 1.0
+```
+
+The OpenAI API key is read from the `OPENAI_API_KEY` environment variable — it is **never** stored in `config.yaml`.
 
 ## Build
 

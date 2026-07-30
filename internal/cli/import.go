@@ -7,34 +7,114 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
+	"ebook-reader/internal/config"
 	"ebook-reader/internal/epub"
 	"ebook-reader/internal/project"
 )
 
-// newImportCmd implements `bookai import <epub>`. It copies the EPUB into the
-// project, parses it, and writes the extracted/ artifact tree.
+// newImportCmd implements `bookai import <epub> [name]`. It creates a project
+// directory (named after the EPUB filename or the optional name argument),
+// copies the EPUB into it, writes a default config.yaml, and extracts the
+// spine, TOC, and per-item blocks.
+//
+// If --project is explicitly set, that directory is used instead of
+// auto-creating one from the book name.
 func newImportCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "import <epub>",
-		Short: "Copy an EPUB into the project and extract spine, TOC, and per-item blocks",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		Use:   "import <epub> [name]",
+		Short: "Create a project, copy the EPUB into it, and extract spine, TOC, and per-item blocks",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			setupLogger()
 			ctx, cancel := rootContext()
 			defer cancel()
-			proj, err := openProject()
+
+			epubPath := args[0]
+			bookName := ""
+			if len(args) >= 2 {
+				bookName = args[1]
+			}
+
+			projDir, err := resolveProjectDir(cmd, epubPath, bookName)
 			if err != nil {
 				return err
 			}
-			return runImport(ctx, proj, args[0], force)
+
+			proj, err := project.New(projDir)
+			if err != nil {
+				return err
+			}
+			return runImport(ctx, proj, epubPath, force)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing source/original.epub")
 	return cmd
+}
+
+// resolveProjectDir determines the project directory for the import command.
+// If --project was explicitly set (non-default), use it as-is. Otherwise,
+// derive a directory name from the EPUB filename (or the optional bookName
+// argument) and create it in the current working directory.
+func resolveProjectDir(cmd *cobra.Command, epubPath, bookName string) (string, error) {
+	// Check if --project was explicitly set by the user.
+	projectFlag := cmd.Flag("project")
+	if projectFlag != nil && projectFlag.Changed {
+		return projectFlag.Value.String(), nil
+	}
+
+	// Derive the project name from the book name or EPUB filename.
+	if bookName == "" {
+		bookName = strings.TrimSuffix(filepath.Base(epubPath), filepath.Ext(epubPath))
+	}
+	dirName := slugify(bookName)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("get working directory: %w", err)
+	}
+	projDir := filepath.Join(cwd, dirName)
+
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		return "", fmt.Errorf("create project directory %s: %w", projDir, err)
+	}
+
+	// Write a default config.yaml if one doesn't exist.
+	cfgPath := filepath.Join(projDir, "config.yaml")
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		cfg := config.Default(dirName)
+		if err := config.Save(projDir, cfg); err != nil {
+			return "", fmt.Errorf("write config: %w", err)
+		}
+		slog.Info("created project", "dir", projDir, "config", cfgPath)
+	}
+
+	return projDir, nil
+}
+
+// slugify converts a string to a lowercase, dash-separated slug suitable for
+// a directory name. Spaces, underscores, and other non-alphanumeric runes
+// become dashes; consecutive dashes are collapsed; leading/trailing dashes
+// are trimmed.
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			prevDash = false
+		} else if !prevDash {
+			b.WriteRune('-')
+			prevDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 // runImport copies the EPUB into source/original.epub, parses it, and writes:
@@ -47,6 +127,9 @@ func newImportCmd() *cobra.Command {
 // It is idempotent: if source/original.epub already exists and --force is not
 // set, it returns an error pointing the user at --force.
 func runImport(_ context.Context, proj *project.Project, epubPath string, force bool) error {
+	if err := proj.EnsureDirs(); err != nil {
+		return err
+	}
 	dst := proj.SourceEpub()
 	if project.Exists(dst) && !force {
 		return fmt.Errorf("source epub already exists at %s (use --force to overwrite)", dst)
@@ -55,9 +138,6 @@ func runImport(_ context.Context, proj *project.Project, epubPath string, force 
 	abs, err := filepath.Abs(epubPath)
 	if err != nil {
 		return fmt.Errorf("resolve epub path: %w", err)
-	}
-	if err := proj.EnsureDirs(); err != nil {
-		return err
 	}
 	if err := copyFile(abs, dst); err != nil {
 		return err

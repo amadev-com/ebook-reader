@@ -19,7 +19,8 @@ Project layout: `cmd/bookai` (binary) + `internal/{epub,chapters,project,config,
 - Go 1.26, Cobra CLI, YAML config (`gopkg.in/yaml.v3`).
 - EPUB parsing: custom reader (`archive/zip` + `encoding/xml` + `golang.org/x/net/html`).
 - Translation: OpenAI **official** SDK (`github.com/openai/openai-go`), `gpt-4.1` / `gpt-4.1-mini`. EN→RU. (M2)
-- TTS: swappable Engine interface (`internal/tts/engine.go`). Default "noop" engine for pipeline testing. Real engines (sherpa-onnx, piper, xtts-v2) registered via `tts.Register`. (M3)
+- TTS: swappable Engine interface (`internal/tts/engine.go`). Default "noop" engine for pipeline testing. `xtts-http` engine for real XTTS v2 via Docker server. (M3)
+- `bookai import <epub> [name]` auto-creates a project dir (slugified name) in CWD, writes default `config.yaml`, copies EPUB. Other commands use `-p`/`--project` flag (defaults to CWD).
 - Chapter classifier: rules-only in M1 (AI fallback designed but not wired).
 
 ## Milestone 1 — COMPLETE
