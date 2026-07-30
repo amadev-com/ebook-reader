@@ -53,17 +53,19 @@ type OpenAI struct {
 // registered TTS backend to use. Engine-specific paths (model, data dir,
 // tokens) are resolved by the CLI layer into an tts.EngineConfig.
 type TTS struct {
-	Engine      string  `yaml:"engine"`       // "noop" (default), "xtts-http", "sherpa-onnx", "piper", ...
-	VoiceSample string  `yaml:"voice_sample"` // path to a short reference wav (voice-cloning engines)
-	Language    string  `yaml:"language"`     // target language code, e.g. "ru"
-	Python      string  `yaml:"python"`       // python interpreter (subprocess engines), default "python3"
-	ModelPath   string  `yaml:"model_path"`   // path to ONNX/model file
-	DataDir     string  `yaml:"data_dir"`     // path to espeak-ng-data / phoneme data
-	TokensPath  string  `yaml:"tokens_path"`  // path to tokens file
-	Device      string  `yaml:"device"`       // "cpu" (default), "cuda", etc.
-	Speed       float64 `yaml:"speed"`        // playback speed multiplier, 1.0 = normal
-	ServerURL   string  `yaml:"server_url"`   // HTTP endpoint for remote TTS engines, e.g. "http://localhost:8020"
-	Speaker     string  `yaml:"speaker"`      // speaker name for voice-cloning engines (matches a file in the server's speakers dir)
+	Engine       string  `yaml:"engine"`        // "noop" (default), "xtts-http", "sherpa-onnx", "piper", ...
+	VoiceSample  string  `yaml:"voice_sample"`  // path to a short reference wav (voice-cloning engines)
+	Language     string  `yaml:"language"`      // target language code, e.g. "ru"
+	Python       string  `yaml:"python"`        // python interpreter (subprocess engines), default "python3"
+	ModelPath    string  `yaml:"model_path"`    // path to ONNX/model file
+	DataDir      string  `yaml:"data_dir"`      // path to espeak-ng-data / phoneme data
+	TokensPath   string  `yaml:"tokens_path"`   // path to tokens file
+	Device       string  `yaml:"device"`        // "cpu" (default), "cuda", etc.
+	Speed        float64 `yaml:"speed"`         // playback speed multiplier, 1.0 = normal
+	ServerURL    string  `yaml:"server_url"`    // HTTP endpoint for remote TTS engines, e.g. "http://localhost:8020"
+	Speaker      string  `yaml:"speaker"`       // speaker name for voice-cloning engines (matches a file in the server's speakers dir)
+	AudioFormat  string  `yaml:"audio_format"`  // output format: "mp3" (default) or "wav"
+	AudioBitrate string  `yaml:"audio_bitrate"` // MP3 bitrate, e.g. "128k", "192k" (default "128k")
 }
 
 // Paths overrides default project subdirectory names.
@@ -97,10 +99,12 @@ func Default(projectName string) Config {
 			MaxRetries:       3,
 		},
 		TTS: TTS{
-			Engine:   "noop",
-			Language: "ru",
-			Python:   "python3",
-			Speed:    1.0,
+			Engine:       "noop",
+			Language:     "ru",
+			Python:       "python3",
+			Speed:        1.0,
+			AudioFormat:  "mp3",
+			AudioBitrate: "128k",
 		},
 		Paths: Paths{
 			Source:      "source",

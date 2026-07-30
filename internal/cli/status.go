@@ -43,7 +43,7 @@ func runStatus(proj statusProject) error {
 		{"translation", proj.TranslationDir(), ".txt"},
 		{"memory", proj.MemoryDir(), ".txt"},
 		{"tts (ssml)", proj.TTSDir(), ".ssml"},
-		{"audio", proj.AudioDir(), ".wav"},
+		{"audio", proj.AudioDir(), ".mp3"},
 	}
 	for _, s := range stages {
 		count, exists := countFiles(s.dir, s.ext)

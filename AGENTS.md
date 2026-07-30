@@ -44,12 +44,12 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 ## Milestone 3 — TTS pipeline (COMPLETE — scaffolding with swappable engine)
 
 - `bookai ssml`: converts `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C SSML with `<p>`/`<s>`/`<phoneme>` tags). Pronunciation hints from `ai/pronunciation.json` applied via greedy longest-match, case-insensitive, word-boundary aware.
-- `bookai tts`: synthesizes `tts/chapter_NNN.ssml` into `audio/chapter_NNN.wav` via the configured engine (`tts.engine` in config.yaml). `--merge` concatenates all chapter WAVs into `audio/book.wav` via ffmpeg.
+- `bookai tts`: synthesizes `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the configured engine. Engines produce WAV internally; CLI converts to MP3 via ffmpeg. `--merge` removed — per-chapter files only. Config: `tts.audio_format` ("mp3" default, "wav" fallback), `tts.audio_bitrate` ("128k" default).
 - Engine interface: `tts.Engine` with `Name()` and `Synthesize(ctx, ssml, outPath)`. Engines register via `tts.Register(name, factory)`. `tts.NewEngine(cfg)` looks up the factory.
 - NoopEngine: default engine that writes a valid sine-tone WAV. Requires no external deps — enables full pipeline testing (SSML → audio → merge) without a real TTS backend.
 - `tts.ExtractPlainText(ssml)`: strips SSML tags for engines that don't support SSML natively.
 - Config: `tts.engine` ("noop" default), `tts.language`, `tts.model_path`, `tts.data_dir`, `tts.tokens_path`, `tts.device`, `tts.speed`, `tts.voice_sample`, `tts.python`.
-- Flags: `--force`, `--chapter N`, `--range M-N`, `--merge`.
+- Flags: `--force`, `--chapter N`, `--range M-N`.
 - Validated end-to-end: import → analyze-chapters → (fake translation) → ssml → tts → merge. Idempotent, `--force` works, pronunciation hints apply correctly.
 - To add a real engine: create `internal/tts/<engine>.go`, implement `Engine`, call `Register("name", factory)` in `init()`. No changes needed to CLI or pipeline code.
 
@@ -64,13 +64,13 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 ## Milestone 3 — COMPLETE (TTS pipeline + XTTS v2 HTTP engine)
 
 - `bookai ssml`: converts `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C SSML with `<p>`/`<s>`/`<phoneme>` tags). Pronunciation hints from `ai/pronunciation.json` applied via greedy longest-match, case-insensitive, word-boundary aware.
-- `bookai tts`: synthesizes `tts/chapter_NNN.ssml` into `audio/chapter_NNN.wav` via the configured engine (`tts.engine` in config.yaml). `--merge` concatenates all chapter WAVs into `audio/book.wav` via ffmpeg.
+- `bookai tts`: synthesizes `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the configured engine. Engines produce WAV internally; CLI converts to MP3 via ffmpeg. `--merge` removed — per-chapter files only. Config: `tts.audio_format` ("mp3" default, "wav" fallback), `tts.audio_bitrate` ("128k" default).
 - Engine interface: `tts.Engine` with `Name()` and `Synthesize(ctx, ssml, outPath)`. Engines register via `tts.Register(name, factory)`. `tts.NewEngine(cfg)` looks up the factory.
 - NoopEngine: default engine that writes a valid sine-tone WAV. Requires no external deps — enables full pipeline testing (SSML → audio → merge) without a real TTS backend.
 - HTTPEngine (`xtts-http`): real TTS via a remote XTTS v2 FastAPI server. Sends plain text (SSML stripped via `ExtractPlainText`) to `POST /tts`, writes the returned WAV. Config: `tts.server_url`, `tts.speaker` (or `tts.voice_sample` for absolute path). 10-minute timeout for long chapters + first model load.
 - `tts.ExtractPlainText(ssml)`: strips SSML tags for engines that don't support SSML natively.
-- Config: `tts.engine` ("noop" default, "xtts-http" for real TTS), `tts.language`, `tts.server_url`, `tts.speaker`, `tts.voice_sample`, `tts.speed`, `tts.model_path`, `tts.data_dir`, `tts.tokens_path`, `tts.device`, `tts.python`.
-- Flags: `--force`, `--chapter N`, `--range M-N`, `--merge`.
+- Config: `tts.engine` ("noop" default, "xtts-http" for real TTS), `tts.language`, `tts.server_url`, `tts.speaker`, `tts.voice_sample`, `tts.speed`, `tts.audio_format` ("mp3" default, "wav"), `tts.audio_bitrate` ("128k" default), `tts.model_path`, `tts.data_dir`, `tts.tokens_path`, `tts.device`, `tts.python`.
+- Flags: `--force`, `--chapter N`, `--range M-N`.
 - TTS server: `tts-server/` directory with `docker-compose.yml` + `server.py`. Uses `athomasson2/ebook2audiobook:cu130` image (CUDA 13.0 + PyTorch 2.11 + coqui-tts 0.27.5) for Blackwell GPU support. See `tts-server/README.md`.
 - Validated end-to-end with real XTTS v2: SSML → HTTP engine → 24kHz Russian WAV. Model downloads on first call (~1.8GB, cached in `tts-server/models/`).
 

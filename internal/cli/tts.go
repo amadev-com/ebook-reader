@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,14 +17,14 @@ import (
 
 // newTTSCmd implements `bookai tts`: synthesizes audio from SSML files using
 // the configured TTS engine. The engine is selected from config.yaml
-// (tts.engine) and is swappable via the tts.Engine registry. Output WAVs are
-// written to audio/chapter_NNN.wav.
+// (tts.engine) and is swappable via the tts.Engine registry. Engines produce
+// WAV audio; the CLI layer converts to the configured output format (MP3 by
+// default) via ffmpeg. Output files are written to audio/chapter_NNN.mp3.
 func newTTSCmd() *cobra.Command {
 	var (
 		force   bool
 		chapter int
 		chRange string
-		merge   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "tts",
@@ -37,17 +38,16 @@ func newTTSCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTTS(ctx, proj, force, chapter, chRange, merge)
+			return runTTS(ctx, proj, force, chapter, chRange)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "re-synthesize chapters whose audio already exists")
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "synthesize only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "synthesize a range of chapter ids, e.g. 5-12")
-	cmd.Flags().BoolVar(&merge, "merge", false, "merge per-chapter WAVs into one book.wav")
 	return cmd
 }
 
-func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int, chRange string, merge bool) error {
+func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int, chRange string) error {
 	chs, err := loadAllChapters(proj)
 	if err != nil {
 		return err
@@ -75,9 +75,16 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 	}
 	slog.Info("TTS engine ready", "name", engine.Name())
 
+	// Determine output format and extension.
+	audioFormat := proj.Cfg.TTS.AudioFormat
+	if audioFormat == "" {
+		audioFormat = "mp3"
+	}
+	audioExt := audioExtension(audioFormat)
+	slog.Info("audio output", "format", audioFormat, "extension", audioExt)
+
 	synthesized := 0
 	skipped := 0
-	var audioPaths []string
 
 	for _, ch := range chs {
 		if ctx.Err() != nil {
@@ -96,10 +103,9 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 			continue
 		}
 
-		audioPath := audioPath(proj.AudioDir(), ch.ID)
-		if project.Exists(audioPath) && !force {
+		outPath := audioPath(proj.AudioDir(), ch.ID, audioExt)
+		if project.Exists(outPath) && !force {
 			slog.Debug("skip existing audio", "chapter", ch.ID)
-			audioPaths = append(audioPaths, audioPath)
 			skipped++
 			continue
 		}
@@ -110,8 +116,23 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 		}
 
 		slog.Info("synthesizing chapter", "id", ch.ID, "title", ch.Title)
-		if err := engine.Synthesize(ctx, string(ssmlContent), audioPath); err != nil {
-			return fmt.Errorf("synthesize chapter %d: %w", ch.ID, err)
+
+		if audioFormat == "wav" {
+			// Engine writes WAV directly to the output path.
+			if err := engine.Synthesize(ctx, string(ssmlContent), outPath); err != nil {
+				return fmt.Errorf("synthesize chapter %d: %w", ch.ID, err)
+			}
+		} else {
+			// Engine writes WAV to a temp file, then we convert to the target format.
+			wavPath := tempWAVPath(proj.AudioDir(), ch.ID)
+			if err := engine.Synthesize(ctx, string(ssmlContent), wavPath); err != nil {
+				return fmt.Errorf("synthesize chapter %d: %w", ch.ID, err)
+			}
+			if err := convertAudio(wavPath, outPath, audioFormat, proj.Cfg.TTS.AudioBitrate); err != nil {
+				_ = os.Remove(wavPath)
+				return fmt.Errorf("convert chapter %d to %s: %w", ch.ID, audioFormat, err)
+			}
+			_ = os.Remove(wavPath)
 		}
 
 		// Update chapter status.
@@ -120,21 +141,11 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 			slog.Warn("failed to update chapter status", "chapter", ch.ID, "error", err)
 		}
 
-		slog.Info("audio synthesized", "chapter", ch.ID, "file", audioPath)
-		audioPaths = append(audioPaths, audioPath)
+		slog.Info("audio synthesized", "chapter", ch.ID, "file", outPath)
 		synthesized++
 	}
 
 	slog.Info("TTS run complete", "synthesized", synthesized, "skipped", skipped)
-
-	if merge && len(audioPaths) > 0 {
-		mergedPath := filepath.Join(proj.AudioDir(), "book.wav")
-		slog.Info("merging audio files", "count", len(audioPaths), "output", mergedPath)
-		if err := mergeAudio(audioPaths, mergedPath); err != nil {
-			slog.Warn("merge failed (ffmpeg not available?)", "error", err)
-		}
-	}
-
 	return nil
 }
 
@@ -173,37 +184,68 @@ func resolvePath(root, p string) string {
 	return filepath.Join(root, p)
 }
 
-// audioPath returns the path for a chapter's audio WAV file.
-func audioPath(audioDir string, chapterID int) string {
-	return filepath.Join(audioDir, fmt.Sprintf("chapter_%03d.wav", chapterID))
+// audioExtension returns the file extension for the given audio format.
+func audioExtension(format string) string {
+	switch strings.ToLower(format) {
+	case "wav":
+		return ".wav"
+	default:
+		return "." + strings.ToLower(format)
+	}
 }
 
-// mergeAudio concatenates WAV files into a single output WAV using ffmpeg.
-// If ffmpeg is not available, an error is returned.
-func mergeAudio(inputs []string, output string) error {
-	// Build a concat list file for ffmpeg's concat demuxer.
-	listFile, err := os.CreateTemp("", "bookai-concat-*.txt")
-	if err != nil {
-		return fmt.Errorf("create concat list: %w", err)
-	}
-	listPath := listFile.Name()
-	defer func() { _ = os.Remove(listPath) }()
+// audioPath returns the path for a chapter's audio file.
+func audioPath(audioDir string, chapterID int, ext string) string {
+	return filepath.Join(audioDir, fmt.Sprintf("chapter_%03d%s", chapterID, ext))
+}
 
-	for _, p := range inputs {
-		// ffmpeg concat requires escaped paths; single quotes work on Linux.
-		if _, err := fmt.Fprintf(listFile, "file '%s'\n", p); err != nil {
-			return fmt.Errorf("write concat list: %w", err)
-		}
+// tempWAVPath returns a temporary WAV path for intermediate engine output
+// before format conversion.
+func tempWAVPath(audioDir string, chapterID int) string {
+	return filepath.Join(audioDir, fmt.Sprintf(".chapter_%03d.tmp.wav", chapterID))
+}
+
+// convertAudio converts a WAV file to the target format (e.g. MP3) using
+// ffmpeg. The output is mono, at the given bitrate for lossy formats.
+func convertAudio(input, output, format, bitrate string) error {
+	args := []string{"-y", "-i", input}
+
+	switch strings.ToLower(format) {
+	case "mp3":
+		args = append(args,
+			"-ac", "1", // mono
+			"-c:a", "libmp3lame",
+			"-b:a", normalizeBitrate(bitrate),
+		)
+	case "aac":
+		args = append(args,
+			"-ac", "1",
+			"-c:a", "aac",
+			"-b:a", normalizeBitrate(bitrate),
+		)
+	default:
+		// For unknown formats, let ffmpeg pick the codec.
+		args = append(args, "-ac", "1")
 	}
-	if err := listFile.Close(); err != nil {
-		return fmt.Errorf("close concat list: %w", err)
-	}
+
+	args = append(args, output)
 
 	// #nosec G204 -- ffmpeg is a known binary, args are controlled.
-	cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0",
-		"-i", listFile.Name(), "-c", "copy", output)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ffmpeg concat: %w (is ffmpeg installed?)", err)
+	cmd := exec.Command("ffmpeg", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ffmpeg: %w (output: %s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// normalizeBitrate ensures the bitrate string has a "k" suffix (e.g. "128" →
+// "128k"). Empty defaults to "128k".
+func normalizeBitrate(bitrate string) string {
+	if bitrate == "" {
+		return "128k"
+	}
+	if !strings.HasSuffix(strings.ToLower(bitrate), "k") {
+		return bitrate + "k"
+	}
+	return bitrate
 }

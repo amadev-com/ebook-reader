@@ -29,7 +29,7 @@ translation/ + memory/   (chapter_NNN.ru.txt, chapter_NNN.summary.txt)
 tts/         (chapter_NNN.ssml)
         │  7. bookai tts                ← requires TTS server (Docker)
         ▼
-audio/       (chapter_NNN.wav, book.wav)
+audio/       (chapter_NNN.mp3)
 ```
 
 ## Prerequisites
@@ -156,11 +156,7 @@ Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C 
 bookai tts -p my-vampire-system
 ```
 
-Synthesizes each `tts/chapter_NNN.ssml` into `audio/chapter_NNN.wav` via the XTTS v2 server. To merge all chapters into a single file:
-
-```bash
-bookai tts -p my-vampire-system --merge      # produces audio/book.wav via ffmpeg
-```
+Synthesizes each `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the XTTS v2 server. Engines produce WAV internally; the CLI converts to MP3 via ffmpeg. To output WAV instead, set `tts.audio_format: wav` in `config.yaml`.
 
 ### Check progress at any time
 
@@ -307,8 +303,6 @@ All stage commands support:
 | `--project PATH` | Path to the project directory (default: current dir) |
 | `--verbose` | Enable debug logging |
 
-The `tts` command also supports `--merge` to concatenate all chapter WAVs into `audio/book.wav`.
-
 ## Configuration
 
 `bookai import` auto-creates a `config.yaml` with defaults in the project directory. Edit it to customize the TTS engine, voice, or models:
@@ -328,6 +322,8 @@ tts:
   server_url: http://localhost:8020
   speaker: eng/adult/male/MorganFreeman.wav  # any voice from /voices
   speed: 1.0
+  audio_format: mp3              # "mp3" (default) or "wav"
+  audio_bitrate: "128k"          # MP3 bitrate (default 128k)
 ```
 
 The OpenAI API key is read from the `OPENAI_API_KEY` environment variable — it is **never** stored in `config.yaml`.
