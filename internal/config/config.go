@@ -1,0 +1,156 @@
+// Package config loads and validates the bookai project configuration from
+// config.yaml. Configuration is intentionally minimal: secrets (the OpenAI
+// API key) are read from the environment, never from the file.
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config is the in-memory representation of config.yaml.
+type Config struct {
+	// Project is the human-readable project name. Defaults to the project
+	// directory's base name.
+	Project string `yaml:"project"`
+
+	// Languages configures the translation direction.
+	Languages Languages `yaml:"languages"`
+
+	// OpenAI holds model selection and endpoint configuration. The API key
+	// itself is NOT stored here; it is read from OPENAI_API_KEY at runtime.
+	OpenAI OpenAI `yaml:"openai"`
+
+	// TTS holds XTTS v2 configuration. Used only in M3.
+	TTS TTS `yaml:"tts"`
+
+	// Paths allows overriding the default project subdirectory layout. Any
+	// empty field falls back to the default relative path under the project
+	// root.
+	Paths Paths `yaml:"paths"`
+}
+
+// Languages is the translation direction.
+type Languages struct {
+	Source string `yaml:"source"` // e.g. "en"
+	Target string `yaml:"target"` // e.g. "ru"
+}
+
+// OpenAI is the model/endpoint configuration. API key is in the env.
+type OpenAI struct {
+	BaseURL          string `yaml:"base_url"`           // empty = OpenAI default
+	TranslationModel string `yaml:"translation_model"` // gpt-4.1
+	HelperModel      string `yaml:"helper_model"`      // gpt-4.1-mini (glossary, summaries)
+	MaxRetries       int    `yaml:"max_retries"`
+}
+
+// TTS is XTTS v2 configuration (M3 only).
+type TTS struct {
+	Engine      string `yaml:"engine"`       // "xtts-v2"
+	VoiceSample string `yaml:"voice_sample"` // path to a short reference wav
+	Language    string `yaml:"language"`     // "ru"
+	Python      string `yaml:"python"`       // python interpreter, default "python3"
+}
+
+// Paths overrides default project subdirectory names.
+type Paths struct {
+	Source      string `yaml:"source"`
+	Extracted   string `yaml:"extracted"`
+	Chapters    string `yaml:"chapters"`
+	AI          string `yaml:"ai"`
+	Translation string `yaml:"translation"`
+	Memory      string `yaml:"memory"`
+	TTS         string `yaml:"tts"`
+	Audio       string `yaml:"audio"`
+}
+
+// Default returns a Config populated with sensible defaults for an
+// English-to-Russian pipeline using gpt-4.1.
+func Default(projectName string) Config {
+	if projectName == "" {
+		projectName = "book"
+	}
+	return Config{
+		Project: projectName,
+		Languages: Languages{
+			Source: "en",
+			Target: "ru",
+		},
+		OpenAI: OpenAI{
+			BaseURL:          "",
+			TranslationModel: "gpt-4.1",
+			HelperModel:      "gpt-4.1-mini",
+			MaxRetries:       3,
+		},
+		TTS: TTS{
+			Engine:   "xtts-v2",
+			Language: "ru",
+			Python:   "python3",
+		},
+		Paths: Paths{
+			Source:      "source",
+			Extracted:   "extracted",
+			Chapters:    "chapters",
+			AI:          "ai",
+			Translation: "translation",
+			Memory:      "memory",
+			TTS:         "tts",
+			Audio:       "audio",
+		},
+	}
+}
+
+// Load reads config.yaml from projectRoot. If the file does not exist, a
+// Default config is returned (the project is treated as freshly initialized).
+// If it exists but is malformed, an error is returned.
+func Load(projectRoot string) (Config, error) {
+	cfg := Default(filepath.Base(projectRoot))
+	path := filepath.Join(projectRoot, "config.yaml")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
+		return Config{}, fmt.Errorf("read config %s: %w", path, err)
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := cfg.validate(); err != nil {
+		return Config{}, fmt.Errorf("invalid config %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// Save writes the config to <projectRoot>/config.yaml with stable formatting.
+func Save(projectRoot string, cfg Config) error {
+	path := filepath.Join(projectRoot, "config.yaml")
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
+}
+
+func (c *Config) validate() error {
+	if c.Languages.Source == "" {
+		return fmt.Errorf("languages.source must not be empty")
+	}
+	if c.Languages.Target == "" {
+		return fmt.Errorf("languages.target must not be empty")
+	}
+	if c.OpenAI.TranslationModel == "" {
+		return fmt.Errorf("openai.translation_model must not be empty")
+	}
+	if c.OpenAI.HelperModel == "" {
+		return fmt.Errorf("openai.helper_model must not be empty")
+	}
+	return nil
+}

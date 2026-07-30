@@ -1,0 +1,7 @@
+/.idea
+/temp
+/books
+
+# build artifacts
+/bookai
+*.epub
