@@ -130,6 +130,12 @@ bookai analyze -p my-vampire-system
 
 Uses `gpt-4.1-mini` to extract a glossary (terms + translations) and character list from chapter snippets. Writes `ai/glossary.json` and `ai/characters.json`.
 
+Use `--chapter` or `--range` to analyze only a subset of chapters:
+
+```bash
+bookai analyze -p my-vampire-system --range 1-100
+```
+
 ### Step 4 — Translate
 
 ```bash

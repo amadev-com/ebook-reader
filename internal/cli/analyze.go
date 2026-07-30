@@ -20,7 +20,11 @@ import (
 // helper model (gpt-4.1-mini). This is a cheap pre-translation pass that
 // establishes terminology consistency before any chapter is translated.
 func newAnalyzeCmd() *cobra.Command {
-	var force bool
+	var (
+		force   bool
+		chapter int
+		chRange string
+	)
 	cmd := &cobra.Command{
 		Use:   "analyze",
 		Short: "Extract glossary and characters from the book (Milestone 2)",
@@ -33,16 +37,20 @@ func newAnalyzeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runAnalyze(ctx, proj, force)
+			return runAnalyze(ctx, proj, force, chapter, chRange)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "re-analyze even if glossary.json already exists")
+	cmd.Flags().IntVar(&chapter, "chapter", 0, "analyze only a single chapter id (1-based)")
+	cmd.Flags().StringVar(&chRange, "range", "", "analyze a range of chapter ids, e.g. 5-12")
 	return cmd
 }
 
-// runAnalyze loads all chapters, builds snippets, calls the helper model for
+// runAnalyze loads chapters, builds snippets, calls the helper model for
 // glossary extraction, and writes ai/glossary.json + ai/characters.json.
-func runAnalyze(ctx context.Context, proj *project.Project, force bool) error {
+// When chapter/chRange are set, only the selected chapters are included in
+// the snippets sent to the model.
+func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter int, chRange string) error {
 	glossaryPath := filepath.Join(proj.AIDir(), "glossary.json")
 	if project.Exists(glossaryPath) && !force {
 		slog.Info("glossary already exists, skipping (use --force to re-analyze)", "path", glossaryPath)
@@ -56,6 +64,21 @@ func runAnalyze(ctx context.Context, proj *project.Project, force bool) error {
 	}
 	if len(chs) == 0 {
 		return fmt.Errorf("no chapters found — run `bookai analyze-chapters` first")
+	}
+
+	// Filter chapters if --chapter or --range is set.
+	ids, err := parseChapterFilter(chapter, chRange, len(chs))
+	if err != nil {
+		return err
+	}
+	if ids != nil {
+		filtered := chs[:0]
+		for _, ch := range chs {
+			if ids[ch.ID] {
+				filtered = append(filtered, ch)
+			}
+		}
+		chs = filtered
 	}
 	slog.Info("loaded chapters for analysis", "count", len(chs))
 
@@ -120,7 +143,7 @@ func runAnalyze(ctx context.Context, proj *project.Project, force bool) error {
 
 // glossaryExtractionResult is the JSON shape we expect from the model.
 type glossaryExtractionResult struct {
-	Characters []translation.Character `json:"characters"`
+	Characters []translation.Character    `json:"characters"`
 	Terms      []translation.GlossaryTerm `json:"terms"`
 }
 
