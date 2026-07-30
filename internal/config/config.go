@@ -53,7 +53,7 @@ type OpenAI struct {
 // registered TTS backend to use. Engine-specific paths (model, data dir,
 // tokens) are resolved by the CLI layer into an tts.EngineConfig.
 type TTS struct {
-	Engine      string  `yaml:"engine"`       // "noop" (default), "sherpa-onnx", "piper", "xtts-v2", ...
+	Engine      string  `yaml:"engine"`       // "noop" (default), "xtts-http", "sherpa-onnx", "piper", ...
 	VoiceSample string  `yaml:"voice_sample"` // path to a short reference wav (voice-cloning engines)
 	Language    string  `yaml:"language"`     // target language code, e.g. "ru"
 	Python      string  `yaml:"python"`       // python interpreter (subprocess engines), default "python3"
@@ -62,6 +62,8 @@ type TTS struct {
 	TokensPath  string  `yaml:"tokens_path"`  // path to tokens file
 	Device      string  `yaml:"device"`       // "cpu" (default), "cuda", etc.
 	Speed       float64 `yaml:"speed"`        // playback speed multiplier, 1.0 = normal
+	ServerURL   string  `yaml:"server_url"`   // HTTP endpoint for remote TTS engines, e.g. "http://localhost:8020"
+	Speaker     string  `yaml:"speaker"`      // speaker name for voice-cloning engines (matches a file in the server's speakers dir)
 }
 
 // Paths overrides default project subdirectory names.

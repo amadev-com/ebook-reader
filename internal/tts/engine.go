@@ -68,6 +68,14 @@ type EngineConfig struct {
 	// Speed is a playback speed multiplier (1.0 = normal). Engines may
 	// ignore this.
 	Speed float64
+
+	// ServerURL is the HTTP endpoint for remote TTS engines (e.g.
+	// "http://localhost:8020"). Used by the xtts-http engine.
+	ServerURL string
+
+	// Speaker is the voice name for voice-cloning engines. It matches a
+	// file in the server's speakers directory (without the .wav extension).
+	Speaker string
 }
 
 var (

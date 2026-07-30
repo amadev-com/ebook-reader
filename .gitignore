@@ -5,3 +5,8 @@
 # build artifacts
 /bookai
 *.epub
+
+# tts-server runtime volumes (models, voices, output)
+/tts-server/models
+/tts-server/output
+/tts-server/speakers/*.wav

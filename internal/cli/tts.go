@@ -156,6 +156,8 @@ func buildEngineConfig(proj *project.Project) tts.EngineConfig {
 		Python:      cfg.Python,
 		Device:      cfg.Device,
 		Speed:       cfg.Speed,
+		ServerURL:   cfg.ServerURL,
+		Speaker:     cfg.Speaker,
 	}
 }
 

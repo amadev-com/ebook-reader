@@ -1,0 +1,48 @@
+# docker-compose.yml — XTTS v2 TTS server for bookai
+#
+# Uses the athomasson2/ebook2audiobook:cu130 image as a base because it
+# provides CUDA 13.0 + PyTorch 2.11 + coqui-tts 0.27.5 — the only pre-built
+# image that supports NVIDIA Blackwell GPUs (RTX 50xx, SM 12.0).
+#
+# We override the entrypoint to run our minimal FastAPI server (server.py)
+# instead of the full ebook2audiobook Gradio app.
+#
+# Usage:
+#   docker compose up -d          # start the TTS server
+#   docker compose logs -f        # watch logs (model loads on first request)
+#   docker compose down           # stop
+#
+# The server will be available at http://localhost:8020
+# API docs at http://localhost:8020/docs
+#
+# Place voice sample WAVs in ./speakers/ (mono, 22050Hz, 7-9 seconds).
+# The XTTS v2 model (~1.8GB) is downloaded on first synthesis and cached
+# in ./models/.
+
+services:
+  xtts:
+    image: athomasson2/ebook2audiobook:cu130
+    container_name: bookai-xtts
+    entrypoint: ["python3", "/app/server/server.py"]
+    ports:
+      - "8020:8020"
+    environment:
+      - COQUI_TOS_AGREED=1
+      - SPEAKERS_DIR=/app/speakers
+      - OUTPUT_DIR=/app/output
+      - TTS_HOME=/app/models
+      - PORT=8020
+      - HOST=0.0.0.0
+    volumes:
+      - ./server.py:/app/server/server.py:ro
+      - ./speakers:/app/speakers:rw
+      - ./models:/app/models:rw
+      - ./output:/app/output:rw
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
