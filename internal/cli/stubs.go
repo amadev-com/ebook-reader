@@ -8,25 +8,8 @@ import (
 
 // The following commands are stubs for Milestone 1. They exist so the CLI
 // surface is complete from day one and so users get a clear message instead of
-// an "unknown command" error. They are implemented in Milestones 2 and 3.
-
-func newTranslateCmd() *cobra.Command {
-	var (
-		force   bool
-		chapter int
-	)
-	cmd := &cobra.Command{
-		Use:   "translate",
-		Short: "Translate chapters to the target language (Milestone 2)",
-		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return fmt.Errorf("translate: not implemented in Milestone 1 (planned for M2)")
-		},
-	}
-	cmd.Flags().BoolVar(&force, "force", false, "re-translate chapters whose translation already exists")
-	cmd.Flags().IntVar(&chapter, "chapter", 0, "translate only a single chapter id (1-based)")
-	return cmd
-}
+// an "unknown command" error. translate is implemented in M2 (see translate.go);
+// ssml and tts are implemented in M3.
 
 func newSSMLCmd() *cobra.Command {
 	return &cobra.Command{

@@ -2,7 +2,7 @@
 
 A local, file-based batch pipeline that turns an EPUB into a consistently-translated, glossary-backed audiobook.
 
-> **Status: Milestone 1 (in progress).** Only EPUB import and chapter detection are implemented. Translation, glossary, memory, and TTS stages are stubbed.
+> **Status: Milestone 2 complete.** EPUB import, chapter detection, glossary extraction, and translation are implemented. TTS (M3) is stubbed.
 
 ## Pipeline
 
@@ -30,13 +30,23 @@ audio/       (chapter_NNN.wav)
 
 Every stage is idempotent: it skips artifacts that already exist unless `--force` is passed, and most stages accept `--chapter N` to target a single chapter.
 
-## Quickstart (M1)
+## Quickstart (M1 + M2)
 
 ```bash
 # from a fresh project directory
 bookai import /path/to/book.epub
 bookai analyze-chapters
+bookai analyze          # extract glossary + characters (requires OPENAI_API_KEY)
+bookai translate        # translate all chapters (requires OPENAI_API_KEY)
+bookai verify-glossary  # check for untranslated terms
 bookai status
+```
+
+Translate a single chapter or range:
+
+```bash
+bookai translate --chapter 5
+bookai translate --range 1-10
 ```
 
 ## Configuration
