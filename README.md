@@ -367,6 +367,11 @@ glossary:                        # optional: lock specific translations
     - source: Dalki
       target: Далки
       type: term
+pronunciation:                   # optional: lock IPA phonemes for SSML
+  - term: Куинн
+    phonemes: kʊˈɪn
+  - term: Далки
+    phonemes: ˈdalkʲi
 ```
 
 The OpenAI API key is read from the `OPENAI_API_KEY` environment variable — it is **never** stored in `config.yaml`.

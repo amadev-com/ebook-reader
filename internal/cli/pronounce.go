@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"ebook-reader/internal/config"
 	"ebook-reader/internal/project"
 	"ebook-reader/internal/translation"
 	"ebook-reader/internal/tts"
@@ -112,12 +114,17 @@ func runPronounce(ctx context.Context, proj *project.Project, force bool) error 
 	}
 	slog.Info("extracted pronunciation hints", "entries", len(result.Entries))
 
+	// Apply config overrides: force the phonemes of any entry that matches a
+	// config pronunciation override. Config entries not found by the model
+	// are added as new entries.
+	applyPronunciationOverrides(&result, proj.Cfg.Pronunciation)
+
 	// Build and save the pronunciation store.
 	pron := &tts.Pronunciation{Entries: result.Entries}
 	if err := pron.Save(proj.AIDir()); err != nil {
 		return err
 	}
-	slog.Info("saved pronunciation hints", "path", pronPath)
+	slog.Info("saved pronunciation hints", "path", pronPath, "entries", len(pron.Entries))
 
 	return nil
 }
@@ -125,4 +132,48 @@ func runPronounce(ctx context.Context, proj *project.Project, force bool) error 
 // pronunciationResult is the JSON shape we expect from the model.
 type pronunciationResult struct {
 	Entries []tts.PronunciationEntry `json:"entries"`
+}
+
+// applyPronunciationOverrides forces the phonemes of any entry that matches a
+// config pronunciation override. Config entries not found by the model are
+// added as new entries.
+func applyPronunciationOverrides(result *pronunciationResult, overrides []config.PronunciationOverride) {
+	if len(overrides) == 0 {
+		return
+	}
+	overridden := 0
+	// Override existing entries.
+	for i := range result.Entries {
+		for _, ov := range overrides {
+			if strings.EqualFold(result.Entries[i].Term, ov.Term) {
+				result.Entries[i].Phonemes = ov.Phonemes
+				if ov.Alphabet != "" {
+					result.Entries[i].Alphabet = ov.Alphabet
+				}
+				overridden++
+				break
+			}
+		}
+	}
+	// Add config entries not found by the model.
+	for _, ov := range overrides {
+		found := false
+		for _, e := range result.Entries {
+			if strings.EqualFold(e.Term, ov.Term) {
+				found = true
+				break
+			}
+		}
+		if !found && ov.Term != "" && ov.Phonemes != "" {
+			result.Entries = append(result.Entries, tts.PronunciationEntry{
+				Term:     ov.Term,
+				Phonemes: ov.Phonemes,
+				Alphabet: ov.Alphabet,
+			})
+			overridden++
+		}
+	}
+	if overridden > 0 {
+		slog.Info("applied pronunciation overrides", "overridden", overridden, "config_entries", len(overrides))
+	}
 }

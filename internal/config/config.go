@@ -40,6 +40,11 @@ type Config struct {
 	// translated. The AI still fills in other fields (role, description, type)
 	// from context, but the translation is always overridden.
 	Glossary GlossaryOverrides `yaml:"glossary"`
+
+	// Pronunciation holds user-specified IPA phoneme overrides for the SSML
+	// <phoneme> tags. These take precedence over AI-generated hints — useful
+	// for fixing mispronunciations without re-running the model.
+	Pronunciation []PronunciationOverride `yaml:"pronunciation"`
 }
 
 // GlossaryOverrides holds user-specified translation overrides.
@@ -60,6 +65,15 @@ type GlossaryOverride struct {
 	Source string `yaml:"source"` // English term as it appears in the text
 	Target string `yaml:"target"` // locked Russian translation
 	Type   string `yaml:"type"`   // optional: character|place|organization|title|term
+}
+
+// PronunciationOverride is one user-specified IPA phoneme override. The Term
+// field matches the Russian text as it appears in the translation; Phonemes
+// is the IPA transcription the TTS engine should use.
+type PronunciationOverride struct {
+	Term     string `yaml:"term"`     // Russian text as it appears in translation
+	Phonemes string `yaml:"phonemes"` // IPA transcription, e.g. "kʊˈɪn"
+	Alphabet string `yaml:"alphabet"` // optional: "ipa" (default), "x-sampa"
 }
 
 // Languages is the translation direction.
