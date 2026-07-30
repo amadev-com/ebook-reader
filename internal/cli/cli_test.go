@@ -138,7 +138,7 @@ func TestRunImportAndAnalyzeChapters(t *testing.T) {
 	}
 
 	// Analyze chapters.
-	if err := runAnalyzeChapters(t.Context(), proj, true, 0, "", ""); err != nil {
+	if err := runAnalyzeChapters(t.Context(), proj, true, 0, "", "", nil); err != nil {
 		t.Fatalf("runAnalyzeChapters: %v", err)
 	}
 	// Expect 2 chapters (cover skipped).
@@ -208,7 +208,7 @@ func TestRunAnalyzeChaptersRequiresImport(t *testing.T) {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
 	// No import done yet -> analyze-chapters should fail with a clear message.
-	err = runAnalyzeChapters(t.Context(), proj, true, 0, "", "")
+	err = runAnalyzeChapters(t.Context(), proj, true, 0, "", "", nil)
 	if err == nil {
 		t.Fatal("analyze-chapters without import succeeded, want error")
 	}

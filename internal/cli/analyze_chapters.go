@@ -23,6 +23,7 @@ func newAnalyzeChaptersCmd() *cobra.Command {
 		chapter  int
 		chRange  string
 		strategy string
+		strip    []string
 	)
 	cmd := &cobra.Command{
 		Use:   "analyze-chapters",
@@ -36,17 +37,18 @@ func newAnalyzeChaptersCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runAnalyzeChapters(ctx, proj, force, chapter, chRange, strategy)
+			return runAnalyzeChapters(ctx, proj, force, chapter, chRange, strategy, strip)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "re-analyze chapters whose JSON already exists")
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "analyze only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "analyze a range of chapter ids, e.g. 5-12")
 	cmd.Flags().StringVar(&strategy, "strategy", "", "force detection strategy: toc|heading|per-item")
+	cmd.Flags().StringArrayVar(&strip, "strip", nil, "remove all occurrences of this text from chapter source (repeatable)")
 	return cmd
 }
 
-func runAnalyzeChapters(_ context.Context, proj *project.Project, force bool, chapter int, chRange, strategy string) error {
+func runAnalyzeChapters(_ context.Context, proj *project.Project, force bool, chapter int, chRange, strategy string, strip []string) error {
 	extractedDir := proj.ExtractedDir()
 	spinePath := filepath.Join(extractedDir, "spine.json")
 	if !project.Exists(spinePath) {
@@ -72,6 +74,27 @@ func runAnalyzeChapters(_ context.Context, proj *project.Project, force bool, ch
 	}
 	slog.Info("chapter detection complete",
 		"strategy", res.Index.Strategy, "chapters", res.Index.ChapterCount, "skipped", len(res.Skipped))
+
+	// Apply --strip filters: remove all occurrences of each strip string from
+	// every chapter's source text. Useful for removing promotional notices,
+	// author notes, or other boilerplate that appears across chapters.
+	if len(strip) > 0 {
+		stripped := 0
+		for i := range res.Chapters {
+			orig := res.Chapters[i].Source
+			cleaned := orig
+			for _, s := range strip {
+				cleaned = strings.ReplaceAll(cleaned, s, "")
+			}
+			// Collapse whitespace runs left behind by removals.
+			cleaned = collapseWhitespace(cleaned)
+			if cleaned != orig {
+				res.Chapters[i].Source = cleaned
+				stripped++
+			}
+		}
+		slog.Info("applied strip filters", "patterns", len(strip), "chapters_modified", stripped)
+	}
 
 	// Determine which chapter ids to write (default: all).
 	ids, err := parseChapterFilter(chapter, chRange, res.Index.ChapterCount)
@@ -205,4 +228,15 @@ func parseChapterFilter(chapter int, chRange string, maxID int) (map[int]bool, e
 
 func chapterPath(chaptersDir string, id int) string {
 	return filepath.Join(chaptersDir, fmt.Sprintf("chapter_%03d.json", id))
+}
+
+// collapseWhitespace replaces runs of 3+ newlines (often left after removing
+// promotional blocks) with a double newline (paragraph separator), and trims
+// leading/trailing whitespace.
+func collapseWhitespace(s string) string {
+	// Collapse 3+ newlines to exactly 2 (paragraph break).
+	for strings.Contains(s, "\n\n\n") {
+		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
+	}
+	return strings.TrimSpace(s)
 }
