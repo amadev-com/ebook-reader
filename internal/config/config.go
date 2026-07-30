@@ -24,7 +24,9 @@ type Config struct {
 	// itself is NOT stored here; it is read from OPENAI_API_KEY at runtime.
 	OpenAI OpenAI `yaml:"openai"`
 
-	// TTS holds XTTS v2 configuration. Used only in M3.
+	// TTS holds text-to-speech configuration. Used in M3+. The engine is
+	// swappable: "noop" (default, for pipeline testing), or any registered
+	// engine name (e.g. "sherpa-onnx", "piper", "xtts-v2").
 	TTS TTS `yaml:"tts"`
 
 	// Paths allows overriding the default project subdirectory layout. Any
@@ -41,18 +43,25 @@ type Languages struct {
 
 // OpenAI is the model/endpoint configuration. API key is in the env.
 type OpenAI struct {
-	BaseURL          string `yaml:"base_url"`           // empty = OpenAI default
+	BaseURL          string `yaml:"base_url"`          // empty = OpenAI default
 	TranslationModel string `yaml:"translation_model"` // gpt-4.1
 	HelperModel      string `yaml:"helper_model"`      // gpt-4.1-mini (glossary, summaries)
 	MaxRetries       int    `yaml:"max_retries"`
 }
 
-// TTS is XTTS v2 configuration (M3 only).
+// TTS is text-to-speech configuration (M3+). The Engine field selects which
+// registered TTS backend to use. Engine-specific paths (model, data dir,
+// tokens) are resolved by the CLI layer into an tts.EngineConfig.
 type TTS struct {
-	Engine      string `yaml:"engine"`       // "xtts-v2"
-	VoiceSample string `yaml:"voice_sample"` // path to a short reference wav
-	Language    string `yaml:"language"`     // "ru"
-	Python      string `yaml:"python"`       // python interpreter, default "python3"
+	Engine      string  `yaml:"engine"`       // "noop" (default), "sherpa-onnx", "piper", "xtts-v2", ...
+	VoiceSample string  `yaml:"voice_sample"` // path to a short reference wav (voice-cloning engines)
+	Language    string  `yaml:"language"`     // target language code, e.g. "ru"
+	Python      string  `yaml:"python"`       // python interpreter (subprocess engines), default "python3"
+	ModelPath   string  `yaml:"model_path"`   // path to ONNX/model file
+	DataDir     string  `yaml:"data_dir"`     // path to espeak-ng-data / phoneme data
+	TokensPath  string  `yaml:"tokens_path"`  // path to tokens file
+	Device      string  `yaml:"device"`       // "cpu" (default), "cuda", etc.
+	Speed       float64 `yaml:"speed"`        // playback speed multiplier, 1.0 = normal
 }
 
 // Paths overrides default project subdirectory names.
@@ -86,9 +95,10 @@ func Default(projectName string) Config {
 			MaxRetries:       3,
 		},
 		TTS: TTS{
-			Engine:   "xtts-v2",
+			Engine:   "noop",
 			Language: "ru",
 			Python:   "python3",
+			Speed:    1.0,
 		},
 		Paths: Paths{
 			Source:      "source",

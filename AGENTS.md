@@ -19,7 +19,7 @@ Project layout: `cmd/bookai` (binary) + `internal/{epub,chapters,project,config,
 - Go 1.26, Cobra CLI, YAML config (`gopkg.in/yaml.v3`).
 - EPUB parsing: custom reader (`archive/zip` + `encoding/xml` + `golang.org/x/net/html`).
 - Translation: OpenAI **official** SDK (`github.com/openai/openai-go`), `gpt-4.1` / `gpt-4.1-mini`. EN→RU. (M2)
-- TTS: XTTS v2 (Python subprocess) — M3 only.
+- TTS: swappable Engine interface (`internal/tts/engine.go`). Default "noop" engine for pipeline testing. Real engines (sherpa-onnx, piper, xtts-v2) registered via `tts.Register`. (M3)
 - Chapter classifier: rules-only in M1 (AI fallback designed but not wired).
 
 ## Milestone 1 — COMPLETE
@@ -39,7 +39,18 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 - `bookai verify-glossary`: scans translations for untranslated English glossary terms, writes `ai/glossary_violations.json`.
 - OpenAI SDK: official `github.com/openai/openai-go/v3` (v3.47.0). Built-in retry via `option.WithMaxRetries`.
 - Flags: `--force`, `--chapter N`, `--range M-N`, `--skip-memory`, `--skip-glossary-update`.
-- `ssml`/`tts` remain stubs (M3).
+
+## Milestone 3 — TTS pipeline (COMPLETE — scaffolding with swappable engine)
+
+- `bookai ssml`: converts `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C SSML with `<p>`/`<s>`/`<phoneme>` tags). Pronunciation hints from `ai/pronunciation.json` applied via greedy longest-match, case-insensitive, word-boundary aware.
+- `bookai tts`: synthesizes `tts/chapter_NNN.ssml` into `audio/chapter_NNN.wav` via the configured engine (`tts.engine` in config.yaml). `--merge` concatenates all chapter WAVs into `audio/book.wav` via ffmpeg.
+- Engine interface: `tts.Engine` with `Name()` and `Synthesize(ctx, ssml, outPath)`. Engines register via `tts.Register(name, factory)`. `tts.NewEngine(cfg)` looks up the factory.
+- NoopEngine: default engine that writes a valid sine-tone WAV. Requires no external deps — enables full pipeline testing (SSML → audio → merge) without a real TTS backend.
+- `tts.ExtractPlainText(ssml)`: strips SSML tags for engines that don't support SSML natively.
+- Config: `tts.engine` ("noop" default), `tts.language`, `tts.model_path`, `tts.data_dir`, `tts.tokens_path`, `tts.device`, `tts.speed`, `tts.voice_sample`, `tts.python`.
+- Flags: `--force`, `--chapter N`, `--range M-N`, `--merge`.
+- Validated end-to-end: import → analyze-chapters → (fake translation) → ssml → tts → merge. Idempotent, `--force` works, pronunciation hints apply correctly.
+- To add a real engine: create `internal/tts/<engine>.go`, implement `Engine`, call `Register("name", factory)` in `init()`. No changes needed to CLI or pipeline code.
 
 ## Conventions
 
@@ -49,10 +60,15 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 - Context: every stage takes `context.Context`; CLI wires a `signal.NotifyContext` root.
 - Doc comments on exported symbols must start with the symbol name (revive rule).
 
-## Next: Milestone 3 (TTS)
+## Next: Real TTS engine integration
 
-See `/home/max/.devin/plans/plan-2125d2a83ef7b1fc.md` Phase 5. Key artifacts ready:
-- `translation/chapter_NNN.ru.txt` (from M2) feeds SSML generation.
-- `ai/pronunciation.json` (to be populated during M3 glossary extraction).
-- `tts/` and `audio/` dirs ready.
-- Config has `tts.engine`, `tts.voice_sample`, `tts.language`, `tts.python` defaults.
+The M3 scaffolding is complete with the noop engine. To add a real engine:
+1. Create `internal/tts/<engine>.go` implementing the `Engine` interface.
+2. Call `Register("name", factory)` in `init()`.
+3. Set `tts.engine: "name"` in config.yaml.
+4. No changes needed to CLI or pipeline code.
+
+Candidate engines (researched, not yet implemented):
+- **Sherpa-ONNX** (Go-native, `github.com/k2-fsa/sherpa-onnx-go`): Russian VITS model `vits-piper-ru_RU-ruslan-medium` (~60MB), ONNX Runtime with optional CUDA. Lightest option.
+- **Piper** (subprocess): lightweight C++ binary, many Russian voices, CPU-only but fast.
+- **XTTS v2** (Python subprocess): best quality + voice cloning, but heavy (Python + torch).
