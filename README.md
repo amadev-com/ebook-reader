@@ -111,19 +111,16 @@ bookai analyze-chapters -p my-vampire-system
 
 Writes `chapters/chapter_NNN.json` (one per chapter), `chapters/_index.json`, and `chapters/_skipped.json` (non-chapter sections like TOC/notes).
 
-If chapters contain promotional text, author notes, or other boilerplate, strip them with `--strip` (repeatable):
+If chapters contain promotional text, author notes, or other boilerplate after a `***` separator, strip them with `--strip` (repeatable):
 
 ```bash
 bookai analyze-chapters -p my-vampire-system --force \
-  --strip "*****
-
-For MVS artwork, follow on Instagram: jksmanga" \
-  --strip "****
-
-Want another mass release? Then remember to vote."
+  --strip "For MVS artwork" \
+  --strip "Want another mass release" \
+  --strip "We hit 22,000 Stones"
 ```
 
-Each `--strip` string is removed from every chapter's source text. Use `--force` to re-write existing chapter files.
+Each `--strip` string is a **trigger**: if it appears in the last 400 chars of a chapter, everything from the last `***` separator before the trigger to the end of the chapter is removed. This handles variations in the boilerplate text — you only need to match a short unique fragment.
 
 ### Step 3 — Extract glossary and characters
 

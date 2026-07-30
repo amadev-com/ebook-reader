@@ -75,19 +75,20 @@ func runAnalyzeChapters(_ context.Context, proj *project.Project, force bool, ch
 	slog.Info("chapter detection complete",
 		"strategy", res.Index.Strategy, "chapters", res.Index.ChapterCount, "skipped", len(res.Skipped))
 
-	// Apply --strip filters: remove all occurrences of each strip string from
-	// every chapter's source text. Useful for removing promotional notices,
-	// author notes, or other boilerplate that appears across chapters.
+	// Apply --strip filters: each strip string is a "trigger" — if it appears
+	// in the last 400 chars of a chapter's source, the chapter is truncated from
+	// the last "***" separator (3+ stars) before the trigger to the end. This
+	// removes promotional notices, author notes, and other boilerplate that
+	// appears after a *** separator at the end of chapters.
 	if len(strip) > 0 {
 		stripped := 0
 		for i := range res.Chapters {
 			orig := res.Chapters[i].Source
 			cleaned := orig
 			for _, s := range strip {
-				cleaned = strings.ReplaceAll(cleaned, s, "")
+				cleaned = stripTrailer(cleaned, s)
 			}
-			// Collapse whitespace runs left behind by removals.
-			cleaned = collapseWhitespace(cleaned)
+			cleaned = strings.TrimSpace(cleaned)
 			if cleaned != orig {
 				res.Chapters[i].Source = cleaned
 				stripped++
@@ -230,13 +231,49 @@ func chapterPath(chaptersDir string, id int) string {
 	return filepath.Join(chaptersDir, fmt.Sprintf("chapter_%03d.json", id))
 }
 
-// collapseWhitespace replaces runs of 3+ newlines (often left after removing
-// promotional blocks) with a double newline (paragraph separator), and trims
-// leading/trailing whitespace.
-func collapseWhitespace(s string) string {
-	// Collapse 3+ newlines to exactly 2 (paragraph break).
-	for strings.Contains(s, "\n\n\n") {
-		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
+// stripTrailer checks if the trigger string appears in the last 400 chars of
+// text. If it does, it finds the last "***" separator (3+ consecutive stars)
+// that appears before the trigger and removes everything from that separator
+// to the end of the text. If no "***" separator is found before the trigger,
+// the text is truncated at the trigger position instead.
+func stripTrailer(text, trigger string) string {
+	if trigger == "" || len(text) == 0 {
+		return text
 	}
-	return strings.TrimSpace(s)
+
+	// Check only the last 400 chars for the trigger.
+	tailStart := len(text) - 400
+	if tailStart < 0 {
+		tailStart = 0
+	}
+	tail := text[tailStart:]
+
+	triggerIdx := strings.Index(strings.ToLower(tail), strings.ToLower(trigger))
+	if triggerIdx < 0 {
+		return text // trigger not found in tail
+	}
+
+	// Absolute position of the trigger in the full text.
+	triggerAbs := tailStart + triggerIdx
+
+	// Search backwards from the trigger for a "***" separator (3+ stars).
+	// We look in the text up to the trigger position.
+	cutFrom := triggerAbs
+	for i := triggerAbs - 1; i >= 2; i-- {
+		if text[i] == '*' && text[i-1] == '*' && text[i-2] == '*' {
+			// Found a 3+ star separator. Walk back to include all leading
+			// stars and any whitespace before them.
+			cutFrom = i - 2
+			for cutFrom > 0 && text[cutFrom-1] == '*' {
+				cutFrom--
+			}
+			// Trim trailing whitespace/newlines before the separator.
+			for cutFrom > 0 && (text[cutFrom-1] == '\n' || text[cutFrom-1] == '\r' || text[cutFrom-1] == ' ' || text[cutFrom-1] == '\t') {
+				cutFrom--
+			}
+			break
+		}
+	}
+
+	return text[:cutFrom]
 }
