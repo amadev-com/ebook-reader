@@ -45,6 +45,7 @@ func NewRoot() *cobra.Command {
 		newStatusCmd(),
 		newTranslateCmd(),
 		newVerifyGlossaryCmd(),
+		newPronounceCmd(),
 		newSSMLCmd(),
 		newTTSCmd(),
 	)

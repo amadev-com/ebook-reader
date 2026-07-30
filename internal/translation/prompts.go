@@ -144,3 +144,46 @@ Only extract terms that are clearly meaningful and likely to recur. Skip common 
 func NewTermsUser(_ ChapterInfo, source, translation string) string {
 	return fmt.Sprintf("Source (English):\n\n%s\n\nTranslation (Russian):\n\n%s\n\nExtract new glossary terms as JSON.", source, translation)
 }
+
+// --- Pronunciation extraction prompts (bookai pronounce) ---
+
+// PronunciationSystem is the system prompt for generating IPA phonetic
+// representations of glossary terms and character names for TTS engines.
+const PronunciationSystem = `You are a phonetics expert specializing in Russian pronunciation for text-to-speech systems. Your task is to provide IPA (International Phonetic Alphabet) transcriptions for Russian terms so that TTS engines pronounce them correctly.
+
+Rules:
+- Provide IPA transcription for the RUSSIAN text (the "target" field), not the English source.
+- Use standard IPA notation: /ˈgorod/ for "город", /kʊˈɪn/ for "Куинн".
+- Place primary stress mark ˈ before the stressed syllable.
+- For transliterated English names, provide the pronunciation as it would be read by a Russian speaker (not the original English pronunciation).
+- For standard Russian words, provide their normal Russian IPA pronunciation.
+- Skip terms that are common Russian words with unambiguous pronunciation.
+- Focus on names, transliterated foreign words, invented terms, and anything a TTS engine might mispronounce.
+
+Return a JSON object with this exact shape:
+{
+  "entries": [{"term": "Russian term", "phonemes": "IPA transcription", "alphabet": "ipa"}]
+}
+
+If a term does not need pronunciation hints, omit it from the response. If no terms need hints, return {"entries": []}.`
+
+// PronunciationUser builds the user prompt from glossary terms and character
+// names. It sends the Russian (target) text for each term so the model can
+// provide IPA phonemes for the text the TTS engine will actually read.
+func PronunciationUser(terms []PronunciationInput) string {
+	var b strings.Builder
+	b.WriteString("Provide IPA pronunciation hints for these Russian terms used in a book translation.\n\n")
+	b.WriteString("Terms (Russian text that the TTS engine will read):\n\n")
+	for _, t := range terms {
+		fmt.Fprintf(&b, "- %s\n", t.Russian)
+	}
+	b.WriteString("\nReturn the JSON pronunciation hints now.")
+	return b.String()
+}
+
+// PronunciationInput is one term to generate pronunciation hints for.
+type PronunciationInput struct {
+	Russian string // the Russian text as it appears in translation
+	Source  string // the English source (for context, not pronounced)
+	Type    string // term type: character, place, organization, title, term
+}

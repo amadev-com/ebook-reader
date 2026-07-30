@@ -24,10 +24,13 @@ ai/          (glossary.json, characters.json)
 translation/ + memory/   (chapter_NNN.ru.txt, chapter_NNN.summary.txt)
         │  5. bookai verify-glossary    ← optional QA check
         ▼
-        │  6. bookai ssml
+        │  6. bookai pronounce          ← requires OPENAI_API_KEY
+        ▼
+ai/          (pronunciation.json)
+        │  7. bookai ssml
         ▼
 tts/         (chapter_NNN.ssml)
-        │  7. bookai tts                ← requires TTS server (Docker)
+        │  8. bookai tts                ← requires TTS server (Docker)
         ▼
 audio/       (chapter_NNN.mp3)
 ```
@@ -161,7 +164,15 @@ bookai verify-glossary -p my-vampire-system
 
 Scans translations for untranslated English glossary terms. Writes `ai/glossary_violations.json`.
 
-### Step 6 — Generate SSML
+### Step 6 — Generate pronunciation hints
+
+```bash
+bookai pronounce -p my-vampire-system
+```
+
+Reads `ai/glossary.json` + `ai/characters.json` and asks `gpt-4.1-mini` for IPA phonetic transcriptions of the Russian terms. Writes `ai/pronunciation.json`, which is consumed by `bookai ssml` to insert `<phoneme>` tags for names and terms that TTS engines might mispronounce. Use `--force` to re-generate.
+
+### Step 7 — Generate SSML
 
 ```bash
 bookai ssml -p my-vampire-system
@@ -169,7 +180,7 @@ bookai ssml -p my-vampire-system
 
 Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C SSML with `<p>`/`<s>`/`<phoneme>` tags). Pronunciation hints from `ai/pronunciation.json` are applied if present.
 
-### Step 7 — Synthesize audio
+### Step 8 — Synthesize audio
 
 ```bash
 bookai tts -p my-vampire-system
