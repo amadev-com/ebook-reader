@@ -128,12 +128,14 @@ Each `--strip` string is a **trigger**: if it appears in the last 400 chars of a
 bookai analyze -p my-vampire-system
 ```
 
-Uses `gpt-4.1-mini` to extract a glossary (terms + translations) and character list from chapter snippets. Writes `ai/glossary.json` and `ai/characters.json`.
+Sends full chapter texts in batches to `gpt-4.1-mini` for glossary extraction. Batches are processed sequentially — each batch receives the accumulated glossary from previous batches so the model merges new findings without duplicates. Writes `ai/glossary.json` and `ai/characters.json`.
 
-Use `--chapter` or `--range` to analyze only a subset of chapters:
+Options:
+- `--batch-size N` — chapters per API call (default 10, ~20K tokens per batch)
+- `--chapter N` / `--range M-N` — analyze only a subset of chapters
 
 ```bash
-bookai analyze -p my-vampire-system --range 1-100
+bookai analyze -p my-vampire-system --batch-size 5 --range 1-100
 ```
 
 ### Step 4 — Translate

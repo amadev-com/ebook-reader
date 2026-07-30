@@ -15,8 +15,12 @@ type ChapterInfo struct {
 
 // GlossaryExtractionSystem is the system prompt for the terminology extraction
 // call. It instructs the model to return a JSON object with characters,
-// places, organizations, titles, and invented terms.
-const GlossaryExtractionSystem = `You are a literary translation assistant specializing in English-to-Russian book translation. Your task is to analyze a book and extract a terminology glossary that will ensure consistent translation across all chapters.
+// places, organizations, titles, and invented terms. The model receives full
+// chapter texts in batches and must extract all meaningful terms from each
+// batch.
+const GlossaryExtractionSystem = `You are a literary translation assistant specializing in English-to-Russian book translation. Your task is to analyze chapters from a book and extract a terminology glossary that will ensure consistent translation across all chapters.
+
+You will receive the FULL TEXT of several chapters. Read each chapter carefully and extract ALL meaningful terms, characters, places, and invented words — not just those at the beginning.
 
 Extract:
 - characters: named people (protagonists, antagonists, supporting). Include their role if obvious.
@@ -42,24 +46,33 @@ Guidelines:
 - Be consistent: if "The Order" appears, translate it the same way everywhere.
 - If the book is a web novel or light novel, pay attention to game-like terms (levels, quests, stats, systems).`
 
-// GlossaryExtractionUser builds the user prompt from chapter titles + opening
-// snippets. We send only metadata to keep the call cheap.
-func GlossaryExtractionUser(chapters []ChapterSnippet) string {
+// GlossaryExtractionUser builds the user prompt from chapter full texts.
+// Chapters are processed in batches to keep each API call within context
+// limits while still reading the full text of every chapter. If
+// existingGlossary is non-empty, it is included so the model can merge new
+// findings with previously extracted terms rather than producing duplicates.
+func GlossaryExtractionUser(chapters []ChapterText, existingGlossary string) string {
 	var b strings.Builder
-	b.WriteString("Analyze this book and extract the terminology glossary.\n\n")
-	b.WriteString("Book chapters (title + opening text):\n\n")
-	for _, ch := range chapters {
-		fmt.Fprintf(&b, "## %s\n%s\n\n", ch.Title, ch.Snippet)
+	b.WriteString("Analyze these chapters and extract the terminology glossary.\n\n")
+	if existingGlossary != "" {
+		b.WriteString("Glossary extracted from previous chapters (merge with your new findings, do not duplicate):\n\n")
+		b.WriteString(existingGlossary)
+		b.WriteString("\n\n")
 	}
-	b.WriteString("\nReturn the JSON glossary now.")
+	b.WriteString("Chapters (full text):\n\n")
+	for _, ch := range chapters {
+		fmt.Fprintf(&b, "## %s\n%s\n\n", ch.Title, ch.Text)
+	}
+	b.WriteString("\nReturn the merged JSON glossary now (all previous terms + any new ones from these chapters).")
 	return b.String()
 }
 
-// ChapterSnippet is a chapter's title + first N chars, used for cheap
-// glossary extraction without sending the full book.
-type ChapterSnippet struct {
-	Title   string
-	Snippet string
+// ChapterText is a chapter's title + full source text, used for batched
+// glossary extraction. Each batch sends the full text of N chapters to the
+// model so no terms are missed regardless of where they appear.
+type ChapterText struct {
+	Title string
+	Text  string
 }
 
 // --- Translation prompts (bookai translate) ---

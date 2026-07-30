@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,14 +15,16 @@ import (
 )
 
 // newAnalyzeCmd implements `bookai analyze`: extracts a glossary and character
-// list from the book by sending chapter titles + opening snippets to the
-// helper model (gpt-4.1-mini). This is a cheap pre-translation pass that
-// establishes terminology consistency before any chapter is translated.
+// list from the book by sending full chapter texts in batches to the helper
+// model (gpt-4.1-mini). Batches are processed sequentially; the accumulated
+// glossary from previous batches is fed into each subsequent call so the model
+// can merge new findings without producing duplicates.
 func newAnalyzeCmd() *cobra.Command {
 	var (
-		force   bool
-		chapter int
-		chRange string
+		force     bool
+		chapter   int
+		chRange   string
+		batchSize int
 	)
 	cmd := &cobra.Command{
 		Use:   "analyze",
@@ -37,24 +38,29 @@ func newAnalyzeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runAnalyze(ctx, proj, force, chapter, chRange)
+			return runAnalyze(ctx, proj, force, chapter, chRange, batchSize)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "re-analyze even if glossary.json already exists")
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "analyze only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "analyze a range of chapter ids, e.g. 5-12")
+	cmd.Flags().IntVar(&batchSize, "batch-size", 10, "number of chapters per API call (full text)")
 	return cmd
 }
 
-// runAnalyze loads chapters, builds snippets, calls the helper model for
-// glossary extraction, and writes ai/glossary.json + ai/characters.json.
-// When chapter/chRange are set, only the selected chapters are included in
-// the snippets sent to the model.
-func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter int, chRange string) error {
+// runAnalyze loads chapters, sends them in sequential batches to the helper
+// model for glossary extraction, and writes ai/glossary.json +
+// ai/characters.json. Each batch receives the accumulated glossary from
+// previous batches so the model merges rather than duplicates.
+func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter int, chRange string, batchSize int) error {
 	glossaryPath := filepath.Join(proj.AIDir(), "glossary.json")
 	if project.Exists(glossaryPath) && !force {
 		slog.Info("glossary already exists, skipping (use --force to re-analyze)", "path", glossaryPath)
 		return nil
+	}
+
+	if batchSize < 1 {
+		batchSize = 10
 	}
 
 	// Load all chapters.
@@ -80,11 +86,7 @@ func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter 
 		}
 		chs = filtered
 	}
-	slog.Info("loaded chapters for analysis", "count", len(chs))
-
-	// Build snippets: title + first ~500 chars of source.
-	snippets := buildSnippets(chs)
-	slog.Info("built chapter snippets", "count", len(snippets), "snippet_chars", 500)
+	slog.Info("loaded chapters for analysis", "count", len(chs), "batch_size", batchSize)
 
 	// Create the OpenAI client.
 	client, err := translation.NewClient(proj.Cfg.OpenAI)
@@ -93,38 +95,78 @@ func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter 
 	}
 	slog.Info("openai client ready", "helper_model", client.HelperModel())
 
-	// Call the helper model for glossary extraction.
-	slog.Info("calling model for glossary extraction", "model", client.HelperModel())
-	resp, err := client.Chat(ctx, translation.ChatRequest{
-		System:   translation.GlossaryExtractionSystem,
-		User:     translation.GlossaryExtractionUser(snippets),
-		Model:    client.HelperModel(),
-		JSONMode: true,
-	})
-	if err != nil {
-		return err
-	}
-	slog.Info("glossary extraction complete", "prompt_tokens", resp.Usage.PromptTokens,
-		"completion_tokens", resp.Usage.CompletionTokens)
+	// Process chapters in sequential batches. The accumulated glossary JSON
+	// from previous batches is passed to each subsequent call so the model can
+	// merge new terms with existing ones.
+	var accumulated glossaryExtractionResult
+	totalBatches := (len(chs) + batchSize - 1) / batchSize
+	for i := 0; i < len(chs); i += batchSize {
+		if ctx.Err() != nil {
+			slog.Info("interrupted by signal", "completed_batches", i/batchSize)
+			return ctx.Err()
+		}
 
-	// Parse the JSON response.
-	var result glossaryExtractionResult
-	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
-		return fmt.Errorf("parse glossary JSON: %w (content: %s)", err, truncate(resp.Content, 200))
+		end := i + batchSize
+		if end > len(chs) {
+			end = len(chs)
+		}
+		batch := chs[i:end]
+		batchNum := i/batchSize + 1
+
+		// Build ChapterText slice with full source text.
+		chTexts := make([]translation.ChapterText, len(batch))
+		for j, ch := range batch {
+			chTexts[j] = translation.ChapterText{
+				Title: ch.Title,
+				Text:  ch.Source,
+			}
+		}
+
+		// Serialize the accumulated glossary so far for the model to merge with.
+		existingGlossary := ""
+		if len(accumulated.Characters) > 0 || len(accumulated.Terms) > 0 {
+			if data, err := json.Marshal(accumulated); err == nil {
+				existingGlossary = string(data)
+			}
+		}
+
+		slog.Info("processing batch",
+			"batch", batchNum, "of", totalBatches,
+			"chapters", fmt.Sprintf("%d-%d", batch[0].ID, batch[len(batch)-1].ID),
+			"existing_terms", len(accumulated.Terms), "existing_characters", len(accumulated.Characters))
+
+		resp, err := client.Chat(ctx, translation.ChatRequest{
+			System:   translation.GlossaryExtractionSystem,
+			User:     translation.GlossaryExtractionUser(chTexts, existingGlossary),
+			Model:    client.HelperModel(),
+			JSONMode: true,
+		})
+		if err != nil {
+			return fmt.Errorf("batch %d: %w", batchNum, err)
+		}
+		slog.Info("batch complete", "batch", batchNum,
+			"prompt_tokens", resp.Usage.PromptTokens, "completion_tokens", resp.Usage.CompletionTokens)
+
+		// Parse the response and replace accumulated with the merged result.
+		var result glossaryExtractionResult
+		if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
+			return fmt.Errorf("parse glossary JSON (batch %d): %w (content: %s)", batchNum, err, truncate(resp.Content, 200))
+		}
+		accumulated = result
 	}
 
 	// Build and save the glossary.
 	glossary := &translation.Glossary{}
-	for _, c := range result.Characters {
+	for _, c := range accumulated.Characters {
 		glossary.Terms = append(glossary.Terms, translation.GlossaryTerm{
 			Source: c.Name,
 			Target: c.Translation,
 			Type:   "character",
 		})
 	}
-	glossary.Terms = append(glossary.Terms, result.Terms...)
+	glossary.Terms = append(glossary.Terms, accumulated.Terms...)
 	slog.Info("extracted glossary", "terms", len(glossary.Terms),
-		"characters", len(result.Characters), "other_terms", len(result.Terms))
+		"characters", len(accumulated.Characters), "other_terms", len(accumulated.Terms))
 
 	if err := glossary.Save(proj.AIDir()); err != nil {
 		return err
@@ -132,7 +174,7 @@ func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter 
 	slog.Info("saved glossary", "path", glossaryPath)
 
 	// Build and save the characters store.
-	characters := &translation.Characters{Characters: result.Characters}
+	characters := &translation.Characters{Characters: accumulated.Characters}
 	if err := characters.Save(proj.AIDir()); err != nil {
 		return err
 	}
@@ -170,29 +212,9 @@ func loadAllChapters(proj *project.Project) ([]chapters.Chapter, error) {
 	return all, nil
 }
 
-// buildSnippets converts chapters to the ChapterSnippet format, taking the
-// first ~500 characters of each chapter's source text.
-func buildSnippets(chs []chapters.Chapter) []translation.ChapterSnippet {
-	snippets := make([]translation.ChapterSnippet, len(chs))
-	for i, ch := range chs {
-		snippet := ch.Source
-		if len(snippet) > 500 {
-			snippet = snippet[:500] + "..."
-		}
-		snippets[i] = translation.ChapterSnippet{
-			Title:   ch.Title,
-			Snippet: snippet,
-		}
-	}
-	return snippets
-}
-
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
 	return s[:n] + "..."
 }
-
-// Ensure the import is used (strings is used in buildSnippets via truncate).
-var _ = strings.TrimSpace

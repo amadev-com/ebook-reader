@@ -35,7 +35,7 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 
 ## Milestone 2 — Translation core (COMPLETE)
 
-- `bookai analyze`: extracts glossary + characters from chapter snippets via gpt-4.1-mini (JSON mode). Writes `ai/glossary.json` + `ai/characters.json`. Flags: `--force`, `--chapter N`, `--range M-N`.
+- `bookai analyze`: extracts glossary + characters from full chapter texts via gpt-4.1-mini (JSON mode). Chapters processed in sequential batches (default 10); accumulated glossary fed into each batch for merging. Writes `ai/glossary.json` + `ai/characters.json`. Flags: `--force`, `--chapter N`, `--range M-N`, `--batch-size N`.
 - `bookai translate`: per-chapter translation via gpt-4.1 with glossary + previous 2 chapter summaries as context. Three-step loop: translate → summarize → extract new terms. Writes `translation/chapter_NNN.ru.txt`, `memory/chapter_NNN.summary.txt`, updates `chapter_NNN.json` status → "translated", merges new terms into glossary.
 - `bookai verify-glossary`: scans translations for untranslated English glossary terms, writes `ai/glossary_violations.json`.
 - OpenAI SDK: official `github.com/openai/openai-go/v3` (v3.47.0). Uses the **Responses API** (`client.Responses.New`) instead of the deprecated Chat Completions API. System prompt → `instructions` param, user message → `input` param, JSON mode → `text.format = json_object`. Built-in retry via `option.WithMaxRetries`.

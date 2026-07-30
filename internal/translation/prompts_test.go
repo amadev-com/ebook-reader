@@ -7,19 +7,28 @@ import (
 
 func TestGlossaryExtractionUser(t *testing.T) {
 	t.Parallel()
-	snippets := []ChapterSnippet{
-		{Title: "Chapter 1: Beginnings", Snippet: "It was the best of times..."},
-		{Title: "Chapter 2: Endings", Snippet: "The end is near..."},
+	chapters := []ChapterText{
+		{Title: "Chapter 1: Beginnings", Text: "It was the best of times..."},
+		{Title: "Chapter 2: Endings", Text: "The end is near..."},
 	}
-	prompt := GlossaryExtractionUser(snippets)
+	prompt := GlossaryExtractionUser(chapters, "")
 	if !strings.Contains(prompt, "Chapter 1: Beginnings") {
 		t.Errorf("prompt missing chapter 1 title: %s", prompt)
 	}
 	if !strings.Contains(prompt, "It was the best of times") {
-		t.Errorf("prompt missing chapter 1 snippet")
+		t.Errorf("prompt missing chapter 1 text")
 	}
-	if !strings.Contains(prompt, "Return the JSON glossary") {
+	if !strings.Contains(prompt, "Return the merged JSON glossary") {
 		t.Errorf("prompt missing instruction")
+	}
+
+	// With existing glossary.
+	prompt = GlossaryExtractionUser(chapters, `{"characters":[{"name":"Quinn"}],"terms":[]}`)
+	if !strings.Contains(prompt, "Glossary extracted from previous chapters") {
+		t.Errorf("prompt missing existing glossary section")
+	}
+	if !strings.Contains(prompt, `"name":"Quinn"`) {
+		t.Errorf("prompt missing existing glossary content")
 	}
 }
 
