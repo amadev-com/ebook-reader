@@ -354,6 +354,19 @@ tts:
   speed: 1.0
   audio_format: mp3              # "mp3" (default) or "wav"
   audio_bitrate: "128k"          # MP3 bitrate (default 128k)
+glossary:                        # optional: lock specific translations
+  characters:
+    - source: Quinn
+      target: Куинн
+    - source: Fex
+      target: Фекс
+  terms:
+    - source: The Order
+      target: Орден
+      type: organization
+    - source: Dalki
+      target: Далки
+      type: term
 ```
 
 The OpenAI API key is read from the `OPENAI_API_KEY` environment variable — it is **never** stored in `config.yaml`.

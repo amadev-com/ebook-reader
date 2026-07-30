@@ -51,9 +51,16 @@ Guidelines:
 // limits while still reading the full text of every chapter. If
 // existingGlossary is non-empty, it is included so the model can merge new
 // findings with previously extracted terms rather than producing duplicates.
-func GlossaryExtractionUser(chapters []ChapterText, existingGlossary string) string {
+func GlossaryExtractionUser(chapters []ChapterText, existingGlossary string, lockedTerms string) string {
 	var b strings.Builder
 	b.WriteString("Analyze these chapters and extract the terminology glossary.\n\n")
+	if lockedTerms != "" {
+		b.WriteString("LOCKED TRANSLATIONS — you MUST use these exact translations for the matching terms. ")
+		b.WriteString("Do not change them. You may still extract other fields (role, description, type) ")
+		b.WriteString("from context, but the translation/target must match exactly:\n\n")
+		b.WriteString(lockedTerms)
+		b.WriteString("\n\n")
+	}
 	if existingGlossary != "" {
 		b.WriteString("Glossary extracted from previous chapters (merge with your new findings, do not duplicate):\n\n")
 		b.WriteString(existingGlossary)

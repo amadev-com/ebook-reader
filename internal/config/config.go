@@ -33,6 +33,33 @@ type Config struct {
 	// empty field falls back to the default relative path under the project
 	// root.
 	Paths Paths `yaml:"paths"`
+
+	// Glossary holds initial/override values for characters and terms. These
+	// are user-specified translations that take precedence over AI-extracted
+	// ones — useful for locking down how specific names or terms should be
+	// translated. The AI still fills in other fields (role, description, type)
+	// from context, but the translation is always overridden.
+	Glossary GlossaryOverrides `yaml:"glossary"`
+}
+
+// GlossaryOverrides holds user-specified translation overrides.
+type GlossaryOverrides struct {
+	// Characters is a list of source names with locked Russian translations.
+	// The AI extracts role/description from context, but the translation
+	// field is always set to the value specified here.
+	Characters []GlossaryOverride `yaml:"characters"`
+
+	// Terms is a list of source terms with locked Russian translations.
+	// The AI extracts type from context, but the target field is always
+	// set to the value specified here.
+	Terms []GlossaryOverride `yaml:"terms"`
+}
+
+// GlossaryOverride is one user-specified translation override.
+type GlossaryOverride struct {
+	Source string `yaml:"source"` // English term as it appears in the text
+	Target string `yaml:"target"` // locked Russian translation
+	Type   string `yaml:"type"`   // optional: character|place|organization|title|term
 }
 
 // Languages is the translation direction.

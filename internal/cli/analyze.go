@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"ebook-reader/internal/chapters"
+	"ebook-reader/internal/config"
 	"ebook-reader/internal/project"
 	"ebook-reader/internal/translation"
 )
@@ -130,14 +132,18 @@ func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter 
 			}
 		}
 
+		// Build locked-translations string from config overrides.
+		lockedTerms := buildLockedTerms(proj.Cfg.Glossary)
+
 		slog.Info("processing batch",
 			"batch", batchNum, "of", totalBatches,
 			"chapters", fmt.Sprintf("%d-%d", batch[0].ID, batch[len(batch)-1].ID),
-			"existing_terms", len(accumulated.Terms), "existing_characters", len(accumulated.Characters))
+			"existing_terms", len(accumulated.Terms), "existing_characters", len(accumulated.Characters),
+			"locked_overrides", len(proj.Cfg.Glossary.Characters)+len(proj.Cfg.Glossary.Terms))
 
 		resp, err := client.Chat(ctx, translation.ChatRequest{
 			System:   translation.GlossaryExtractionSystem,
-			User:     translation.GlossaryExtractionUser(chTexts, existingGlossary),
+			User:     translation.GlossaryExtractionUser(chTexts, existingGlossary, lockedTerms),
 			Model:    client.HelperModel(),
 			JSONMode: true,
 		})
@@ -154,6 +160,11 @@ func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter 
 		}
 		accumulated = result
 	}
+
+	// Apply config overrides: force the translation/target of any term or
+	// character that matches a config override. The AI fills in other fields
+	// (role, description, type) from context, but the translation is locked.
+	applyGlossaryOverrides(&accumulated, proj.Cfg.Glossary)
 
 	// Build and save the glossary (terms only — characters are stored
 	// separately in characters.json to avoid duplication).
@@ -210,4 +221,91 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// buildLockedTerms formats config glossary overrides as a human-readable list
+// for the model prompt. The model is instructed to use these exact
+// translations and not change them.
+func buildLockedTerms(overrides config.GlossaryOverrides) string {
+	if len(overrides.Characters) == 0 && len(overrides.Terms) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range overrides.Characters {
+		if c.Source != "" && c.Target != "" {
+			fmt.Fprintf(&b, "  %s = %s\n", c.Source, c.Target)
+		}
+	}
+	for _, t := range overrides.Terms {
+		if t.Source != "" && t.Target != "" {
+			fmt.Fprintf(&b, "  %s = %s\n", t.Source, t.Target)
+		}
+	}
+	return b.String()
+}
+
+// applyGlossaryOverrides forces the translation/target of any extracted
+// character or term that matches a config override. The AI-extracted values
+// for other fields (role, description, type) are preserved. If a config
+// override has no match in the extracted results, it is added as a new entry.
+func applyGlossaryOverrides(result *glossaryExtractionResult, overrides config.GlossaryOverrides) {
+	// Override character translations.
+	for i := range result.Characters {
+		for _, oc := range overrides.Characters {
+			if strings.EqualFold(result.Characters[i].Name, oc.Source) {
+				result.Characters[i].Translation = oc.Target
+				break
+			}
+		}
+	}
+	// Add config characters not found by the model.
+	for _, oc := range overrides.Characters {
+		found := false
+		for _, c := range result.Characters {
+			if strings.EqualFold(c.Name, oc.Source) {
+				found = true
+				break
+			}
+		}
+		if !found && oc.Source != "" && oc.Target != "" {
+			result.Characters = append(result.Characters, translation.Character{
+				Name:        oc.Source,
+				Translation: oc.Target,
+			})
+		}
+	}
+
+	// Override term translations.
+	for i := range result.Terms {
+		for _, ot := range overrides.Terms {
+			if strings.EqualFold(result.Terms[i].Source, ot.Source) {
+				result.Terms[i].Target = ot.Target
+				if ot.Type != "" {
+					result.Terms[i].Type = ot.Type
+				}
+				break
+			}
+		}
+	}
+	// Add config terms not found by the model.
+	for _, ot := range overrides.Terms {
+		found := false
+		for _, t := range result.Terms {
+			if strings.EqualFold(t.Source, ot.Source) {
+				found = true
+				break
+			}
+		}
+		if !found && ot.Source != "" && ot.Target != "" {
+			termType := ot.Type
+			if termType == "" {
+				termType = "term"
+			}
+			result.Terms = append(result.Terms, translation.GlossaryTerm{
+				Source: ot.Source,
+				Target: ot.Target,
+				Type:   termType,
+			})
+		}
+	}
 }

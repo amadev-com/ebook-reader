@@ -11,7 +11,7 @@ func TestGlossaryExtractionUser(t *testing.T) {
 		{Title: "Chapter 1: Beginnings", Text: "It was the best of times..."},
 		{Title: "Chapter 2: Endings", Text: "The end is near..."},
 	}
-	prompt := GlossaryExtractionUser(chapters, "")
+	prompt := GlossaryExtractionUser(chapters, "", "")
 	if !strings.Contains(prompt, "Chapter 1: Beginnings") {
 		t.Errorf("prompt missing chapter 1 title: %s", prompt)
 	}
@@ -23,12 +23,21 @@ func TestGlossaryExtractionUser(t *testing.T) {
 	}
 
 	// With existing glossary.
-	prompt = GlossaryExtractionUser(chapters, `{"characters":[{"name":"Quinn"}],"terms":[]}`)
+	prompt = GlossaryExtractionUser(chapters, `{"characters":[{"name":"Quinn"}],"terms":[]}`, "")
 	if !strings.Contains(prompt, "Glossary extracted from previous chapters") {
 		t.Errorf("prompt missing existing glossary section")
 	}
 	if !strings.Contains(prompt, `"name":"Quinn"`) {
 		t.Errorf("prompt missing existing glossary content")
+	}
+
+	// With locked terms.
+	prompt = GlossaryExtractionUser(chapters, "", "Quinn = Куинн\nThe Order = Орден")
+	if !strings.Contains(prompt, "LOCKED TRANSLATIONS") {
+		t.Errorf("prompt missing locked translations section")
+	}
+	if !strings.Contains(prompt, "Quinn = Куинн") {
+		t.Errorf("prompt missing locked term content")
 	}
 }
 
