@@ -16,9 +16,6 @@ import (
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/packages/param"
-	"github.com/openai/openai-go/v3/responses"
-	"github.com/openai/openai-go/v3/shared"
 
 	"ebook-reader/internal/config"
 )
@@ -88,32 +85,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error
 		model = c.translate
 	}
 
-	params := responses.ResponseNewParams{
-		Model:        shared.ResponsesModel(model),
-		Instructions: param.NewOpt(req.System),
-		Input: responses.ResponseNewParamsInputUnion{
-			OfInputItemList: responses.ResponseInputParam{
-				{
-					OfMessage: &responses.EasyInputMessageParam{
-						Role: responses.EasyInputMessageRoleUser,
-						Content: responses.EasyInputMessageContentUnionParam{
-							OfString: param.NewOpt(req.User),
-						},
-					},
-				},
-			},
-		},
-	}
-	if req.JSONMode {
-		params.Text = responses.ResponseTextConfigParam{
-			Format: responses.ResponseFormatTextConfigUnionParam{
-				OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
-			},
-		}
-	}
-	if req.MaxTokens > 0 {
-		params.MaxOutputTokens = param.NewOpt(req.MaxTokens)
-	}
+	params := BuildResponseParams(model, req.System, req.User, req.JSONMode, req.MaxTokens)
 
 	resp, err := c.sdk.Responses.New(ctx, params)
 	if err != nil {

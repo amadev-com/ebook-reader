@@ -10,12 +10,15 @@ import (
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 )
 
 // BatchRequest is a single request within a batch. Each request corresponds to
-// one independent API call (e.g. one chapter's analysis or translation).
+// one independent API call (e.g. one chapter's analysis or translation). The
+// fields map directly to responses.ResponseNewParams — BuildResponseParams
+// converts this into the SDK type.
 type BatchRequest struct {
 	CustomID     string // user-defined ID, e.g. "analyze-chapter-300"
 	Instructions string // system prompt (Responses API "instructions" param)
@@ -58,64 +61,69 @@ func NewBatchClient(baseURL string, maxRetries int) (*BatchClient, error) {
 	return &BatchClient{sdk: openai.NewClient(opts...)}, nil
 }
 
-// batchLine is one line in the JSONL input file for the Batch API. Each line
-// represents a single request to the specified endpoint.
-type batchLine struct {
-	CustomID string           `json:"custom_id"`
-	Method   string           `json:"method"`
-	URL      string           `json:"url"`
-	Body     batchRequestBody `json:"body"`
+// BuildResponseParams converts a BatchRequest (or ChatRequest) into the SDK's
+// responses.ResponseNewParams. This is the single source of truth for how we
+// construct Responses API parameters — used by both Client.Chat (live calls)
+// and BuildJSONL (batch input file).
+func BuildResponseParams(model, instructions, userInput string, jsonMode bool, maxTokens int64) responses.ResponseNewParams {
+	params := responses.ResponseNewParams{
+		Model:        shared.ResponsesModel(model),
+		Instructions: param.NewOpt(instructions),
+		Input: responses.ResponseNewParamsInputUnion{
+			OfInputItemList: responses.ResponseInputParam{
+				{
+					OfMessage: &responses.EasyInputMessageParam{
+						Role: responses.EasyInputMessageRoleUser,
+						Content: responses.EasyInputMessageContentUnionParam{
+							OfString: param.NewOpt(userInput),
+						},
+					},
+				},
+			},
+		},
+	}
+	if jsonMode {
+		params.Text = responses.ResponseTextConfigParam{
+			Format: responses.ResponseFormatTextConfigUnionParam{
+				OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
+			},
+		}
+	}
+	if maxTokens > 0 {
+		params.MaxOutputTokens = param.NewOpt(maxTokens)
+	}
+	return params
 }
 
-// batchRequestBody is the body of a /v1/responses request, formatted for the
-// Batch API JSONL input file.
-type batchRequestBody struct {
-	Model           string           `json:"model"`
-	Instructions    string           `json:"instructions,omitempty"`
-	Input           []batchInputItem `json:"input"`
-	Text            *batchTextConfig `json:"text,omitempty"`
-	MaxOutputTokens int64            `json:"max_output_tokens,omitempty"`
-}
-
-type batchInputItem struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type batchTextConfig struct {
-	Format batchTextFormat `json:"format"`
-}
-
-type batchTextFormat struct {
-	Type string `json:"type"` // "json_object" or "text"
+// batchInputLine is one line in the JSONL input file for the Batch API. Each
+// line represents a single request to the /v1/responses endpoint. The body is
+// a marshaled responses.ResponseNewParams (via json.RawMessage so the SDK's own
+// MarshalJSON is used).
+type batchInputLine struct {
+	CustomID string          `json:"custom_id"`
+	Method   string          `json:"method"`
+	URL      string          `json:"url"`
+	Body     json.RawMessage `json:"body"`
 }
 
 // BuildJSONL serializes a list of BatchRequests into the JSONL format expected
 // by the OpenAI Batch API. Each request becomes one line targeting
-// /v1/responses.
+// /v1/responses. The body of each line is a marshaled
+// responses.ResponseNewParams, using the SDK's own serialization.
 func BuildJSONL(reqs []BatchRequest) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	for _, req := range reqs {
-		line := batchLine{
+		params := BuildResponseParams(req.Model, req.Instructions, req.Input, req.JSONMode, req.MaxTokens)
+		bodyJSON, err := json.Marshal(params)
+		if err != nil {
+			return nil, fmt.Errorf("marshal ResponseNewParams for %s: %w", req.CustomID, err)
+		}
+		line := batchInputLine{
 			CustomID: req.CustomID,
 			Method:   "POST",
 			URL:      "/v1/responses",
-			Body: batchRequestBody{
-				Model:        req.Model,
-				Instructions: req.Instructions,
-				Input: []batchInputItem{
-					{Role: "user", Content: req.Input},
-				},
-			},
-		}
-		if req.JSONMode {
-			line.Body.Text = &batchTextConfig{
-				Format: batchTextFormat{Type: "json_object"},
-			}
-		}
-		if req.MaxTokens > 0 {
-			line.Body.MaxOutputTokens = req.MaxTokens
+			Body:     bodyJSON,
 		}
 		if err := enc.Encode(line); err != nil {
 			return nil, fmt.Errorf("encode batch line %s: %w", req.CustomID, err)
@@ -206,7 +214,9 @@ func (bc *BatchClient) DownloadResults(ctx context.Context, outputFileID string)
 	return ParseBatchOutput(data)
 }
 
-// batchOutputLine is one line from the batch output JSONL file.
+// batchOutputLine is one line from the batch output JSONL file. The response
+// body is a json.RawMessage that gets unmarshaled into responses.Response (the
+// SDK type) to extract output text via Response.OutputText().
 type batchOutputLine struct {
 	CustomID string `json:"custom_id"`
 	Response *struct {
@@ -221,8 +231,8 @@ type batchOutputLine struct {
 
 // ParseBatchOutput parses the JSONL output file from a completed batch. Each
 // line contains the custom_id, the response (with the full API response body),
-// or an error. The output text is extracted from the response body using the
-// same logic as responses.Response.OutputText().
+// or an error. The output text is extracted from the response body by
+// unmarshaling it into responses.Response and calling OutputText().
 func ParseBatchOutput(data []byte) ([]BatchRequestResult, error) {
 	var results []BatchRequestResult
 	for lineNum, line := range bytes.Split(data, []byte("\n")) {
@@ -250,7 +260,8 @@ func ParseBatchOutput(data []byte) ([]BatchRequestResult, error) {
 			results = append(results, result)
 			continue
 		}
-		// Parse the response body as a Response object and extract output text.
+		// Parse the response body as the SDK's responses.Response type and
+		// extract output text via the SDK's own OutputText() method.
 		var resp responses.Response
 		if err := json.Unmarshal(out.Response.Body, &resp); err != nil {
 			result.Error = fmt.Sprintf("parse response body: %v", err)
