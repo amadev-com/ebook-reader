@@ -143,7 +143,7 @@ CLI `--strip` flags are appended to the config defaults.
 bookai analyze -p my-vampire-system
 ```
 
-Uses the **OpenAI Batch API** for cost-effective processing (50% discount). Each chapter gets two batch items: one for glossary/character extraction, one for a chapter summary. After the batch completes, a single "live" merge/unify request deduplicates and classifies all results: **characters** = only real persons from the story, **glossary** = terms (places, organizations, titles) without any character entries. Writes `ai/glossary.json`, `ai/characters.json`, and `memory/chapter_NNN.summary.txt` (summaries used as context by translate).
+Uses the **OpenAI Batch API** for cost-effective processing (50% discount). Each chapter is a single batch item that returns both the glossary/character extraction AND a chapter summary in one JSON response — the model reads each chapter once instead of twice. After the batch completes, a single "live" merge/unify request deduplicates and classifies all results: **characters** = only real persons from the story, **glossary** = terms (places, organizations, titles) without any character entries. Writes `ai/glossary.json`, `ai/characters.json`, and `memory/chapter_NNN.summary.txt` (summaries used as context by translate).
 
 The command stays in polling mode, checking batch status every 60 seconds. If interrupted, use `--continue` to resume:
 
@@ -250,7 +250,7 @@ Writes `chapters/chapter_NNN.json` (one per chapter), `chapters/_index.json`, an
 bookai analyze
 ```
 
-Uses the **OpenAI Batch API** (50% cost discount). Each chapter is analyzed independently as a batch item, then a live merge/unify request produces the final glossary and character list. Characters = only real persons; glossary = terms without characters. Writes `ai/glossary.json` and `ai/characters.json`. Stays in polling mode — use `--continue` to resume if interrupted.
+Uses the **OpenAI Batch API** (50% cost discount). Each chapter is analyzed independently as a batch item that returns both the glossary/characters AND a chapter summary in one JSON response. A live merge/unify request then produces the final glossary and character list. Characters = only real persons; glossary = terms without characters. Writes `ai/glossary.json`, `ai/characters.json`, and `memory/chapter_NNN.summary.txt`. Stays in polling mode — use `--continue` to resume if interrupted.
 
 ### Step 4 — Translate
 

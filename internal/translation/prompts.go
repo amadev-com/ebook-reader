@@ -34,17 +34,25 @@ For each entry, provide:
 - target: the recommended Russian translation
 - type: one of "character", "place", "organization", "title", "term"
 
+Also write a concise summary (3-5 sentences) of each chapter for translation context. Focus on:
+- Characters that appeared and what they did
+- New character introductions
+- Key plot developments
+- Any new terminology or relationships established
+
 Return a JSON object with this exact shape:
 {
   "characters": [{"name": "...", "translation": "...", "role": "...", "description": "..."}],
-  "terms": [{"source": "...", "target": "...", "type": "..."}]
+  "terms": [{"source": "...", "target": "...", "type": "..."}],
+  "summary": "..."
 }
 
 Guidelines:
 - Only extract terms that appear meaningful or recurring. Skip common words.
 - For character names, use transliteration unless the character has an established Russian name.
 - Be consistent: if "The Order" appears, translate it the same way everywhere.
-- If the book is a web novel or light novel, pay attention to game-like terms (levels, quests, stats, systems).`
+- If the book is a web novel or light novel, pay attention to game-like terms (levels, quests, stats, systems).
+- The summary must be in English, specific about names and terms so the next chapter's translation stays consistent.`
 
 // GlossaryExtractionUser builds the user prompt from chapter full texts.
 // Chapters are processed in batches to keep each API call within context

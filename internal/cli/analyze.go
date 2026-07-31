@@ -118,30 +118,21 @@ func runAnalyze(ctx context.Context, proj *project.Project, force, cont bool, ch
 	// Build locked-translations string from config overrides.
 	lockedTerms := buildLockedTerms(proj.Cfg.Glossary)
 
-	// Build batch requests: two per chapter — one for glossary extraction
-	// (JSON mode), one for chapter summary (text mode). Summaries are
-	// generated here so they're available as context when translate builds
-	// its batch input.
+	// Build batch requests: one per chapter. Each request extracts the
+	// glossary AND generates a chapter summary in a single pass — the model
+	// reads the chapter once and returns both in one JSON response.
 	model := proj.Cfg.OpenAI.HelperModel
-	var reqs []translation.BatchRequest
+	reqs := make([]translation.BatchRequest, len(chs))
 	chapterIDs := make([]int, len(chs))
 	for i, ch := range chs {
-		chapterIDs[i] = ch.ID
-		// Glossary extraction request.
-		reqs = append(reqs, translation.BatchRequest{
+		reqs[i] = translation.BatchRequest{
 			CustomID:     fmt.Sprintf("analyze-chapter-%d", ch.ID),
 			Instructions: translation.GlossaryExtractionSystem,
 			Input:        translation.GlossaryExtractionUser([]translation.ChapterText{{Title: ch.Title, Text: ch.Source}}, "", lockedTerms),
 			Model:        model,
 			JSONMode:     true,
-		})
-		// Summary request (from English source text, for translation context).
-		reqs = append(reqs, translation.BatchRequest{
-			CustomID:     fmt.Sprintf("summary-chapter-%d", ch.ID),
-			Instructions: translation.SummarySystem,
-			Input:        translation.SummaryUser(translation.ChapterInfo{ID: ch.ID, Title: ch.Title}, ch.Source),
-			Model:        model,
-		})
+		}
+		chapterIDs[i] = ch.ID
 	}
 
 	// Build JSONL.
@@ -260,10 +251,10 @@ func pollAnalyzeBatch(ctx context.Context, proj *project.Project, state *transla
 	}
 }
 
-// processAnalyzeResults downloads the batch output, splits results by custom_id
-// prefix (analyze- vs summary-), saves summaries to memory/, sends a live
-// merge/unify request for glossary results, applies config overrides, and saves
-// the final glossary.json + characters.json.
+// processAnalyzeResults downloads the batch output, extracts per-chapter
+// glossary results and summaries (both from the same JSON response), saves
+// summaries to memory/, sends a live merge/unify request for glossary results,
+// applies config overrides, and saves the final glossary.json + characters.json.
 func processAnalyzeResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient) error {
 	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
 
@@ -272,8 +263,8 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 		return fmt.Errorf("download results: %w", err)
 	}
 
-	// Split results by custom_id prefix: "analyze-chapter-N" → glossary,
-	// "summary-chapter-N" → chapter summary.
+	// Each result contains both glossary/characters AND a chapter summary
+	// in a single JSON response. Save summaries to memory/ as we go.
 	var perChapter []glossaryExtractionResult
 	var failedCount int
 	summariesSaved := 0
@@ -283,27 +274,28 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 			failedCount++
 			continue
 		}
+		chID := translation.SplitCustomID(res.CustomID, "analyze")
+		if chID == 0 {
+			slog.Warn("unrecognized custom_id in batch output", "custom_id", res.CustomID)
+			continue
+		}
 
-		// Summary result → save to memory/.
-		if chID := translation.SplitCustomID(res.CustomID, "summary"); chID > 0 {
-			if err := translation.SaveSummary(proj.MemoryDir(), chID, res.Content); err != nil {
+		var result glossaryExtractionResult
+		if err := json.Unmarshal([]byte(res.Content), &result); err != nil {
+			slog.Warn("failed to parse glossary JSON from batch result",
+				"custom_id", res.CustomID, "error", err, "content", truncate(res.Content, 200))
+			failedCount++
+			continue
+		}
+		perChapter = append(perChapter, result)
+
+		// Save the chapter summary to memory/.
+		if result.Summary != "" {
+			if err := translation.SaveSummary(proj.MemoryDir(), chID, result.Summary); err != nil {
 				slog.Warn("failed to save summary", "chapter", chID, "error", err)
 			} else {
 				summariesSaved++
 			}
-			continue
-		}
-
-		// Glossary extraction result → collect for merge.
-		if translation.SplitCustomID(res.CustomID, "analyze") > 0 {
-			var result glossaryExtractionResult
-			if err := json.Unmarshal([]byte(res.Content), &result); err != nil {
-				slog.Warn("failed to parse glossary JSON from batch result",
-					"custom_id", res.CustomID, "error", err, "content", truncate(res.Content, 200))
-				failedCount++
-				continue
-			}
-			perChapter = append(perChapter, result)
 		}
 	}
 	slog.Info("batch results parsed", "glossary_results", len(perChapter), "summaries_saved", summariesSaved, "failed", failedCount)
@@ -371,10 +363,13 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 	return nil
 }
 
-// glossaryExtractionResult is the JSON shape we expect from the model.
+// glossaryExtractionResult is the JSON shape we expect from the model. The
+// summary field is generated alongside the glossary in a single pass — no
+// separate batch item needed.
 type glossaryExtractionResult struct {
 	Characters []translation.Character    `json:"characters"`
 	Terms      []translation.GlossaryTerm `json:"terms"`
+	Summary    string                     `json:"summary"`
 }
 
 // loadAllChapters reads every chapter_NNN.json from the chapters directory,
