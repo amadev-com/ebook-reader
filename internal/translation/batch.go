@@ -65,10 +65,15 @@ func NewBatchClient(baseURL string, maxRetries int) (*BatchClient, error) {
 // responses.ResponseNewParams. This is the single source of truth for how we
 // construct Responses API parameters — used by both Client.Chat (live calls)
 // and BuildJSONL (batch input file).
+//
+// Reasoning effort is set to "none" by default — our tasks (translation,
+// glossary extraction, summaries, pronunciation) are straightforward and don't
+// benefit from chain-of-thought reasoning, which would add latency and cost.
 func BuildResponseParams(model, instructions, userInput string, jsonMode bool, maxTokens int64) responses.ResponseNewParams {
 	params := responses.ResponseNewParams{
 		Model:        shared.ResponsesModel(model),
 		Instructions: param.NewOpt(instructions),
+		Reasoning:    shared.ReasoningParam{Effort: shared.ReasoningEffortNone},
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: responses.ResponseInputParam{
 				{
