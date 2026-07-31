@@ -125,6 +125,18 @@ bookai analyze-chapters -p my-vampire-system --force \
 
 Each `--strip` string is a **trigger**: if it appears in the last 400 chars of a chapter, everything from the last `***` separator before the trigger to the end of the chapter is removed. This handles variations in the boilerplate text — you only need to match a short unique fragment.
 
+To avoid passing `--strip` every time, set default strip patterns in `config.yaml` (see [Configuration](#configuration) below):
+
+```yaml
+chapters:
+  strip:
+    - "For MVS artwork"
+    - "Want another mass release"
+    - "We hit 22,000 Stones"
+```
+
+CLI `--strip` flags are appended to the config defaults.
+
 ### Step 3 — Extract glossary and characters
 
 ```bash
@@ -370,6 +382,10 @@ openai:
   translation_model: gpt-5.6-luna    # model for translation (Batch API)
   helper_model: gpt-5.6-luna         # model for glossary/summary/merge (Batch API)
   max_retries: 3
+chapters:                         # optional: default --strip patterns for analyze-chapters
+  strip:
+    - "For MVS artwork"
+    - "Want another mass release"
 tts:
   engine: xtts-http              # "noop" (default) or "xtts-http"
   language: ru

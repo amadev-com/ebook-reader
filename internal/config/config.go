@@ -45,6 +45,19 @@ type Config struct {
 	// <phoneme> tags. These take precedence over AI-generated hints — useful
 	// for fixing mispronunciations without re-running the model.
 	Pronunciation []PronunciationOverride `yaml:"pronunciation"`
+
+	// Chapters holds settings for the analyze-chapters stage.
+	Chapters Chapters `yaml:"chapters"`
+}
+
+// Chapters holds settings for the analyze-chapters stage.
+type Chapters struct {
+	// Strip is a list of default --strip trigger strings applied to every
+	// analyze-chapters run. Additional --strip flags on the command line are
+	// appended to these. Each string is a trigger: if it appears in the last
+	// 400 chars of a chapter, everything from the last "***" separator before
+	// the trigger to the end is removed.
+	Strip []string `yaml:"strip"`
 }
 
 // GlossaryOverrides holds user-specified translation overrides.

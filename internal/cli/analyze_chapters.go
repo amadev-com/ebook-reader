@@ -37,14 +37,17 @@ func newAnalyzeChaptersCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runAnalyzeChapters(ctx, proj, force, chapter, chRange, strategy, strip)
+			// Merge config defaults with CLI flags: config strip patterns first,
+			// then any additional --strip flags from the command line.
+			allStrip := append(append([]string{}, proj.Cfg.Chapters.Strip...), strip...)
+			return runAnalyzeChapters(ctx, proj, force, chapter, chRange, strategy, allStrip)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "re-analyze chapters whose JSON already exists")
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "analyze only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "analyze a range of chapter ids, e.g. 5-12")
 	cmd.Flags().StringVar(&strategy, "strategy", "", "force detection strategy: toc|heading|per-item")
-	cmd.Flags().StringArrayVar(&strip, "strip", nil, "remove all occurrences of this text from chapter source (repeatable)")
+	cmd.Flags().StringArrayVar(&strip, "strip", nil, "remove boilerplate trailer from chapter source (repeatable; also see config chapters.strip)")
 	return cmd
 }
 

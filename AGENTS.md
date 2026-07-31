@@ -29,7 +29,7 @@ EPUB import → chapter detection → JSON artifacts.
 
 Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.epub`):
 - `import`: 702 spine items extracted, OPF at zip root (`book.opf`) handled, NCX parsed correctly.
-- `analyze-chapters`: 700 chapters via TOC strategy, 3 sections skipped (Information, TOC, Notes). `--strip` flag (repeatable) removes promotional/boilerplate text from chapter source.
+- `analyze-chapters`: 700 chapters via TOC strategy, 3 sections skipped (Information, TOC, Notes). `--strip` flag (repeatable) removes promotional/boilerplate text from chapter source. Default strip patterns can be set in `config.yaml` under `chapters.strip`; CLI `--strip` flags are appended to config defaults.
 - Idempotent: reruns skip existing artifacts unless `--force` / `--chapter` / `--range`.
 - `--strategy toc|heading|per-item` forces a single detection strategy.
 
