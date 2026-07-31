@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -27,13 +26,12 @@ import (
 // batch. Batch state is persisted locally in ai/batch_translate.json.
 func newTranslateCmd() *cobra.Command {
 	var (
-		force     bool
-		cont      bool
-		chapter   int
-		chRange   string
-		skipMem   bool
-		skipGloss bool
-		pollInt   int
+		force   bool
+		cont    bool
+		chapter int
+		chRange string
+		skipMem bool
+		pollInt int
 	)
 	cmd := &cobra.Command{
 		Use:   "translate",
@@ -47,15 +45,14 @@ func newTranslateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTranslate(ctx, proj, force, cont, chapter, chRange, skipMem, skipGloss, pollInt)
+			return runTranslate(ctx, proj, force, cont, chapter, chRange, skipMem, pollInt)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "re-translate chapters whose translation already exists")
 	cmd.Flags().BoolVar(&cont, "continue", false, "resume polling an interrupted batch")
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "translate only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "translate a range of chapter ids, e.g. 5-12")
-	cmd.Flags().BoolVar(&skipMem, "skip-memory", false, "skip summary generation (faster, less context continuity)")
-	cmd.Flags().BoolVar(&skipGloss, "skip-glossary-update", false, "skip new-term extraction after each chapter")
+	cmd.Flags().BoolVar(&skipMem, "skip-memory", false, "don't load previous chapter summaries as context")
 	cmd.Flags().IntVar(&pollInt, "poll-interval", 60, "seconds between batch status polls")
 	return cmd
 }
@@ -64,15 +61,19 @@ func newTranslateCmd() *cobra.Command {
 //  1. If --continue: load existing batch state and jump to polling.
 //  2. Otherwise: build JSONL with one translation request per chapter, upload, create batch.
 //  3. Poll batch status every pollInt seconds until terminal.
-//  4. Download results, write translation files, run optional post-processing.
-func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, chapter int, chRange string, skipMem, skipGloss bool, pollInt int) error {
+//  4. Download results, write translation files.
+//
+// Summaries are generated in the analyze step (not here) so they're available
+// as context at batch submission time. No post-processing is done after
+// translation — the glossary is finalized by analyze.
+func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, chapter int, chRange string, skipMem bool, pollInt int) error {
 	if pollInt < 10 {
 		pollInt = 60
 	}
 
 	// --continue: resume polling an existing batch.
 	if cont {
-		return resumeTranslateBatch(ctx, proj, pollInt, skipMem, skipGloss)
+		return resumeTranslateBatch(ctx, proj, pollInt)
 	}
 
 	// Check for an existing pending batch.
@@ -80,7 +81,7 @@ func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, 
 		if !translation.IsTerminalStatus(state.Status) {
 			slog.Info("found pending translate batch, resuming polling (use --force to start a new one)",
 				"batch_id", state.BatchID, "status", state.Status)
-			return pollTranslateBatch(ctx, proj, state, pollInt, skipMem, skipGloss)
+			return pollTranslateBatch(ctx, proj, state, pollInt)
 		}
 		slog.Info("cleaning up completed batch state from previous run", "batch_id", state.BatchID)
 		_ = translation.DeleteBatchState(proj.AIDir(), "translate")
@@ -201,11 +202,11 @@ func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, 
 	}
 
 	// Poll until completion.
-	return pollTranslateBatch(ctx, proj, state, pollInt, skipMem, skipGloss)
+	return pollTranslateBatch(ctx, proj, state, pollInt)
 }
 
 // resumeTranslateBatch loads the persisted batch state and resumes polling.
-func resumeTranslateBatch(ctx context.Context, proj *project.Project, pollInt int, skipMem, skipGloss bool) error {
+func resumeTranslateBatch(ctx context.Context, proj *project.Project, pollInt int) error {
 	state, err := translation.LoadBatchState(proj.AIDir(), "translate")
 	if err != nil {
 		return fmt.Errorf("load batch state: %w", err)
@@ -214,12 +215,12 @@ func resumeTranslateBatch(ctx context.Context, proj *project.Project, pollInt in
 		return fmt.Errorf("no pending translate batch found — run `bookai translate` without --continue to start a new one")
 	}
 	slog.Info("resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
-	return pollTranslateBatch(ctx, proj, state, pollInt, skipMem, skipGloss)
+	return pollTranslateBatch(ctx, proj, state, pollInt)
 }
 
 // pollTranslateBatch polls the batch status every pollInt seconds. When the
 // batch reaches a terminal status, it downloads results and processes them.
-func pollTranslateBatch(ctx context.Context, proj *project.Project, state *translation.BatchState, pollInt int, skipMem, skipGloss bool) error {
+func pollTranslateBatch(ctx context.Context, proj *project.Project, state *translation.BatchState, pollInt int) error {
 	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
 	if err != nil {
 		return err
@@ -263,7 +264,7 @@ func pollTranslateBatch(ctx context.Context, proj *project.Project, state *trans
 
 	switch state.Status {
 	case "completed":
-		return processTranslateResults(ctx, proj, state, batchClient, skipMem, skipGloss)
+		return processTranslateResults(ctx, proj, state, batchClient)
 	case "failed":
 		return fmt.Errorf("batch %s failed — check OpenAI dashboard for details", state.BatchID)
 	case "expired":
@@ -275,10 +276,11 @@ func pollTranslateBatch(ctx context.Context, proj *project.Project, state *trans
 	}
 }
 
-// processTranslateResults downloads the batch output, writes translation files,
-// updates chapter status, and runs optional post-processing (summaries,
-// new-term extraction).
-func processTranslateResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient, skipMem, skipGloss bool) error {
+// processTranslateResults downloads the batch output and writes translation
+// files. No post-processing is done — summaries are generated in the analyze
+// step, and the glossary is finalized by analyze. Chapter status is updated
+// to "translated".
+func processTranslateResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient) error {
 	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
 
 	results, err := batchClient.DownloadResults(ctx, state.OutputFileID)
@@ -323,106 +325,9 @@ func processTranslateResults(ctx context.Context, proj *project.Project, state *
 		slog.Info("translation written", "chapter", chID, "path", translationPath)
 	}
 
-	slog.Info("translations saved", "translated", translated, "failed", failedCount)
-
-	// Post-processing: summaries and new-term extraction (live calls).
-	if !skipMem || !skipGloss {
-		if err := postProcessTranslations(ctx, proj, results, skipMem, skipGloss); err != nil {
-			slog.Warn("post-processing encountered errors", "error", err)
-		}
-	}
-
 	// Clean up batch state.
 	_ = translation.DeleteBatchState(proj.AIDir(), "translate")
 	slog.Info("translate batch complete", "batch_id", state.BatchID, "translated", translated, "failed", failedCount)
-
-	return nil
-}
-
-// postProcessTranslations runs summary generation and new-term extraction as
-// live (non-batch) calls for each successfully translated chapter.
-func postProcessTranslations(ctx context.Context, proj *project.Project, results []translation.BatchRequestResult, skipMem, skipGloss bool) error {
-	client, err := translation.NewClient(proj.Cfg.OpenAI)
-	if err != nil {
-		return err
-	}
-
-	// Load glossary for term merging.
-	glossary, err := translation.LoadGlossary(proj.AIDir())
-	if err != nil {
-		return err
-	}
-	characters, err := translation.LoadCharacters(proj.AIDir())
-	if err != nil {
-		characters = &translation.Characters{}
-	}
-	glossary = glossary.WithCharacters(characters)
-
-	for _, res := range results {
-		if res.Error != "" {
-			continue
-		}
-		chID := translation.SplitCustomID(res.CustomID, "translate")
-		if chID == 0 {
-			continue
-		}
-
-		// Load the chapter source for summary/term extraction.
-		chPath := filepath.Join(proj.ChaptersDir(), fmt.Sprintf("chapter_%03d.json", chID))
-		var ch chapters.Chapter
-		if err := project.LoadJSON(chPath, &ch); err != nil {
-			slog.Warn("failed to load chapter for post-processing", "chapter", chID, "error", err)
-			continue
-		}
-
-		// Step 2: generate summary.
-		if !skipMem {
-			summaryResp, err := client.Chat(ctx, translation.ChatRequest{
-				System: translation.SummarySystem,
-				User:   translation.SummaryUser(translation.ChapterInfo{ID: ch.ID, Title: ch.Title}, ch.Source),
-				Model:  client.HelperModel(),
-			})
-			if err != nil {
-				slog.Warn("failed to generate summary", "chapter", chID, "error", err)
-			} else if err := translation.SaveSummary(proj.MemoryDir(), chID, summaryResp.Content); err != nil {
-				slog.Warn("failed to save summary", "chapter", chID, "error", err)
-			}
-		}
-
-		// Step 3: extract new glossary terms.
-		if !skipGloss {
-			newTermsResp, err := client.Chat(ctx, translation.ChatRequest{
-				System:   translation.NewTermsSystem,
-				User:     translation.NewTermsUser(translation.ChapterInfo{ID: ch.ID, Title: ch.Title}, ch.Source, res.Content),
-				Model:    client.HelperModel(),
-				JSONMode: true,
-			})
-			if err != nil {
-				slog.Warn("failed to extract new terms", "chapter", chID, "error", err)
-				continue
-			}
-			var newTerms struct {
-				Terms []translation.GlossaryTerm `json:"terms"`
-			}
-			if err := json.Unmarshal([]byte(newTermsResp.Content), &newTerms); err != nil {
-				slog.Warn("failed to parse new terms JSON", "chapter", chID, "error", err)
-				continue
-			}
-			added := glossary.Merge(newTerms.Terms)
-			if added > 0 {
-				if err := glossary.Save(proj.AIDir()); err != nil {
-					slog.Warn("failed to save updated glossary", "error", err)
-				} else {
-					slog.Info("glossary updated", "new_terms", added, "chapter", chID)
-				}
-			}
-		}
-
-		if ctx.Err() != nil {
-			slog.Info("interrupted during post-processing", "chapter", chID)
-			return ctx.Err()
-		}
-	}
 
 	return nil
 }

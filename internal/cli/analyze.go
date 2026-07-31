@@ -118,19 +118,30 @@ func runAnalyze(ctx context.Context, proj *project.Project, force, cont bool, ch
 	// Build locked-translations string from config overrides.
 	lockedTerms := buildLockedTerms(proj.Cfg.Glossary)
 
-	// Build batch requests: one per chapter, each independently analyzed.
+	// Build batch requests: two per chapter — one for glossary extraction
+	// (JSON mode), one for chapter summary (text mode). Summaries are
+	// generated here so they're available as context when translate builds
+	// its batch input.
 	model := proj.Cfg.OpenAI.HelperModel
-	reqs := make([]translation.BatchRequest, len(chs))
+	var reqs []translation.BatchRequest
 	chapterIDs := make([]int, len(chs))
 	for i, ch := range chs {
-		reqs[i] = translation.BatchRequest{
+		chapterIDs[i] = ch.ID
+		// Glossary extraction request.
+		reqs = append(reqs, translation.BatchRequest{
 			CustomID:     fmt.Sprintf("analyze-chapter-%d", ch.ID),
 			Instructions: translation.GlossaryExtractionSystem,
 			Input:        translation.GlossaryExtractionUser([]translation.ChapterText{{Title: ch.Title, Text: ch.Source}}, "", lockedTerms),
 			Model:        model,
 			JSONMode:     true,
-		}
-		chapterIDs[i] = ch.ID
+		})
+		// Summary request (from English source text, for translation context).
+		reqs = append(reqs, translation.BatchRequest{
+			CustomID:     fmt.Sprintf("summary-chapter-%d", ch.ID),
+			Instructions: translation.SummarySystem,
+			Input:        translation.SummaryUser(translation.ChapterInfo{ID: ch.ID, Title: ch.Title}, ch.Source),
+			Model:        model,
+		})
 	}
 
 	// Build JSONL.
@@ -138,7 +149,7 @@ func runAnalyze(ctx context.Context, proj *project.Project, force, cont bool, ch
 	if err != nil {
 		return fmt.Errorf("build batch JSONL: %w", err)
 	}
-	slog.Info("built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
+	slog.Info("built batch input", "requests", len(reqs), "chapters", len(chs), "jsonl_bytes", len(jsonlData), "model", model)
 
 	// Create the batch client and submit.
 	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
@@ -249,9 +260,10 @@ func pollAnalyzeBatch(ctx context.Context, proj *project.Project, state *transla
 	}
 }
 
-// processAnalyzeResults downloads the batch output, collects per-chapter
-// results, sends a live merge/unify request, applies config overrides, and
-// saves the final glossary.json + characters.json.
+// processAnalyzeResults downloads the batch output, splits results by custom_id
+// prefix (analyze- vs summary-), saves summaries to memory/, sends a live
+// merge/unify request for glossary results, applies config overrides, and saves
+// the final glossary.json + characters.json.
 func processAnalyzeResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient) error {
 	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
 
@@ -260,28 +272,44 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 		return fmt.Errorf("download results: %w", err)
 	}
 
-	// Collect per-chapter extraction results.
+	// Split results by custom_id prefix: "analyze-chapter-N" → glossary,
+	// "summary-chapter-N" → chapter summary.
 	var perChapter []glossaryExtractionResult
 	var failedCount int
+	summariesSaved := 0
 	for _, res := range results {
 		if res.Error != "" {
 			slog.Warn("request failed in batch", "custom_id", res.CustomID, "error", res.Error)
 			failedCount++
 			continue
 		}
-		var result glossaryExtractionResult
-		if err := json.Unmarshal([]byte(res.Content), &result); err != nil {
-			slog.Warn("failed to parse glossary JSON from batch result",
-				"custom_id", res.CustomID, "error", err, "content", truncate(res.Content, 200))
-			failedCount++
+
+		// Summary result → save to memory/.
+		if chID := translation.SplitCustomID(res.CustomID, "summary"); chID > 0 {
+			if err := translation.SaveSummary(proj.MemoryDir(), chID, res.Content); err != nil {
+				slog.Warn("failed to save summary", "chapter", chID, "error", err)
+			} else {
+				summariesSaved++
+			}
 			continue
 		}
-		perChapter = append(perChapter, result)
+
+		// Glossary extraction result → collect for merge.
+		if translation.SplitCustomID(res.CustomID, "analyze") > 0 {
+			var result glossaryExtractionResult
+			if err := json.Unmarshal([]byte(res.Content), &result); err != nil {
+				slog.Warn("failed to parse glossary JSON from batch result",
+					"custom_id", res.CustomID, "error", err, "content", truncate(res.Content, 200))
+				failedCount++
+				continue
+			}
+			perChapter = append(perChapter, result)
+		}
 	}
-	slog.Info("batch results parsed", "successful", len(perChapter), "failed", failedCount)
+	slog.Info("batch results parsed", "glossary_results", len(perChapter), "summaries_saved", summariesSaved, "failed", failedCount)
 
 	if len(perChapter) == 0 {
-		return fmt.Errorf("no successful results in batch — all %d requests failed", failedCount)
+		return fmt.Errorf("no successful glossary results in batch — all %d requests failed", failedCount)
 	}
 
 	// Serialize per-chapter results for the merge prompt.
@@ -338,7 +366,7 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 
 	// Clean up batch state.
 	_ = translation.DeleteBatchState(proj.AIDir(), "analyze")
-	slog.Info("analyze batch complete", "batch_id", state.BatchID)
+	slog.Info("analyze batch complete", "batch_id", state.BatchID, "summaries", summariesSaved)
 
 	return nil
 }

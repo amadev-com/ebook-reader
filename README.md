@@ -143,7 +143,7 @@ CLI `--strip` flags are appended to the config defaults.
 bookai analyze -p my-vampire-system
 ```
 
-Uses the **OpenAI Batch API** for cost-effective processing (50% discount). Each chapter is submitted as an independent batch item — the model extracts characters and terms from each chapter separately. After the batch completes, a single "live" merge/unify request deduplicates and classifies all results: **characters** = only real persons from the story, **glossary** = terms (places, organizations, titles) without any character entries. Writes `ai/glossary.json` and `ai/characters.json`.
+Uses the **OpenAI Batch API** for cost-effective processing (50% discount). Each chapter gets two batch items: one for glossary/character extraction, one for a chapter summary. After the batch completes, a single "live" merge/unify request deduplicates and classifies all results: **characters** = only real persons from the story, **glossary** = terms (places, organizations, titles) without any character entries. Writes `ai/glossary.json`, `ai/characters.json`, and `memory/chapter_NNN.summary.txt` (summaries used as context by translate).
 
 The command stays in polling mode, checking batch status every 60 seconds. If interrupted, use `--continue` to resume:
 
@@ -167,7 +167,7 @@ bookai analyze -p my-vampire-system --range 1-100
 bookai translate -p my-vampire-system
 ```
 
-Uses the **OpenAI Batch API** for cost-effective processing. Each chapter is submitted as an independent batch item with the glossary and previous chapter summaries as context. After the batch completes, translations are written to `translation/chapter_NNN.ru.txt`. Optional post-processing (summaries, new-term extraction) runs as live calls. Updates chapter status to `translated`.
+Uses the **OpenAI Batch API** for cost-effective processing. Each chapter is submitted as an independent batch item with the glossary and previous chapter summaries (from analyze) as context. After the batch completes, translations are written to `translation/chapter_NNN.ru.txt`. No post-processing — summaries and glossary are finalized by analyze. Updates chapter status to `translated`.
 
 The command stays in polling mode. If interrupted, use `--continue` to resume:
 
@@ -178,8 +178,7 @@ bookai translate -p my-vampire-system --continue
 Options:
 - `--continue` — resume polling an interrupted batch
 - `--chapter N` / `--range M-N` — translate only a subset of chapters
-- `--skip-memory` — skip summary generation (faster, less context continuity)
-- `--skip-glossary-update` — skip new-term extraction after translation
+- `--skip-memory` — don't load previous chapter summaries as context
 - `--poll-interval N` — seconds between status polls (default 60)
 - `--force` — re-translate chapters whose translation already exists
 
@@ -259,7 +258,7 @@ Uses the **OpenAI Batch API** (50% cost discount). Each chapter is analyzed inde
 bookai translate
 ```
 
-Uses the **OpenAI Batch API** for cost-effective translation. Each chapter is an independent batch item with glossary + previous summaries as context. After the batch completes, translations are written and optional post-processing (summaries, new terms) runs as live calls. Writes `translation/chapter_NNN.ru.txt`, `memory/chapter_NNN.summary.txt`, and updates chapter status to `translated`. Use `--continue` to resume an interrupted batch.
+Uses the **OpenAI Batch API** for cost-effective translation. Each chapter is an independent batch item with glossary + previous chapter summaries (from analyze) as context. After the batch completes, translations are written to disk. No post-processing — summaries and glossary are finalized by analyze. Writes `translation/chapter_NNN.ru.txt` and updates chapter status to `translated`. Use `--continue` to resume an interrupted batch.
 
 Use `--chapter` or `--range` to translate in batches:
 
@@ -364,8 +363,7 @@ All stage commands support:
 | `--chapter N` | Process a single chapter (1-based) |
 | `--range M-N` | Process a range of chapters |
 | `--poll-interval N` | Seconds between batch status polls (default 60, analyze/translate) |
-| `--skip-memory` | Skip summary generation (translate) |
-| `--skip-glossary-update` | Skip new-term extraction (translate) |
+| `--skip-memory` | Don't load previous chapter summaries as context (translate) |
 | `--project PATH` | Path to the project directory (default: current dir) |
 | `--verbose` | Enable debug logging |
 
