@@ -152,6 +152,50 @@ func NewTermsUser(_ ChapterInfo, source, translation string) string {
 	return fmt.Sprintf("Source (English):\n\n%s\n\nTranslation (Russian):\n\n%s\n\nExtract new glossary terms as JSON.", source, translation)
 }
 
+// --- Glossary merge/unify prompts (bookai analyze — post-batch merge step) ---
+
+// GlossaryMergeSystem is the system prompt for the final merge/unify step of
+// the batch analyze flow. After all chapters are independently analyzed via
+// the Batch API, this call receives all per-chapter results and produces a
+// single unified characters list + glossary. The key rules are:
+//   - characters.json must contain ONLY real persons from the story
+//   - glossary.json must contain terms (places, organizations, titles, terms)
+//     WITHOUT any character entries
+const GlossaryMergeSystem = `You are a literary translation assistant. You are given the results of analyzing a book chapter-by-chapter. Each chapter was analyzed independently, so there are many duplicates and possibly misclassifications. Your task is to merge all results into a single, clean, deduplicated terminology glossary and character list.
+
+CRITICAL RULES:
+1. The "characters" array must contain ONLY real persons from the story — named individuals who appear or are referenced as characters (protagonists, antagonists, supporting characters). Do NOT include places, organizations, titles, or generic terms in the characters array.
+2. The "terms" array must contain ONLY non-character terms: places, organizations, titles, and invented/genre terms. Do NOT include any character entries in the terms array. If a term was misclassified as a character in a per-chapter result, move it to the correct category.
+3. Deduplicate: merge entries with the same English source into one. If different chapters provided different translations for the same term, pick the most common or most appropriate one.
+4. Merge character descriptions: if different chapters provided different descriptions for the same character, combine them into a single coherent description.
+
+Return a JSON object with this exact shape:
+{
+  "characters": [{"name": "...", "translation": "...", "role": "...", "description": "..."}],
+  "terms": [{"source": "...", "target": "...", "type": "..."}]
+}
+
+The "type" field for terms must be one of: "place", "organization", "title", "term".
+The "role" field for characters should be one of: "protagonist", "antagonist", "supporting" (or empty if unclear).`
+
+// GlossaryMergeUser builds the user prompt for the merge step. It receives all
+// per-chapter extraction results serialized as JSON, plus the locked terms
+// from config overrides.
+func GlossaryMergeUser(perChapterResults string, lockedTerms string) string {
+	var b strings.Builder
+	b.WriteString("Merge and unify these per-chapter glossary extraction results into a single clean glossary + character list.\n\n")
+	if lockedTerms != "" {
+		b.WriteString("LOCKED TRANSLATIONS — you MUST use these exact translations for the matching terms. ")
+		b.WriteString("Do not change them:\n\n")
+		b.WriteString(lockedTerms)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Per-chapter extraction results (JSON array, one object per chapter):\n\n")
+	b.WriteString(perChapterResults)
+	b.WriteString("\n\nReturn the merged and unified JSON now. Remember: characters = ONLY real persons, terms = everything else WITHOUT characters.")
+	return b.String()
+}
+
 // --- Pronunciation extraction prompts (bookai pronounce) ---
 
 // PronunciationSystem is the system prompt for generating IPA phonetic

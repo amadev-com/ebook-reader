@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -17,20 +18,24 @@ import (
 )
 
 // newAnalyzeCmd implements `bookai analyze`: extracts a glossary and character
-// list from the book by sending full chapter texts in batches to the helper
-// model (gpt-4.1-mini). Batches are processed sequentially; the accumulated
-// glossary from previous batches is fed into each subsequent call so the model
-// can merge new findings without producing duplicates.
+// list from the book using the OpenAI Batch API for cost-effective processing.
+// Each chapter is submitted as an independent batch item. After the batch
+// completes, a single "live" (non-batch) request merges and unifies all
+// per-chapter results into the final glossary.json + characters.json.
+//
+// The command supports a --continue flag to resume polling an interrupted
+// batch. Batch state is persisted locally in ai/batch_analyze.json.
 func newAnalyzeCmd() *cobra.Command {
 	var (
-		force     bool
-		chapter   int
-		chRange   string
-		batchSize int
+		force   bool
+		cont    bool
+		chapter int
+		chRange string
+		pollInt int
 	)
 	cmd := &cobra.Command{
 		Use:   "analyze",
-		Short: "Extract glossary and characters from the book (Milestone 2)",
+		Short: "Extract glossary and characters via OpenAI Batch API",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			setupLogger()
@@ -40,29 +45,49 @@ func newAnalyzeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runAnalyze(ctx, proj, force, chapter, chRange, batchSize)
+			return runAnalyze(ctx, proj, force, cont, chapter, chRange, pollInt)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "re-analyze even if glossary.json already exists")
+	cmd.Flags().BoolVar(&cont, "continue", false, "resume polling an interrupted batch")
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "analyze only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "analyze a range of chapter ids, e.g. 5-12")
-	cmd.Flags().IntVar(&batchSize, "batch-size", 10, "number of chapters per API call (full text)")
+	cmd.Flags().IntVar(&pollInt, "poll-interval", 60, "seconds between batch status polls")
 	return cmd
 }
 
-// runAnalyze loads chapters, sends them in sequential batches to the helper
-// model for glossary extraction, and writes ai/glossary.json +
-// ai/characters.json. Each batch receives the accumulated glossary from
-// previous batches so the model merges rather than duplicates.
-func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter int, chRange string, batchSize int) error {
+// runAnalyze orchestrates the batch-based glossary extraction flow:
+//  1. If --continue: load existing batch state and jump to polling.
+//  2. Otherwise: build JSONL with one request per chapter, upload, create batch.
+//  3. Poll batch status every pollInt seconds until terminal.
+//  4. Download results, send a live merge/unify request, apply overrides, save.
+func runAnalyze(ctx context.Context, proj *project.Project, force, cont bool, chapter int, chRange string, pollInt int) error {
+	if pollInt < 10 {
+		pollInt = 60
+	}
+
 	glossaryPath := filepath.Join(proj.AIDir(), "glossary.json")
+
+	// --continue: resume polling an existing batch.
+	if cont {
+		return resumeAnalyzeBatch(ctx, proj, pollInt)
+	}
+
+	// Fresh run: check if glossary already exists.
 	if project.Exists(glossaryPath) && !force {
 		slog.Info("glossary already exists, skipping (use --force to re-analyze)", "path", glossaryPath)
 		return nil
 	}
 
-	if batchSize < 1 {
-		batchSize = 10
+	// Check for an existing pending batch.
+	if state, _ := translation.LoadBatchState(proj.AIDir(), "analyze"); state != nil {
+		if !translation.IsTerminalStatus(state.Status) {
+			slog.Info("found pending analyze batch, resuming polling (use --force to start a new one)",
+				"batch_id", state.BatchID, "status", state.Status)
+			return pollAnalyzeBatch(ctx, proj, state, pollInt)
+		}
+		slog.Info("cleaning up completed batch state from previous run", "batch_id", state.BatchID)
+		_ = translation.DeleteBatchState(proj.AIDir(), "analyze")
 	}
 
 	// Load all chapters.
@@ -88,101 +113,232 @@ func runAnalyze(ctx context.Context, proj *project.Project, force bool, chapter 
 		}
 		chs = filtered
 	}
-	slog.Info("loaded chapters for analysis", "count", len(chs), "batch_size", batchSize)
+	slog.Info("loaded chapters for analysis", "count", len(chs))
 
-	// Create the OpenAI client.
+	// Build locked-translations string from config overrides.
+	lockedTerms := buildLockedTerms(proj.Cfg.Glossary)
+
+	// Build batch requests: one per chapter, each independently analyzed.
+	model := proj.Cfg.OpenAI.HelperModel
+	reqs := make([]translation.BatchRequest, len(chs))
+	chapterIDs := make([]int, len(chs))
+	for i, ch := range chs {
+		reqs[i] = translation.BatchRequest{
+			CustomID:     fmt.Sprintf("analyze-chapter-%d", ch.ID),
+			Instructions: translation.GlossaryExtractionSystem,
+			Input:        translation.GlossaryExtractionUser([]translation.ChapterText{{Title: ch.Title, Text: ch.Source}}, "", lockedTerms),
+			Model:        model,
+			JSONMode:     true,
+		}
+		chapterIDs[i] = ch.ID
+	}
+
+	// Build JSONL.
+	jsonlData, err := translation.BuildJSONL(reqs)
+	if err != nil {
+		return fmt.Errorf("build batch JSONL: %w", err)
+	}
+	slog.Info("built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
+
+	// Create the batch client and submit.
+	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
+	if err != nil {
+		return err
+	}
+
+	batchID, inputFileID, err := batchClient.SubmitBatch(ctx, jsonlData, map[string]string{
+		"type":    "analyze",
+		"project": proj.Cfg.Project,
+	})
+	if err != nil {
+		return err
+	}
+	slog.Info("batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
+
+	// Save batch state.
+	state := &translation.BatchState{
+		BatchID:     batchID,
+		InputFileID: inputFileID,
+		Type:        "analyze",
+		Model:       model,
+		Endpoint:    "/v1/responses",
+		Status:      "validating",
+		ChapterIDs:  chapterIDs,
+		CreatedAt:   time.Now(),
+	}
+	if err := translation.SaveBatchState(proj.AIDir(), state); err != nil {
+		return fmt.Errorf("save batch state: %w", err)
+	}
+
+	// Poll until completion.
+	return pollAnalyzeBatch(ctx, proj, state, pollInt)
+}
+
+// resumeAnalyzeBatch loads the persisted batch state and resumes polling.
+func resumeAnalyzeBatch(ctx context.Context, proj *project.Project, pollInt int) error {
+	state, err := translation.LoadBatchState(proj.AIDir(), "analyze")
+	if err != nil {
+		return fmt.Errorf("load batch state: %w", err)
+	}
+	if state == nil {
+		return fmt.Errorf("no pending analyze batch found — run `bookai analyze` without --continue to start a new one")
+	}
+	if translation.IsTerminalStatus(state.Status) {
+		slog.Info("batch already reached terminal status, processing results", "batch_id", state.BatchID, "status", state.Status)
+	}
+	slog.Info("resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
+	return pollAnalyzeBatch(ctx, proj, state, pollInt)
+}
+
+// pollAnalyzeBatch polls the batch status every pollInt seconds. When the batch
+// reaches a terminal status, it downloads results and processes them.
+func pollAnalyzeBatch(ctx context.Context, proj *project.Project, state *translation.BatchState, pollInt int) error {
+	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
+	if err != nil {
+		return err
+	}
+
+	for {
+		if ctx.Err() != nil {
+			slog.Info("interrupted by signal", "batch_id", state.BatchID, "last_status", state.Status)
+			return ctx.Err()
+		}
+
+		info, err := batchClient.PollBatch(ctx, state.BatchID)
+		if err != nil {
+			return fmt.Errorf("poll batch: %w", err)
+		}
+
+		state.Status = info.Status
+		state.OutputFileID = info.OutputFileID
+		state.ErrorFileID = info.ErrorFileID
+		state.Total = info.Total
+		state.Completed = info.Completed
+		state.Failed = info.Failed
+		_ = translation.SaveBatchState(proj.AIDir(), state)
+
+		slog.Info("batch status",
+			"batch_id", state.BatchID, "status", info.Status,
+			"completed", info.Completed, "failed", info.Failed, "total", info.Total)
+
+		if translation.IsTerminalStatus(info.Status) {
+			break
+		}
+
+		slog.Info("waiting for batch", "poll_seconds", pollInt)
+		select {
+		case <-ctx.Done():
+			slog.Info("interrupted during poll wait", "batch_id", state.BatchID)
+			return ctx.Err()
+		case <-time.After(time.Duration(pollInt) * time.Second):
+		}
+	}
+
+	// Terminal status reached.
+	switch state.Status {
+	case "completed":
+		return processAnalyzeResults(ctx, proj, state, batchClient)
+	case "failed":
+		return fmt.Errorf("batch %s failed — check OpenAI dashboard for details", state.BatchID)
+	case "expired":
+		return fmt.Errorf("batch %s expired before completion", state.BatchID)
+	case "cancelled":
+		return fmt.Errorf("batch %s was cancelled", state.BatchID)
+	default:
+		return fmt.Errorf("batch %s ended in unexpected status: %s", state.BatchID, state.Status)
+	}
+}
+
+// processAnalyzeResults downloads the batch output, collects per-chapter
+// results, sends a live merge/unify request, applies config overrides, and
+// saves the final glossary.json + characters.json.
+func processAnalyzeResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient) error {
+	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
+
+	results, err := batchClient.DownloadResults(ctx, state.OutputFileID)
+	if err != nil {
+		return fmt.Errorf("download results: %w", err)
+	}
+
+	// Collect per-chapter extraction results.
+	var perChapter []glossaryExtractionResult
+	var failedCount int
+	for _, res := range results {
+		if res.Error != "" {
+			slog.Warn("request failed in batch", "custom_id", res.CustomID, "error", res.Error)
+			failedCount++
+			continue
+		}
+		var result glossaryExtractionResult
+		if err := json.Unmarshal([]byte(res.Content), &result); err != nil {
+			slog.Warn("failed to parse glossary JSON from batch result",
+				"custom_id", res.CustomID, "error", err, "content", truncate(res.Content, 200))
+			failedCount++
+			continue
+		}
+		perChapter = append(perChapter, result)
+	}
+	slog.Info("batch results parsed", "successful", len(perChapter), "failed", failedCount)
+
+	if len(perChapter) == 0 {
+		return fmt.Errorf("no successful results in batch — all %d requests failed", failedCount)
+	}
+
+	// Serialize per-chapter results for the merge prompt.
+	perChapterJSON, err := json.Marshal(perChapter)
+	if err != nil {
+		return fmt.Errorf("marshal per-chapter results: %w", err)
+	}
+
+	// Send a live merge/unify request.
 	client, err := translation.NewClient(proj.Cfg.OpenAI)
 	if err != nil {
 		return err
 	}
-	slog.Info("openai client ready", "helper_model", client.HelperModel())
+	lockedTerms := buildLockedTerms(proj.Cfg.Glossary)
 
-	// Process chapters in sequential batches. The accumulated glossary JSON
-	// from previous batches is passed to each subsequent call so the model can
-	// merge new terms with existing ones.
-	var accumulated glossaryExtractionResult
-	totalBatches := (len(chs) + batchSize - 1) / batchSize
-	for i := 0; i < len(chs); i += batchSize {
-		if ctx.Err() != nil {
-			slog.Info("interrupted by signal", "completed_batches", i/batchSize)
-			return ctx.Err()
-		}
+	slog.Info("sending merge/unify request", "chapters", len(perChapter), "model", client.HelperModel())
 
-		end := i + batchSize
-		if end > len(chs) {
-			end = len(chs)
-		}
-		batch := chs[i:end]
-		batchNum := i/batchSize + 1
+	resp, err := client.Chat(ctx, translation.ChatRequest{
+		System:   translation.GlossaryMergeSystem,
+		User:     translation.GlossaryMergeUser(string(perChapterJSON), lockedTerms),
+		Model:    client.HelperModel(),
+		JSONMode: true,
+	})
+	if err != nil {
+		return fmt.Errorf("merge/unify request: %w", err)
+	}
+	slog.Info("merge/unify complete",
+		"prompt_tokens", resp.Usage.PromptTokens, "completion_tokens", resp.Usage.CompletionTokens)
 
-		// Build ChapterText slice with full source text.
-		chTexts := make([]translation.ChapterText, len(batch))
-		for j, ch := range batch {
-			chTexts[j] = translation.ChapterText{
-				Title: ch.Title,
-				Text:  ch.Source,
-			}
-		}
-
-		// Serialize the accumulated glossary so far for the model to merge with.
-		existingGlossary := ""
-		if len(accumulated.Characters) > 0 || len(accumulated.Terms) > 0 {
-			if data, err := json.Marshal(accumulated); err == nil {
-				existingGlossary = string(data)
-			}
-		}
-
-		// Build locked-translations string from config overrides.
-		lockedTerms := buildLockedTerms(proj.Cfg.Glossary)
-
-		slog.Info("processing batch",
-			"batch", batchNum, "of", totalBatches,
-			"chapters", fmt.Sprintf("%d-%d", batch[0].ID, batch[len(batch)-1].ID),
-			"existing_terms", len(accumulated.Terms), "existing_characters", len(accumulated.Characters),
-			"locked_overrides", len(proj.Cfg.Glossary.Characters)+len(proj.Cfg.Glossary.Terms))
-
-		resp, err := client.Chat(ctx, translation.ChatRequest{
-			System:   translation.GlossaryExtractionSystem,
-			User:     translation.GlossaryExtractionUser(chTexts, existingGlossary, lockedTerms),
-			Model:    client.HelperModel(),
-			JSONMode: true,
-		})
-		if err != nil {
-			return fmt.Errorf("batch %d: %w", batchNum, err)
-		}
-		slog.Info("batch complete", "batch", batchNum,
-			"prompt_tokens", resp.Usage.PromptTokens, "completion_tokens", resp.Usage.CompletionTokens)
-
-		// Parse the response and replace accumulated with the merged result.
-		var result glossaryExtractionResult
-		if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
-			return fmt.Errorf("parse glossary JSON (batch %d): %w (content: %s)", batchNum, err, truncate(resp.Content, 200))
-		}
-		accumulated = result
+	// Parse the unified result.
+	var unified glossaryExtractionResult
+	if err := json.Unmarshal([]byte(resp.Content), &unified); err != nil {
+		return fmt.Errorf("parse unified glossary JSON: %w (content: %s)", err, truncate(resp.Content, 200))
 	}
 
-	// Apply config overrides: force the translation/target of any term or
-	// character that matches a config override. The AI fills in other fields
-	// (role, description, type) from context, but the translation is locked.
-	applyGlossaryOverrides(&accumulated, proj.Cfg.Glossary)
+	// Apply config overrides.
+	applyGlossaryOverrides(&unified, proj.Cfg.Glossary)
 
-	// Build and save the glossary (terms only — characters are stored
-	// separately in characters.json to avoid duplication).
-	glossary := &translation.Glossary{Terms: accumulated.Terms}
-	slog.Info("extracted glossary", "terms", len(glossary.Terms),
-		"characters", len(accumulated.Characters))
+	// Save glossary (terms only — no characters).
+	glossary := &translation.Glossary{Terms: unified.Terms}
+	slog.Info("unified glossary", "terms", len(glossary.Terms), "characters", len(unified.Characters))
 
 	if err := glossary.Save(proj.AIDir()); err != nil {
 		return err
 	}
-	slog.Info("saved glossary", "path", glossaryPath)
+	slog.Info("saved glossary", "path", filepath.Join(proj.AIDir(), "glossary.json"))
 
-	// Build and save the characters store.
-	characters := &translation.Characters{Characters: accumulated.Characters}
+	// Save characters.
+	characters := &translation.Characters{Characters: unified.Characters}
 	if err := characters.Save(proj.AIDir()); err != nil {
 		return err
 	}
 	slog.Info("saved characters", "path", filepath.Join(proj.AIDir(), "characters.json"))
+
+	// Clean up batch state.
+	_ = translation.DeleteBatchState(proj.AIDir(), "analyze")
+	slog.Info("analyze batch complete", "batch_id", state.BatchID)
 
 	return nil
 }

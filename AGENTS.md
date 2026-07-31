@@ -18,7 +18,7 @@ Project layout: `cmd/bookai` (binary) + `internal/{epub,chapters,project,config,
 
 - Go 1.26, Cobra CLI, YAML config (`gopkg.in/yaml.v3`).
 - EPUB parsing: custom reader (`archive/zip` + `encoding/xml` + `golang.org/x/net/html`).
-- Translation: OpenAI **official** SDK (`github.com/openai/openai-go`), `gpt-4.1` / `gpt-4.1-mini`. EN→RU. (M2)
+- Translation: OpenAI **official** SDK (`github.com/openai/openai-go`), `gpt-5.6-luna` (default). EN→RU. Uses **Batch API** for cost-effective processing (50% discount). (M2)
 - TTS: swappable Engine interface (`internal/tts/engine.go`). Default "noop" engine for pipeline testing. `xtts-http` engine for real XTTS v2 via Docker server. (M3)
 - `bookai import <epub> [name]` auto-creates a project dir (slugified name) in CWD, writes default `config.yaml`, copies EPUB. Other commands use `-p`/`--project` flag (defaults to CWD).
 - Chapter classifier: rules-only in M1 (AI fallback designed but not wired).
@@ -33,14 +33,15 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 - Idempotent: reruns skip existing artifacts unless `--force` / `--chapter` / `--range`.
 - `--strategy toc|heading|per-item` forces a single detection strategy.
 
-## Milestone 2 — Translation core (COMPLETE)
+## Milestone 2 — Translation core (COMPLETE — Batch API)
 
-- `bookai analyze`: extracts glossary + characters from full chapter texts via gpt-4.1-mini (JSON mode). Chapters processed in sequential batches (default 10); accumulated glossary fed into each batch for merging. Characters stored separately in `ai/characters.json` (no duplication in glossary). Config `glossary.characters`/`glossary.terms` override AI-extracted translations (locked). Writes `ai/glossary.json` (terms only) + `ai/characters.json`. Flags: `--force`, `--chapter N`, `--range M-N`, `--batch-size N`.
-- `bookai translate`: per-chapter translation via gpt-4.1 with glossary + previous 2 chapter summaries as context. Three-step loop: translate → summarize → extract new terms. Writes `translation/chapter_NNN.ru.txt`, `memory/chapter_NNN.summary.txt`, updates `chapter_NNN.json` status → "translated", merges new terms into glossary.
+- `bookai analyze`: extracts glossary + characters via **OpenAI Batch API**. Each chapter is an independent batch item (JSONL line targeting `/v1/responses`). After the batch completes, a single "live" merge/unify request deduplicates and classifies results — characters = ONLY real persons, glossary = terms WITHOUT characters. Config `glossary.characters`/`glossary.terms` override AI-extracted translations (locked). Writes `ai/glossary.json` (terms only) + `ai/characters.json`. Batch state persisted in `ai/batch_analyze.json` for `--continue` resume. Flags: `--force`, `--continue`, `--chapter N`, `--range M-N`, `--poll-interval N` (default 60s).
+- `bookai translate`: per-chapter translation via **OpenAI Batch API**. Each chapter is an independent batch item with glossary + previous 2 chapter summaries as context. After batch completes, translations are written to disk. Optional post-processing (summaries, new-term extraction) runs as live calls. Writes `translation/chapter_NNN.ru.txt`, `memory/chapter_NNN.summary.txt`, updates `chapter_NNN.json` status → "translated", merges new terms into glossary. Batch state persisted in `ai/batch_translate.json` for `--continue` resume. Flags: `--force`, `--continue`, `--chapter N`, `--range M-N`, `--skip-memory`, `--skip-glossary-update`, `--poll-interval N` (default 60s).
 - `bookai verify-glossary`: scans translations for untranslated English glossary terms, writes `ai/glossary_violations.json`.
-- `bookai pronounce`: reads `ai/glossary.json` + `ai/characters.json`, asks gpt-4.1-mini for IPA phonetics of Russian terms, writes `ai/pronunciation.json`. Config `pronunciation` overrides AI-generated phonemes. Consumed by `ssml` for `<phoneme>` tags. Flag: `--force`.
-- OpenAI SDK: official `github.com/openai/openai-go/v3` (v3.47.0). Uses the **Responses API** (`client.Responses.New`) instead of the deprecated Chat Completions API. System prompt → `instructions` param, user message → `input` param, JSON mode → `text.format = json_object`. Built-in retry via `option.WithMaxRetries`.
-- Flags: `--force`, `--chapter N`, `--range M-N`, `--skip-memory`, `--skip-glossary-update`.
+- `bookai pronounce`: reads `ai/glossary.json` + `ai/characters.json`, asks helper model for IPA phonetics of Russian terms, writes `ai/pronunciation.json`. Config `pronunciation` overrides AI-generated phonemes. Consumed by `ssml` for `<phoneme>` tags. Flag: `--force`.
+- OpenAI SDK: official `github.com/openai/openai-go/v3` (v3.47.0). Uses the **Responses API** (`client.Responses.New`) for live calls and **Batch API** (`client.Batches.New`) for bulk processing. System prompt → `instructions` param, user message → `input` param, JSON mode → `text.format = json_object`. Built-in retry via `option.WithMaxRetries`.
+- Batch API flow: build JSONL → upload file (purpose `batch`) → create batch (endpoint `/v1/responses`, 24h window) → poll every N seconds → download output file → parse results. `internal/translation/batch.go` handles all batch operations. `internal/translation/batch_state.go` persists state locally.
+- Default model: `gpt-5.6-luna` for both translation and helper tasks (configurable in `config.yaml`).
 
 ## Milestone 3 — TTS pipeline (COMPLETE — scaffolding with swappable engine)
 

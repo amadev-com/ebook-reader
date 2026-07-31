@@ -131,14 +131,22 @@ Each `--strip` string is a **trigger**: if it appears in the last 400 chars of a
 bookai analyze -p my-vampire-system
 ```
 
-Sends full chapter texts in batches to `gpt-4.1-mini` for glossary extraction. Batches are processed sequentially — each batch receives the accumulated glossary from previous batches so the model merges new findings without duplicates. Writes `ai/glossary.json` and `ai/characters.json`.
+Uses the **OpenAI Batch API** for cost-effective processing (50% discount). Each chapter is submitted as an independent batch item — the model extracts characters and terms from each chapter separately. After the batch completes, a single "live" merge/unify request deduplicates and classifies all results: **characters** = only real persons from the story, **glossary** = terms (places, organizations, titles) without any character entries. Writes `ai/glossary.json` and `ai/characters.json`.
 
-Options:
-- `--batch-size N` — chapters per API call (default 10, ~20K tokens per batch)
-- `--chapter N` / `--range M-N` — analyze only a subset of chapters
+The command stays in polling mode, checking batch status every 60 seconds. If interrupted, use `--continue` to resume:
 
 ```bash
-bookai analyze -p my-vampire-system --batch-size 5 --range 1-100
+bookai analyze -p my-vampire-system --continue
+```
+
+Options:
+- `--continue` — resume polling an interrupted batch
+- `--chapter N` / `--range M-N` — analyze only a subset of chapters
+- `--poll-interval N` — seconds between status polls (default 60)
+- `--force` — re-analyze even if glossary already exists
+
+```bash
+bookai analyze -p my-vampire-system --range 1-100
 ```
 
 ### Step 4 — Translate
@@ -147,9 +155,21 @@ bookai analyze -p my-vampire-system --batch-size 5 --range 1-100
 bookai translate -p my-vampire-system
 ```
 
-Translates each chapter to Russian using `gpt-4.1` with the glossary and previous chapter summaries as context. Writes `translation/chapter_NNN.ru.txt`, `memory/chapter_NNN.summary.txt`, and updates chapter status to `translated`.
+Uses the **OpenAI Batch API** for cost-effective processing. Each chapter is submitted as an independent batch item with the glossary and previous chapter summaries as context. After the batch completes, translations are written to `translation/chapter_NNN.ru.txt`. Optional post-processing (summaries, new-term extraction) runs as live calls. Updates chapter status to `translated`.
 
-This is the most time-consuming and expensive stage. Use `--chapter` or `--range` to translate in batches:
+The command stays in polling mode. If interrupted, use `--continue` to resume:
+
+```bash
+bookai translate -p my-vampire-system --continue
+```
+
+Options:
+- `--continue` — resume polling an interrupted batch
+- `--chapter N` / `--range M-N` — translate only a subset of chapters
+- `--skip-memory` — skip summary generation (faster, less context continuity)
+- `--skip-glossary-update` — skip new-term extraction after translation
+- `--poll-interval N` — seconds between status polls (default 60)
+- `--force` — re-translate chapters whose translation already exists
 
 ```bash
 bookai translate -p my-vampire-system --range 1-50
@@ -170,7 +190,7 @@ Scans translations for untranslated English glossary terms. Writes `ai/glossary_
 bookai pronounce -p my-vampire-system
 ```
 
-Reads `ai/glossary.json` + `ai/characters.json` and asks `gpt-4.1-mini` for IPA phonetic transcriptions of the Russian terms. Writes `ai/pronunciation.json`, which is consumed by `bookai ssml` to insert `<phoneme>` tags for names and terms that TTS engines might mispronounce. Use `--force` to re-generate.
+Reads `ai/glossary.json` + `ai/characters.json` and asks the helper model for IPA phonetic transcriptions of the Russian terms. Writes `ai/pronunciation.json`, which is consumed by `bookai ssml` to insert `<phoneme>` tags for names and terms that TTS engines might mispronounce. Use `--force` to re-generate.
 
 ### Step 7 — Generate SSML
 
@@ -219,7 +239,7 @@ Writes `chapters/chapter_NNN.json` (one per chapter), `chapters/_index.json`, an
 bookai analyze
 ```
 
-Uses `gpt-4.1-mini` to extract a glossary (terms + translations) and character list from chapter snippets. Writes `ai/glossary.json` and `ai/characters.json`.
+Uses the **OpenAI Batch API** (50% cost discount). Each chapter is analyzed independently as a batch item, then a live merge/unify request produces the final glossary and character list. Characters = only real persons; glossary = terms without characters. Writes `ai/glossary.json` and `ai/characters.json`. Stays in polling mode — use `--continue` to resume if interrupted.
 
 ### Step 4 — Translate
 
@@ -227,9 +247,9 @@ Uses `gpt-4.1-mini` to extract a glossary (terms + translations) and character l
 bookai translate
 ```
 
-Translates each chapter to Russian using `gpt-4.1` with the glossary and previous chapter summaries as context. Writes `translation/chapter_NNN.ru.txt`, `memory/chapter_NNN.summary.txt`, and updates chapter status to `translated`.
+Uses the **OpenAI Batch API** for cost-effective translation. Each chapter is an independent batch item with glossary + previous summaries as context. After the batch completes, translations are written and optional post-processing (summaries, new terms) runs as live calls. Writes `translation/chapter_NNN.ru.txt`, `memory/chapter_NNN.summary.txt`, and updates chapter status to `translated`. Use `--continue` to resume an interrupted batch.
 
-This is the most time-consuming and expensive stage. Use `--chapter` or `--range` to translate in batches:
+Use `--chapter` or `--range` to translate in batches:
 
 ```bash
 bookai translate --range 1-50
@@ -328,8 +348,12 @@ All stage commands support:
 | Flag | Description |
 |------|-------------|
 | `--force` | Regenerate artifacts even if they already exist |
+| `--continue` | Resume polling an interrupted batch (analyze, translate) |
 | `--chapter N` | Process a single chapter (1-based) |
 | `--range M-N` | Process a range of chapters |
+| `--poll-interval N` | Seconds between batch status polls (default 60, analyze/translate) |
+| `--skip-memory` | Skip summary generation (translate) |
+| `--skip-glossary-update` | Skip new-term extraction (translate) |
 | `--project PATH` | Path to the project directory (default: current dir) |
 | `--verbose` | Enable debug logging |
 
@@ -343,8 +367,8 @@ languages:
   source: en
   target: ru
 openai:
-  translation_model: gpt-4.1
-  helper_model: gpt-4.1-mini
+  translation_model: gpt-5.6-luna    # model for translation (Batch API)
+  helper_model: gpt-5.6-luna         # model for glossary/summary/merge (Batch API)
   max_retries: 3
 tts:
   engine: xtts-http              # "noop" (default) or "xtts-http"

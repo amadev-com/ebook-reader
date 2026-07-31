@@ -135,8 +135,8 @@ func Default(projectName string) Config {
 		},
 		OpenAI: OpenAI{
 			BaseURL:          "",
-			TranslationModel: "gpt-4.1",
-			HelperModel:      "gpt-4.1-mini",
+			TranslationModel: "gpt-5.6-luna",
+			HelperModel:      "gpt-5.6-luna",
 			MaxRetries:       3,
 		},
 		TTS: TTS{

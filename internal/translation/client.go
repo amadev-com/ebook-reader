@@ -12,9 +12,7 @@ package translation
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -38,9 +36,9 @@ type Client struct {
 // returned. An optional base URL (for OpenAI-compatible endpoints) is taken
 // from config.
 func NewClient(cfg config.OpenAI) (*Client, error) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
+	apiKey := apiKeyFromEnv()
 	if apiKey == "" {
-		return nil, errors.New("OPENAI_API_KEY environment variable is not set")
+		return nil, errNoAPIKey
 	}
 	opts := []option.RequestOption{
 		option.WithAPIKey(apiKey),

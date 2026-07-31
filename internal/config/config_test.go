@@ -15,11 +15,11 @@ func TestDefault(t *testing.T) {
 	if cfg.Languages.Source != "en" || cfg.Languages.Target != "ru" {
 		t.Errorf("Languages = %+v, want en->ru", cfg.Languages)
 	}
-	if cfg.OpenAI.TranslationModel != "gpt-4.1" {
-		t.Errorf("TranslationModel = %q, want gpt-4.1", cfg.OpenAI.TranslationModel)
+	if cfg.OpenAI.TranslationModel != "gpt-5.6-luna" {
+		t.Errorf("TranslationModel = %q, want gpt-5.6-luna", cfg.OpenAI.TranslationModel)
 	}
-	if cfg.OpenAI.HelperModel != "gpt-4.1-mini" {
-		t.Errorf("HelperModel = %q, want gpt-4.1-mini", cfg.OpenAI.HelperModel)
+	if cfg.OpenAI.HelperModel != "gpt-5.6-luna" {
+		t.Errorf("HelperModel = %q, want gpt-5.6-luna", cfg.OpenAI.HelperModel)
 	}
 }
 
