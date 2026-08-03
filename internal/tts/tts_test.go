@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -173,6 +174,58 @@ func TestRender_WithPhonemeHint(t *testing.T) {
 	}
 	if !contains(out, " был велик.") {
 		t.Errorf("missing text after phoneme: %s", out)
+	}
+}
+
+func TestRender_MultipleHintsOutOfOrder(t *testing.T) {
+	// Reproduces the bug where findHints collects hints in term-length order
+	// (longest first), not positional order. The renderer must sort hints by
+	// Start before emitting text, otherwise text is duplicated/garbled.
+	// Sentence: "Нейт был убеждён, что этот Ларри Стил и есть"
+	// "Ларри Стил" (longer) is at a later position, "Нейт" (shorter) is earlier.
+	neitLen := len("Нейт")
+	larryLen := len("Ларри Стил")
+	neitStart := strings.Index("Нейт был убеждён, что этот Ларри Стил и есть", "Нейт")
+	larryStart := strings.Index("Нейт был убеждён, что этот Ларри Стил и есть", "Ларри Стил")
+
+	// Hints deliberately out of positional order (longer term first).
+	doc := &SSML{
+		Paragraphs: []SSMLParagraph{
+			{Sentences: []SSMLSentence{
+				{
+					Text: "Нейт был убеждён, что этот Ларри Стил и есть",
+					Hints: []SSMLHint{
+						{Start: larryStart, End: larryStart + larryLen, Term: "Ларри Стил", Phonemes: "ˈlarʲɪ stil", Alphabet: "ipa"},
+						{Start: neitStart, End: neitStart + neitLen, Term: "Нейт", Phonemes: "nʲejt", Alphabet: "ipa"},
+					},
+				},
+			}},
+		},
+	}
+	out := doc.Render()
+
+	// The output must have "Нейт" phoneme BEFORE "Ларри Стил" phoneme.
+	neitPhoneme := `<phoneme alphabet="ipa" ph="nʲejt">Нейт</phoneme>`
+	larryPhoneme := `<phoneme alphabet="ipa" ph="ˈlarʲɪ stil">Ларри Стил</phoneme>`
+	neitIdx := strings.Index(out, neitPhoneme)
+	larryIdx := strings.Index(out, larryPhoneme)
+	if neitIdx < 0 || larryIdx < 0 {
+		t.Fatalf("missing phoneme tags in output: %s", out)
+	}
+	if neitIdx > larryIdx {
+		t.Errorf("Нейт phoneme should appear before Ларри Стил phoneme\ngot: %s", out)
+	}
+
+	// The text must not be duplicated — "был убеждён" should appear exactly once.
+	if strings.Count(out, "был убеждён") != 1 {
+		t.Errorf("text 'был убеждён' should appear once, got %d times\noutput: %s",
+			strings.Count(out, "был убеждён"), out)
+	}
+
+	// Full sentence check: text should read correctly with phonemes inline.
+	expected := `<phoneme alphabet="ipa" ph="nʲejt">Нейт</phoneme> был убеждён, что этот <phoneme alphabet="ipa" ph="ˈlarʲɪ stil">Ларри Стил</phoneme> и есть`
+	if !contains(out, expected) {
+		t.Errorf("rendered sentence mismatch\ngot:  %s\nwant: contains %q", out, expected)
 	}
 }
 

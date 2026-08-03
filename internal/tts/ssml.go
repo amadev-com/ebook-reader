@@ -200,6 +200,16 @@ func sortByLengthDesc(entries []PronunciationEntry) {
 	}
 }
 
+// sortHintsByStart sorts SSML hints by Start position (ascending) so that
+// renderSentence can emit text left-to-right.
+func sortHintsByStart(hints []SSMLHint) {
+	for i := 1; i < len(hints); i++ {
+		for j := i; j > 0 && hints[j].Start < hints[j-1].Start; j-- {
+			hints[j], hints[j-1] = hints[j-1], hints[j]
+		}
+	}
+}
+
 // indexIgnoreCase finds the first occurrence of needle in haystack starting
 // at offset, using case-insensitive comparison. Returns the byte offset or -1.
 func indexIgnoreCase(haystack, needle string, offset int) int {
@@ -279,15 +289,22 @@ func (s *SSML) Render() string {
 }
 
 // renderSentence produces the inner XML for a sentence, inserting <phoneme>
-// tags at hint positions. Text is XML-escaped.
+// tags at hint positions. Text is XML-escaped. Hints are sorted by Start
+// position before rendering — findHints collects them in term-length order
+// (longest first for greedy matching), not positional order.
 func renderSentence(sent SSMLSentence) string {
 	if len(sent.Hints) == 0 {
 		return escapeXML(sent.Text)
 	}
 
+	// Sort hints by Start position so render output is left-to-right.
+	hints := make([]SSMLHint, len(sent.Hints))
+	copy(hints, sent.Hints)
+	sortHintsByStart(hints)
+
 	var b strings.Builder
 	prev := 0
-	for _, hint := range sent.Hints {
+	for _, hint := range hints {
 		if hint.Start > prev {
 			b.WriteString(escapeXML(sent.Text[prev:hint.Start]))
 		}
