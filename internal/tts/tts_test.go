@@ -325,6 +325,84 @@ func TestNormalizeRussian_KeepSingleCharWord(t *testing.T) {
 	}
 }
 
+func TestReplaceSentenceDots_EndOfText(t *testing.T) {
+	text := "Привет мир."
+	result := NormalizeRussian(text)
+	if result != "Привет мир,!" {
+		t.Errorf("expected sentence-ending dot replaced: got %q", result)
+	}
+}
+
+func TestReplaceSentenceDots_BetweenSentences(t *testing.T) {
+	text := "Первое предложение. Второе предложение."
+	result := NormalizeRussian(text)
+	expected := "Первое предложение,! Второе предложение,!"
+	if result != expected {
+		t.Errorf("expected both dots replaced: got %q", result)
+	}
+}
+
+func TestReplaceSentenceDots_PreserveAbbreviation(t *testing.T) {
+	text := "т. е. это значит."
+	result := NormalizeRussian(text)
+	// Only the final sentence-ending dot should be replaced.
+	if !contains(result, "т. е.") {
+		t.Errorf("abbreviation dots should be preserved: %q", result)
+	}
+	if !contains(result, "значит,!") {
+		t.Errorf("sentence-ending dot should be replaced: %q", result)
+	}
+}
+
+func TestReplaceSentenceDots_PreserveDecimalNumber(t *testing.T) {
+	text := "Это 3.14 значение."
+	result := NormalizeRussian(text)
+	if !contains(result, "3.14") {
+		t.Errorf("decimal number should be preserved: %q", result)
+	}
+}
+
+func TestReplaceSentenceDots_PreserveEllipsis(t *testing.T) {
+	text := "Он подумал... и сказал."
+	result := NormalizeRussian(text)
+	if !contains(result, "...") {
+		t.Errorf("ellipsis should be preserved: %q", result)
+	}
+	if !contains(result, "сказал,!") {
+		t.Errorf("sentence-ending dot should be replaced: %q", result)
+	}
+}
+
+func TestReplaceSentenceDots_NewlineAfter(t *testing.T) {
+	text := "Конец абзаца.\nНовый абзац."
+	result := NormalizeRussian(text)
+	if !contains(result, "абзаца,!\n") {
+		t.Errorf("dot before newline should be replaced: %q", result)
+	}
+}
+
+func TestReplaceSentenceDots_QuoteAfter(t *testing.T) {
+	text := `Он сказал."Цитата"`
+	result := NormalizeRussian(text)
+	if !contains(result, `сказал,!"`) {
+		t.Errorf("dot before quote should be replaced: %q", result)
+	}
+}
+
+func TestReplaceSentenceDots_MultipleParagraphs(t *testing.T) {
+	text := "Первый.\n\nВторой.\n\nТретий."
+	result := NormalizeRussian(text)
+	if !contains(result, "Первый,!") {
+		t.Errorf("first paragraph dot: %q", result)
+	}
+	if !contains(result, "Второй,!") {
+		t.Errorf("second paragraph dot: %q", result)
+	}
+	if !contains(result, "Третий,!") {
+		t.Errorf("third paragraph dot: %q", result)
+	}
+}
+
 // contains is a simple substring check for test readability.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsString(s, substr))
