@@ -19,14 +19,12 @@ import (
 // (docker-compose.yml), but the protocol is simple enough to work with
 // any server that exposes the same /tts endpoint.
 //
-// The engine sends SSML text, but first extracts plain text via
-// ExtractPlainText since the XTTS v2 server does not parse SSML natively.
-// Pronunciation hints are therefore not passed to the TTS engine — they
-// are used only for SSML generation (which may be consumed by other engines
-// or tools). A future enhancement could send phoneme hints to the server.
+// The engine receives plain text (not SSML) — pronunciation control is
+// handled upstream by the `bookai preprocess` command, which applies
+// phonetic respellings and Russian text normalization before synthesis.
 type HTTPEngine struct {
-	cfg      EngineConfig
-	client   *http.Client
+	cfg       EngineConfig
+	client    *http.Client
 	serverURL string
 }
 
@@ -52,20 +50,19 @@ func (e *HTTPEngine) Name() string { return "xtts-http" }
 
 // ttsRequestBody is the JSON body sent to the /tts endpoint.
 type ttsRequestBody struct {
-	Text         string  `json:"text"`
-	Language     string  `json:"language"`
-	SpeakerWav   string  `json:"speaker_wav,omitempty"`
-	SpeakerWavPath string `json:"speaker_wav_path,omitempty"`
-	Speed        float64 `json:"speed"`
+	Text           string  `json:"text"`
+	Language       string  `json:"language"`
+	SpeakerWav     string  `json:"speaker_wav,omitempty"`
+	SpeakerWavPath string  `json:"speaker_wav_path,omitempty"`
+	Speed          float64 `json:"speed"`
 }
 
-// Synthesize sends the SSML text (as plain text) to the HTTP TTS server
-// and writes the returned WAV audio to outPath.
-func (e *HTTPEngine) Synthesize(ctx context.Context, ssmlText string, outPath string) error {
-	// XTTS v2 doesn't parse SSML — extract plain text.
-	text := ExtractPlainText(ssmlText)
+// Synthesize sends plain text to the HTTP TTS server and writes the returned
+// WAV audio to outPath. The text is expected to be already preprocessed
+// (respellings applied, normalized) by the `bookai preprocess` command.
+func (e *HTTPEngine) Synthesize(ctx context.Context, text string, outPath string) error {
 	if text == "" {
-		return fmt.Errorf("tts.http: no text to synthesize after SSML extraction")
+		return fmt.Errorf("tts.http: no text to synthesize")
 	}
 
 	// Determine the speaker. Prefer the Speaker config field (name in the

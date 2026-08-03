@@ -133,30 +133,30 @@ func TestNewTermsSystem(t *testing.T) {
 	}
 }
 
-func TestPronunciationSystem(t *testing.T) {
+func TestRespellingSystem(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(PronunciationSystem, "IPA") {
-		t.Error("pronunciation system prompt missing IPA")
+	if !strings.Contains(RespellingSystem, "XTTS") {
+		t.Error("respelling system prompt missing XTTS")
 	}
-	if !strings.Contains(PronunciationSystem, "JSON") {
-		t.Error("pronunciation system prompt missing JSON instruction")
+	if !strings.Contains(RespellingSystem, "JSON") {
+		t.Error("respelling system prompt missing JSON instruction")
 	}
 }
 
-func TestPronunciationUser(t *testing.T) {
+func TestRespellingUser(t *testing.T) {
 	t.Parallel()
 	inputs := []PronunciationInput{
 		{Russian: "Куинн", Source: "Quinn", Type: "character"},
 		{Russian: "Орден", Source: "The Order", Type: "organization"},
 	}
-	prompt := PronunciationUser(inputs)
+	prompt := RespellingUser(inputs)
 	if !strings.Contains(prompt, "Куинн") {
 		t.Errorf("prompt missing Russian term: %s", prompt)
 	}
 	if !strings.Contains(prompt, "Орден") {
 		t.Errorf("prompt missing second Russian term")
 	}
-	if !strings.Contains(prompt, "Return the JSON pronunciation hints") {
+	if !strings.Contains(prompt, "Return the JSON respellings") {
 		t.Errorf("prompt missing instruction")
 	}
 }

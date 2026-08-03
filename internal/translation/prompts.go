@@ -204,43 +204,77 @@ func GlossaryMergeUser(perChapterResults string, lockedTerms string) string {
 	return b.String()
 }
 
-// --- Pronunciation extraction prompts (bookai pronounce) ---
+// --- Respelling prompts (bookai pronounce) ---
 
-// PronunciationSystem is the system prompt for generating IPA phonetic
-// representations of glossary terms and character names for TTS engines.
-const PronunciationSystem = `You are a phonetics expert specializing in Russian pronunciation for text-to-speech systems. Your task is to provide IPA (International Phonetic Alphabet) transcriptions for Russian terms so that TTS engines pronounce them correctly.
+// RespellingSystem is the system prompt for generating phonetic respellings
+// of Russian terms for the XTTS v2 text-to-speech engine. XTTS v2 does NOT
+// support IPA phonemes, SSML tags, capital-letter stress, or any markup — it
+// goes directly from text to speech. The only reliable way to control
+// pronunciation is to replace the problematic word with a spelling that XTTS
+// will pronounce correctly.
+const RespellingSystem = `You are a phonetics expert specializing in Russian pronunciation for the XTTS v2 text-to-speech engine. XTTS v2 does NOT support IPA phonemes, SSML, or stress marks — it goes directly from text to speech. Your task is to provide phonetic respellings: plain Russian text replacements that make XTTS v2 pronounce terms correctly.
+
+Apply these XTTS v2 respelling rules:
+
+1. Vowel Doubling for Syllable Stress: To force correct stress on a syllable, repeat the stressed vowel 2-3 times.
+   - договор → договоор (stress on 2nd syllable)
+   - звонит → звоонит (stress on 1st syllable)
+
+2. Explicit Vowel Reduction: Replace unstressed vowels with their spoken equivalents.
+   - Unstressed hard о → а: молоко → малако
+   - Unstressed soft е/я → и: бежать → бижать
+
+3. Converting "Ё" to "ЙО": XTTS frequently misses implicit ё. Replace with explicit ё or йо.
+   - еж → йож
+   - серьезно → серьёзна
+
+4. Literal Spelling of Colloquial Transitions: Spell words as they are pronounced.
+   - что → што
+   - конечно → канешна
+   - кого → каво
+
+5. Acronym and Foreign Abbreviation Expansion: Spell out Latin characters and uppercase initials in Russian homophones.
+   - IT → айти
+   - AI → эйай
+   - ChatGPT → чат джипити
+   - РФ → эр эф
+
+6. De-capitalization: Lowercase mid-sentence uppercase words (XTTS tokenizes them awkwardly).
+   - "Орден" mid-sentence → "орден"
 
 Rules:
-- Provide IPA transcription for the RUSSIAN text (the "target" field), not the English source.
-- Use standard IPA notation: /ˈgorod/ for "город", /kʊˈɪn/ for "Куинн".
-- Place primary stress mark ˈ before the stressed syllable.
-- For transliterated English names, provide the pronunciation as it would be read by a Russian speaker (not the original English pronunciation).
-- For standard Russian words, provide their normal Russian IPA pronunciation.
-- Skip terms that are common Russian words with unambiguous pronunciation.
-- Focus on names, transliterated foreign words, invented terms, and anything a TTS engine might mispronounce.
+- Provide respelling for the RUSSIAN text (the "target" field), not the English source.
+- Only respell terms that XTTS v2 might mispronounce: names, transliterated foreign words, invented terms, acronyms, words with ambiguous stress.
+- Skip common Russian words with unambiguous pronunciation.
+- The respelled text must be plain Russian Cyrillic — no IPA, no Latin, no special characters.
+- Preserve the meaning — the respelling should sound the same as the correct pronunciation, just spelled differently.
 
 Return a JSON object with this exact shape:
 {
-  "entries": [{"term": "Russian term", "phonemes": "IPA transcription", "alphabet": "ipa"}]
+  "entries": [{"term": "Russian term as in translation", "respelled": "phonetic respelling for XTTS"}]
 }
 
-If a term does not need pronunciation hints, omit it from the response. If no terms need hints, return {"entries": []}.`
+If a term does not need respelling, omit it. If no terms need respelling, return {"entries": []}.`
 
-// PronunciationUser builds the user prompt from glossary terms and character
+// RespellingUser builds the user prompt from glossary terms and character
 // names. It sends the Russian (target) text for each term so the model can
-// provide IPA phonemes for the text the TTS engine will actually read.
-func PronunciationUser(terms []PronunciationInput) string {
+// generate XTTS-compatible respellings.
+func RespellingUser(terms []PronunciationInput) string {
 	var b strings.Builder
-	b.WriteString("Provide IPA pronunciation hints for these Russian terms used in a book translation.\n\n")
+	b.WriteString("Provide XTTS v2 phonetic respellings for these Russian terms used in a book translation.\n\n")
 	b.WriteString("Terms (Russian text that the TTS engine will read):\n\n")
 	for _, t := range terms {
-		fmt.Fprintf(&b, "- %s\n", t.Russian)
+		if t.Source != "" {
+			fmt.Fprintf(&b, "- %s (from English: %s, type: %s)\n", t.Russian, t.Source, t.Type)
+		} else {
+			fmt.Fprintf(&b, "- %s\n", t.Russian)
+		}
 	}
-	b.WriteString("\nReturn the JSON pronunciation hints now.")
+	b.WriteString("\nReturn the JSON respellings now.")
 	return b.String()
 }
 
-// PronunciationInput is one term to generate pronunciation hints for.
+// PronunciationInput is one term to generate respelling for.
 type PronunciationInput struct {
 	Russian string // the Russian text as it appears in translation
 	Source  string // the English source (for context, not pronounced)

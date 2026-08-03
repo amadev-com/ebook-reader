@@ -2,7 +2,7 @@
 
 A local, file-based batch pipeline that turns an EPUB into a consistently-translated, glossary-backed audiobook.
 
-> **Status: Milestone 3 complete.** EPUB import, chapter detection, glossary extraction, translation, SSML generation, and XTTS v2 text-to-speech are implemented.
+> **Status: Milestone 3 complete.** EPUB import, chapter detection, glossary extraction, translation, text preprocessing with phonetic respellings, and XTTS v2 text-to-speech are implemented.
 
 ## How it works
 
@@ -26,10 +26,10 @@ translation/ + memory/   (chapter_NNN.ru.txt, chapter_NNN.summary.txt)
         ▼
         │  6. bookai pronounce          ← requires OPENAI_API_KEY
         ▼
-ai/          (pronunciation.json)
-        │  7. bookai ssml
+ai/          (respelling.json)
+        │  7. bookai preprocess
         ▼
-tts/         (chapter_NNN.ssml)
+tts/         (chapter_NNN.txt)
         │  8. bookai tts                ← requires TTS server (Docker)
         ▼
 audio/       (chapter_NNN.mp3)
@@ -195,21 +195,21 @@ bookai verify-glossary -p my-vampire-system
 
 Scans translations for untranslated English glossary terms. Writes `ai/glossary_violations.json`.
 
-### Step 6 — Generate pronunciation hints
+### Step 6 — Generate respellings
 
 ```bash
 bookai pronounce -p my-vampire-system
 ```
 
-Reads `ai/glossary.json` + `ai/characters.json` and asks the helper model for IPA phonetic transcriptions of the Russian terms. Writes `ai/pronunciation.json`, which is consumed by `bookai ssml` to insert `<phoneme>` tags for names and terms that TTS engines might mispronounce. Use `--force` to re-generate.
+Reads `ai/glossary.json` + `ai/characters.json` and asks the helper model for **XTTS v2 phonetic respellings** of the Russian terms. XTTS v2 does NOT support IPA phonemes or SSML — the only reliable way to control pronunciation is text replacement. The model generates respellings using rules like vowel doubling for stress (договор → договоор), ё→йо, de-capitalization, and acronym expansion. Writes `ai/respelling.json`. Use `--force` to re-generate.
 
-### Step 7 — Generate SSML
+### Step 7 — Preprocess translations
 
 ```bash
-bookai ssml -p my-vampire-system
+bookai preprocess -p my-vampire-system
 ```
 
-Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C SSML with `<p>`/`<s>`/`<phoneme>` tags). Pronunciation hints from `ai/pronunciation.json` are applied if present.
+Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Terms from `ai/respelling.json` are replaced in the text, and Russian text normalization (de-capitalization of mid-sentence ALL-CAPS words) is applied. This replaces the old `ssml` command — since XTTS v2 doesn't support SSML, pronunciation control is done via text replacement before synthesis.
 
 ### Step 8 — Synthesize audio
 
@@ -217,7 +217,7 @@ Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C 
 bookai tts -p my-vampire-system
 ```
 
-Synthesizes each `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the XTTS v2 server. Engines produce WAV internally; the CLI converts to MP3 via ffmpeg. To output WAV instead, set `tts.audio_format: wav` in `config.yaml`.
+Synthesizes each `tts/chapter_NNN.txt` into `audio/chapter_NNN.mp3` (128kbps mono) via the XTTS v2 server. Engines produce WAV internally; the CLI converts to MP3 via ffmpeg. To output WAV instead, set `tts.audio_format: wav` in `config.yaml`.
 
 ### Check progress at any time
 
@@ -275,13 +275,14 @@ bookai verify-glossary
 
 Scans translations for untranslated English glossary terms. Writes `ai/glossary_violations.json`.
 
-### Step 6 — Generate SSML
+### Step 6 — Preprocess translations
 
 ```bash
-bookai ssml
+bookai pronounce        # generate respellings (requires OPENAI_API_KEY)
+bookai preprocess       # apply respellings + normalization
 ```
 
-Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C SSML with `<p>`/`<s>`/`<phoneme>` tags). Pronunciation hints from `ai/pronunciation.json` are applied if present.
+Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Terms from `ai/respelling.json` are replaced in the text.
 
 ### Step 7 — Synthesize audio
 
@@ -289,11 +290,7 @@ Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C 
 bookai tts
 ```
 
-Synthesizes each `tts/chapter_NNN.ssml` into `audio/chapter_NNN.wav` via the XTTS v2 server. To merge all chapters into a single file:
-
-```bash
-bookai tts --merge      # produces audio/book.wav via ffmpeg
-```
+Synthesizes each `tts/chapter_NNN.txt` into `audio/chapter_NNN.wav` via the XTTS v2 server.
 
 ### Check progress at any time
 
@@ -339,15 +336,15 @@ To redo a specific stage without nuking everything, use `--force` on the relevan
 
 ```bash
 bookai translate --chapter 5 --force    # re-translate chapter 5 only
-bookai ssml --force                     # regenerate all SSML
+bookai preprocess --force               # regenerate all TTS text
 bookai tts --force                      # re-synthesize all audio
 ```
 
 To selectively clean a stage, remove its output directory and rerun:
 
 ```bash
-rm -rf audio/ && bookai tts        # re-synthesize all audio
-rm -rf tts/ && bookai ssml         # regenerate all SSML
+rm -rf audio/ && bookai tts          # re-synthesize all audio
+rm -rf tts/ && bookai preprocess     # regenerate all TTS text
 ```
 
 > **Note:** `ai/glossary.json` accumulates terms across chapters during translation. Deleting it and rerunning `bookai analyze` + `bookai translate --force` will rebuild it from scratch, but you'll lose any manual edits.
@@ -405,11 +402,11 @@ glossary:                        # optional: lock specific translations
     - source: Dalki
       target: Далки
       type: term
-pronunciation:                   # optional: lock IPA phonemes for SSML
+pronunciation:                   # optional: lock respellings for XTTS v2
   - term: Куинн
-    phonemes: kʊˈɪn
+    phonemes: КУинн               # phonetic respelling (plain Russian, not IPA)
   - term: Далки
-    phonemes: ˈdalkʲi
+    phonemes: ДАлки
 ```
 
 The OpenAI API key is read from the `OPENAI_API_KEY` environment variable — it is **never** stored in `config.yaml`.

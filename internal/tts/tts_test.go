@@ -8,273 +8,6 @@ import (
 	"testing"
 )
 
-func TestParseTranslation_BasicStructure(t *testing.T) {
-	text := "Привет мир.\n\nЭто второй абзац. В нём два предложения."
-	doc := ParseTranslation(text, nil)
-
-	if len(doc.Paragraphs) != 2 {
-		t.Fatalf("expected 2 paragraphs, got %d", len(doc.Paragraphs))
-	}
-	if len(doc.Paragraphs[0].Sentences) != 1 {
-		t.Errorf("para 0: expected 1 sentence, got %d", len(doc.Paragraphs[0].Sentences))
-	}
-	if len(doc.Paragraphs[1].Sentences) != 2 {
-		t.Errorf("para 1: expected 2 sentences, got %d", len(doc.Paragraphs[1].Sentences))
-	}
-	if doc.Paragraphs[0].Sentences[0].Text != "Привет мир." {
-		t.Errorf("para 0 sent 0: got %q", doc.Paragraphs[0].Sentences[0].Text)
-	}
-}
-
-func TestParseTranslation_EmptyInput(t *testing.T) {
-	doc := ParseTranslation("", nil)
-	if doc == nil || len(doc.Paragraphs) != 0 {
-		t.Fatalf("expected empty SSML for empty input, got %+v", doc)
-	}
-}
-
-func TestParseTranslation_WhitespaceNormalization(t *testing.T) {
-	text := "Слово   с   лишними\tпробелами. Конец."
-	doc := ParseTranslation(text, nil)
-	if len(doc.Paragraphs) != 1 || len(doc.Paragraphs[0].Sentences) != 2 {
-		t.Fatalf("expected 1 para 2 sentences, got %+v", doc)
-	}
-	if doc.Paragraphs[0].Sentences[0].Text != "Слово с лишними пробелами." {
-		t.Errorf("whitespace not normalized: %q", doc.Paragraphs[0].Sentences[0].Text)
-	}
-}
-
-func TestParseTranslation_EllipsisSplit(t *testing.T) {
-	text := "Она задумалась… Потом продолжила."
-	doc := ParseTranslation(text, nil)
-	if len(doc.Paragraphs) != 1 {
-		t.Fatalf("expected 1 paragraph, got %d", len(doc.Paragraphs))
-	}
-	if len(doc.Paragraphs[0].Sentences) != 2 {
-		t.Errorf("expected 2 sentences (ellipsis split), got %d", len(doc.Paragraphs[0].Sentences))
-	}
-}
-
-func TestParseTranslation_PronunciationHints(t *testing.T) {
-	pron := &Pronunciation{
-		Entries: []PronunciationEntry{
-			{Term: "Орден", Phonemes: "ɔrdʲen", Alphabet: "ipa"},
-		},
-	}
-	text := "Орден был велик. Все знали Орден."
-	doc := ParseTranslation(text, pron)
-
-	if len(doc.Paragraphs) != 1 || len(doc.Paragraphs[0].Sentences) != 2 {
-		t.Fatalf("expected 1 para 2 sentences, got %+v", doc)
-	}
-
-	// First sentence should have one hint for "Орден".
-	sent0 := doc.Paragraphs[0].Sentences[0]
-	if len(sent0.Hints) != 1 {
-		t.Fatalf("sentence 0: expected 1 hint, got %d", len(sent0.Hints))
-	}
-	hint := sent0.Hints[0]
-	if hint.Term != "Орден" {
-		t.Errorf("hint term: got %q, want %q", hint.Term, "Орден")
-	}
-	if hint.Phonemes != "ɔrdʲen" {
-		t.Errorf("hint phonemes: got %q", hint.Phonemes)
-	}
-	if hint.Alphabet != "ipa" {
-		t.Errorf("hint alphabet: got %q", hint.Alphabet)
-	}
-}
-
-func TestParseTranslation_WordBoundary(t *testing.T) {
-	pron := &Pronunciation{
-		Entries: []PronunciationEntry{
-			{Term: "Орден", Phonemes: "test", Alphabet: "ipa"},
-		},
-	}
-	// "Орденский" should NOT match "Орден" because of word boundary.
-	text := "Орденский собор был красив."
-	doc := ParseTranslation(text, pron)
-	if len(doc.Paragraphs) != 1 || len(doc.Paragraphs[0].Sentences) != 1 {
-		t.Fatalf("unexpected structure")
-	}
-	if len(doc.Paragraphs[0].Sentences[0].Hints) != 0 {
-		t.Errorf("should not match inside a longer word, got %d hints",
-			len(doc.Paragraphs[0].Sentences[0].Hints))
-	}
-}
-
-func TestParseTranslation_GreedyLongerMatchFirst(t *testing.T) {
-	pron := &Pronunciation{
-		Entries: []PronunciationEntry{
-			{Term: "Орден", Phonemes: "short", Alphabet: "ipa"},
-			{Term: "Орден Света", Phonemes: "long", Alphabet: "ipa"},
-		},
-	}
-	text := "Орден Света был силён."
-	doc := ParseTranslation(text, pron)
-	if len(doc.Paragraphs[0].Sentences[0].Hints) != 1 {
-		t.Fatalf("expected 1 hint, got %d", len(doc.Paragraphs[0].Sentences[0].Hints))
-	}
-	hint := doc.Paragraphs[0].Sentences[0].Hints[0]
-	if hint.Phonemes != "long" {
-		t.Errorf("expected longer match 'long', got %q", hint.Phonemes)
-	}
-}
-
-func TestParseTranslation_CaseInsensitive(t *testing.T) {
-	pron := &Pronunciation{
-		Entries: []PronunciationEntry{
-			{Term: "орден", Phonemes: "test", Alphabet: "ipa"},
-		},
-	}
-	text := "ОРДЕН был велик."
-	doc := ParseTranslation(text, pron)
-	if len(doc.Paragraphs[0].Sentences[0].Hints) != 1 {
-		t.Errorf("expected case-insensitive match, got %d hints",
-			len(doc.Paragraphs[0].Sentences[0].Hints))
-	}
-}
-
-func TestRender_BasicSSML(t *testing.T) {
-	doc := &SSML{
-		Paragraphs: []SSMLParagraph{
-			{Sentences: []SSMLSentence{
-				{Text: "Привет мир."},
-			}},
-		},
-	}
-	out := doc.Render()
-	expected := "<speak>\n  <p>\n    <s>Привет мир.</s>\n  </p>\n</speak>\n"
-	if out != expected {
-		t.Errorf("render mismatch:\ngot:  %q\nwant: %q", out, expected)
-	}
-}
-
-func TestRender_WithPhonemeHint(t *testing.T) {
-	// "Орден" is 10 bytes in UTF-8 (5 Cyrillic chars × 2 bytes each).
-	ordenLen := len("Орден")
-	doc := &SSML{
-		Paragraphs: []SSMLParagraph{
-			{Sentences: []SSMLSentence{
-				{
-					Text: "Орден был велик.",
-					Hints: []SSMLHint{
-						{Start: 0, End: ordenLen, Term: "Орден", Phonemes: "ɔrdʲen", Alphabet: "ipa"},
-					},
-				},
-			}},
-		},
-	}
-	out := doc.Render()
-	if out == "" {
-		t.Fatal("empty render output")
-	}
-	if !contains(out, `<phoneme alphabet="ipa" ph="ɔrdʲen">Орден</phoneme>`) {
-		t.Errorf("missing phoneme tag in output: %s", out)
-	}
-	if !contains(out, " был велик.") {
-		t.Errorf("missing text after phoneme: %s", out)
-	}
-}
-
-func TestRender_MultipleHintsOutOfOrder(t *testing.T) {
-	// Reproduces the bug where findHints collects hints in term-length order
-	// (longest first), not positional order. The renderer must sort hints by
-	// Start before emitting text, otherwise text is duplicated/garbled.
-	// Sentence: "Нейт был убеждён, что этот Ларри Стил и есть"
-	// "Ларри Стил" (longer) is at a later position, "Нейт" (shorter) is earlier.
-	neitLen := len("Нейт")
-	larryLen := len("Ларри Стил")
-	neitStart := strings.Index("Нейт был убеждён, что этот Ларри Стил и есть", "Нейт")
-	larryStart := strings.Index("Нейт был убеждён, что этот Ларри Стил и есть", "Ларри Стил")
-
-	// Hints deliberately out of positional order (longer term first).
-	doc := &SSML{
-		Paragraphs: []SSMLParagraph{
-			{Sentences: []SSMLSentence{
-				{
-					Text: "Нейт был убеждён, что этот Ларри Стил и есть",
-					Hints: []SSMLHint{
-						{Start: larryStart, End: larryStart + larryLen, Term: "Ларри Стил", Phonemes: "ˈlarʲɪ stil", Alphabet: "ipa"},
-						{Start: neitStart, End: neitStart + neitLen, Term: "Нейт", Phonemes: "nʲejt", Alphabet: "ipa"},
-					},
-				},
-			}},
-		},
-	}
-	out := doc.Render()
-
-	// The output must have "Нейт" phoneme BEFORE "Ларри Стил" phoneme.
-	neitPhoneme := `<phoneme alphabet="ipa" ph="nʲejt">Нейт</phoneme>`
-	larryPhoneme := `<phoneme alphabet="ipa" ph="ˈlarʲɪ stil">Ларри Стил</phoneme>`
-	neitIdx := strings.Index(out, neitPhoneme)
-	larryIdx := strings.Index(out, larryPhoneme)
-	if neitIdx < 0 || larryIdx < 0 {
-		t.Fatalf("missing phoneme tags in output: %s", out)
-	}
-	if neitIdx > larryIdx {
-		t.Errorf("Нейт phoneme should appear before Ларри Стил phoneme\ngot: %s", out)
-	}
-
-	// The text must not be duplicated — "был убеждён" should appear exactly once.
-	if strings.Count(out, "был убеждён") != 1 {
-		t.Errorf("text 'был убеждён' should appear once, got %d times\noutput: %s",
-			strings.Count(out, "был убеждён"), out)
-	}
-
-	// Full sentence check: text should read correctly with phonemes inline.
-	expected := `<phoneme alphabet="ipa" ph="nʲejt">Нейт</phoneme> был убеждён, что этот <phoneme alphabet="ipa" ph="ˈlarʲɪ stil">Ларри Стил</phoneme> и есть`
-	if !contains(out, expected) {
-		t.Errorf("rendered sentence mismatch\ngot:  %s\nwant: contains %q", out, expected)
-	}
-}
-
-func TestRender_Empty(t *testing.T) {
-	doc := &SSML{}
-	out := doc.Render()
-	if out != "<speak></speak>\n" {
-		t.Errorf("empty render: got %q", out)
-	}
-}
-
-func TestRender_XMLEscaping(t *testing.T) {
-	doc := &SSML{
-		Paragraphs: []SSMLParagraph{
-			{Sentences: []SSMLSentence{
-				{Text: `Он сказал "привет" < & >`},
-			}},
-		},
-	}
-	out := doc.Render()
-	if !contains(out, "&quot;привет&quot;") {
-		t.Errorf("quotes not escaped: %s", out)
-	}
-	if !contains(out, "&lt;") {
-		t.Errorf("< not escaped: %s", out)
-	}
-	if !contains(out, "&gt;") {
-		t.Errorf("> not escaped: %s", out)
-	}
-	if !contains(out, "&amp;") {
-		t.Errorf("& not escaped: %s", out)
-	}
-}
-
-func TestExtractPlainText(t *testing.T) {
-	ssml := `<speak><p><s>Привет <phoneme alphabet="ipa" ph="test">мир</phoneme>.</s></p></speak>`
-	text := ExtractPlainText(ssml)
-	if text != "Привет мир." {
-		t.Errorf("extract plain text: got %q, want %q", text, "Привет мир.")
-	}
-}
-
-func TestExtractPlainText_NoTags(t *testing.T) {
-	text := ExtractPlainText("Просто текст без тегов.")
-	if text != "Просто текст без тегов." {
-		t.Errorf("got %q", text)
-	}
-}
-
 func TestNoopEngine_Synthesize(t *testing.T) {
 	engine, err := NewNoopEngine(EngineConfig{Engine: "noop"})
 	if err != nil {
@@ -340,70 +73,181 @@ func TestAvailableEngines(t *testing.T) {
 	}
 }
 
-func TestLoadPronunciation_AbsentFile(t *testing.T) {
+// --- Respelling tests ---
+
+func TestLoadRespelling_AbsentFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	pron, err := LoadPronunciation(tmpDir)
+	resp, err := LoadRespelling(tmpDir)
 	if err != nil {
-		t.Fatalf("LoadPronunciation on absent file: %v", err)
+		t.Fatalf("LoadRespelling on absent file: %v", err)
 	}
-	if pron == nil || len(pron.Entries) != 0 {
-		t.Errorf("expected empty pronunciation, got %+v", pron)
+	if resp == nil || len(resp.Entries) != 0 {
+		t.Errorf("expected empty respelling, got %+v", resp)
 	}
 }
 
-func TestPronunciation_Lookup(t *testing.T) {
-	pron := &Pronunciation{
-		Entries: []PronunciationEntry{
-			{Term: "Орден", Phonemes: "test"},
+func TestRespelling_Lookup(t *testing.T) {
+	resp := &Respelling{
+		Entries: []RespellingEntry{
+			{Term: "Куинн", Respelled: "КУинн"},
 		},
 	}
-	entry, ok := pron.Lookup("орден") // case-insensitive
+	entry, ok := resp.Lookup("куинн") // case-insensitive
 	if !ok {
 		t.Fatal("case-insensitive lookup failed")
 	}
-	if entry.Phonemes != "test" {
-		t.Errorf("lookup phonemes: got %q", entry.Phonemes)
+	if entry.Respelled != "КУинн" {
+		t.Errorf("lookup respelled: got %q", entry.Respelled)
 	}
 
-	_, ok = pron.Lookup("nonexistent")
+	_, ok = resp.Lookup("nonexistent")
 	if ok {
 		t.Error("lookup of nonexistent term should return false")
 	}
 }
 
-func TestPronunciation_SaveAndLoad(t *testing.T) {
+func TestRespelling_SaveAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
-	pron := &Pronunciation{
-		Entries: []PronunciationEntry{
-			{Term: "Бета", Phonemes: "b", Alphabet: "ipa"},
-			{Term: "Альфа", Phonemes: "a", Alphabet: "ipa"},
+	resp := &Respelling{
+		Entries: []RespellingEntry{
+			{Term: "Бета", Respelled: "БЭта"},
+			{Term: "Альфа", Respelled: "Альфа"},
 		},
 	}
-	if err := pron.Save(tmpDir); err != nil {
+	if err := resp.Save(tmpDir); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	loaded, err := LoadPronunciation(tmpDir)
+	loaded, err := LoadRespelling(tmpDir)
 	if err != nil {
-		t.Fatalf("LoadPronunciation: %v", err)
+		t.Fatalf("LoadRespelling: %v", err)
 	}
 	if len(loaded.Entries) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(loaded.Entries))
 	}
-	// Should be sorted by term.
+	// Should be sorted by term length (longest first).
 	if loaded.Entries[0].Term != "Альфа" {
-		t.Errorf("expected sorted: first entry should be 'Альфа', got %q", loaded.Entries[0].Term)
+		t.Errorf("expected longest term first: got %q", loaded.Entries[0].Term)
 	}
 }
 
-func TestPhonAlphabet_Default(t *testing.T) {
-	entry := PronunciationEntry{Term: "test", Phonemes: "x"}
-	if entry.PhonAlphabet() != "ipa" {
-		t.Errorf("default alphabet should be 'ipa', got %q", entry.PhonAlphabet())
+func TestRespelling_Apply(t *testing.T) {
+	resp := &Respelling{
+		Entries: []RespellingEntry{
+			{Term: "Куинн", Respelled: "КУинн"},
+			{Term: "Ларри Стил", Respelled: "Ларри Стиил"},
+		},
 	}
-	entry.Alphabet = "x-sampa"
-	if entry.PhonAlphabet() != "x-sampa" {
-		t.Errorf("explicit alphabet: got %q", entry.PhonAlphabet())
+	text := "Куинн был убеждён, что этот Ларри Стил и есть."
+	result := resp.Apply(text)
+
+	if !contains(result, "КУинн") {
+		t.Errorf("respelling not applied: %s", result)
+	}
+	if !contains(result, "Ларри Стиил") {
+		t.Errorf("multi-word respelling not applied: %s", result)
+	}
+	if contains(result, "Куинн ") {
+		t.Errorf("original term should be replaced: %s", result)
+	}
+}
+
+func TestRespelling_Apply_WordBoundary(t *testing.T) {
+	resp := &Respelling{
+		Entries: []RespellingEntry{
+			{Term: "Орден", Respelled: "Ордэн"},
+		},
+	}
+	// "Орденский" should NOT match "Орден" because of word boundary.
+	text := "Орденский собор был красив."
+	result := resp.Apply(text)
+	if contains(result, "Ордэн") {
+		t.Errorf("should not replace inside a longer word: %s", result)
+	}
+}
+
+func TestRespelling_Apply_CaseInsensitive(t *testing.T) {
+	resp := &Respelling{
+		Entries: []RespellingEntry{
+			{Term: "орден", Respelled: "ордэн"},
+		},
+	}
+	text := "ОРДЕН был велик."
+	result := resp.Apply(text)
+	if !contains(result, "ордэн") {
+		t.Errorf("case-insensitive replacement failed: %s", result)
+	}
+}
+
+func TestRespelling_Apply_GreedyLongerMatchFirst(t *testing.T) {
+	resp := &Respelling{
+		Entries: []RespellingEntry{
+			{Term: "Орден", Respelled: "Ордэн"},
+			{Term: "Орден Света", Respelled: "Ордэн Свэта"},
+		},
+	}
+	// Sort to ensure longest-first (Save does this, but Apply expects it).
+	resp.Sort()
+
+	text := "Орден Света был силён."
+	result := resp.Apply(text)
+	if contains(result, "Ордэн ") && !contains(result, "Ордэн Свэта") {
+		t.Errorf("should match longer term first, got: %s", result)
+	}
+	if !contains(result, "Ордэн Свэта") {
+		t.Errorf("longer match not applied: %s", result)
+	}
+}
+
+func TestRespelling_Apply_Empty(t *testing.T) {
+	resp := &Respelling{}
+	text := "Привет мир."
+	result := resp.Apply(text)
+	if result != text {
+		t.Errorf("empty respelling should not change text: got %q", result)
+	}
+}
+
+func TestRespelling_Apply_MultipleOccurrences(t *testing.T) {
+	resp := &Respelling{
+		Entries: []RespellingEntry{
+			{Term: "Нейт", Respelled: "НЭйт"},
+		},
+	}
+	text := "Нейт сказал. Нейт ушёл."
+	result := resp.Apply(text)
+	if strings.Count(result, "НЭйт") != 2 {
+		t.Errorf("expected 2 replacements, got %d in: %s", strings.Count(result, "НЭйт"), result)
+	}
+}
+
+// --- NormalizeRussian tests ---
+
+func TestNormalizeRussian_DeCapitalizeMidSentence(t *testing.T) {
+	// ALL-CAPS word in the middle of a sentence should be lowercased.
+	text := "Он сказал ПРИВЕТ всем."
+	result := NormalizeRussian(text)
+	if !contains(result, "привет") {
+		t.Errorf("mid-sentence ALL-CAPS should be lowercased: %s", result)
+	}
+}
+
+func TestNormalizeRussian_KeepSentenceStartCapital(t *testing.T) {
+	// Word at start of sentence should keep its capitalization.
+	text := "ПРИВЕТ всем. ПОКА друзья."
+	result := NormalizeRussian(text)
+	// After normalization, sentence-start words keep capitals.
+	if !contains(result, "ПРИВЕТ") || !contains(result, "ПОКА") {
+		t.Errorf("sentence-start capitals should be kept: %s", result)
+	}
+}
+
+func TestNormalizeRussian_KeepSingleCharWord(t *testing.T) {
+	// Single-character "Я" (I) should not be lowercased.
+	text := "Я сказал."
+	result := NormalizeRussian(text)
+	if !contains(result, "Я ") {
+		t.Errorf("single-char 'Я' should keep capital: %s", result)
 	}
 }
 

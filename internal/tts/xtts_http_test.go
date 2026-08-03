@@ -74,7 +74,7 @@ func TestHTTPEngine_Synthesize(t *testing.T) {
 	outPath := filepath.Join(tmpDir, "output.wav")
 
 	err = engine.Synthesize(context.Background(),
-		"<speak><p><s>Привет мир.</s></p></speak>", outPath)
+		"Привет мир.", outPath)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestHTTPEngine_Synthesize(t *testing.T) {
 	}
 }
 
-func TestHTTPEngine_ExtractsPlainTextFromSSML(t *testing.T) {
+func TestHTTPEngine_PassesTextThrough(t *testing.T) {
 	var receivedText string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body ttsRequestBody
@@ -121,14 +121,14 @@ func TestHTTPEngine_ExtractsPlainTextFromSSML(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	ssml := `<speak><p><s>Привет <phoneme alphabet="ipa" ph="test">мир</phoneme>.</s></p></speak>`
-	err = engine.Synthesize(context.Background(), ssml, filepath.Join(tmpDir, "out.wav"))
+	text := "Привет мир."
+	err = engine.Synthesize(context.Background(), text, filepath.Join(tmpDir, "out.wav"))
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
 
-	if receivedText != "Привет мир." {
-		t.Errorf("server received %q, want %q", receivedText, "Привет мир.")
+	if receivedText != text {
+		t.Errorf("server received %q, want %q", receivedText, text)
 	}
 }
 

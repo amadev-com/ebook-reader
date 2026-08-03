@@ -42,7 +42,7 @@ func runStatus(proj statusProject) error {
 		{"ai", proj.AIDir(), ".json"},
 		{"translation", proj.TranslationDir(), ".txt"},
 		{"memory", proj.MemoryDir(), ".txt"},
-		{"tts (ssml)", proj.TTSDir(), ".ssml"},
+		{"tts (text)", proj.TTSDir(), ".txt"},
 		{"audio", proj.AudioDir(), ".mp3"},
 	}
 	for _, s := range stages {

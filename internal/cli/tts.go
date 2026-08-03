@@ -15,11 +15,12 @@ import (
 	"ebook-reader/internal/tts"
 )
 
-// newTTSCmd implements `bookai tts`: synthesizes audio from SSML files using
-// the configured TTS engine. The engine is selected from config.yaml
-// (tts.engine) and is swappable via the tts.Engine registry. Engines produce
-// WAV audio; the CLI layer converts to the configured output format (MP3 by
-// default) via ffmpeg. Output files are written to audio/chapter_NNN.mp3.
+// newTTSCmd implements `bookai tts`: synthesizes audio from preprocessed text
+// files using the configured TTS engine. The engine is selected from
+// config.yaml (tts.engine) and is swappable via the tts.Engine registry.
+// Engines produce WAV audio; the CLI layer converts to the configured output
+// format (MP3 by default) via ffmpeg. Output files are written to
+// audio/chapter_NNN.mp3.
 func newTTSCmd() *cobra.Command {
 	var (
 		force   bool
@@ -28,7 +29,7 @@ func newTTSCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "tts",
-		Short: "Synthesize audio from SSML via the configured TTS engine",
+		Short: "Synthesize audio from preprocessed text via the configured TTS engine",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			setupLogger()
@@ -92,9 +93,14 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 			return ctx.Err()
 		}
 
-		ssmlPath := ssmlPath(proj.TTSDir(), ch.ID)
-		if !project.Exists(ssmlPath) {
-			slog.Debug("skip chapter without SSML", "chapter", ch.ID)
+		ttsPath := ttsTextPath(proj.TTSDir(), ch.ID)
+		if !project.Exists(ttsPath) {
+			// Check for legacy SSML files and warn.
+			if project.Exists(ssmlPath(proj.TTSDir(), ch.ID)) {
+				slog.Warn("found stale .ssml file — run `bookai preprocess` to generate .txt files", "chapter", ch.ID)
+			} else {
+				slog.Debug("skip chapter without preprocessed text", "chapter", ch.ID)
+			}
 			skipped++
 			continue
 		}
@@ -110,22 +116,22 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 			continue
 		}
 
-		ssmlContent, err := os.ReadFile(ssmlPath)
+		textContent, err := os.ReadFile(ttsPath)
 		if err != nil {
-			return fmt.Errorf("read SSML for chapter %d: %w", ch.ID, err)
+			return fmt.Errorf("read TTS text for chapter %d: %w", ch.ID, err)
 		}
 
 		slog.Info("synthesizing chapter", "id", ch.ID, "title", ch.Title)
 
 		if audioFormat == "wav" {
 			// Engine writes WAV directly to the output path.
-			if err := engine.Synthesize(ctx, string(ssmlContent), outPath); err != nil {
+			if err := engine.Synthesize(ctx, string(textContent), outPath); err != nil {
 				return fmt.Errorf("synthesize chapter %d: %w", ch.ID, err)
 			}
 		} else {
 			// Engine writes WAV to a temp file, then we convert to the target format.
 			wavPath := tempWAVPath(proj.AudioDir(), ch.ID)
-			if err := engine.Synthesize(ctx, string(ssmlContent), wavPath); err != nil {
+			if err := engine.Synthesize(ctx, string(textContent), wavPath); err != nil {
 				return fmt.Errorf("synthesize chapter %d: %w", ch.ID, err)
 			}
 			if err := convertAudio(wavPath, outPath, audioFormat, proj.Cfg.TTS.AudioBitrate); err != nil {

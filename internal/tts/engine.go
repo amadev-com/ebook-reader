@@ -1,10 +1,10 @@
 // Package tts implements the text-to-speech stage of the bookai pipeline.
 //
 // The package is built around the Engine interface, which abstracts the actual
-// speech synthesis backend. This lets the pipeline structure (SSML generation,
-// audio output, ffmpeg post-processing) be built and tested independently of
-// any specific TTS engine. Concrete engines (sherpa-onnx, piper, xtts-v2, etc.)
-// are registered via Register and selected by name from config.
+// speech synthesis backend. This lets the pipeline structure (text
+// preprocessing, audio output, ffmpeg post-processing) be built and tested
+// independently of any specific TTS engine. Concrete engines (noop, xtts-http,
+// etc.) are registered via Register and selected by name from config.
 package tts
 
 import (
@@ -14,19 +14,19 @@ import (
 	"sync"
 )
 
-// Engine synthesizes speech from SSML input. Implementations may be local
-// (subprocess, ONNX runtime) or remote (HTTP API). The interface is
-// intentionally minimal: the caller provides SSML text and an output path; the
-// engine writes a WAV file to that path.
+// Engine synthesizes speech from plain text input. Implementations may be
+// local (subprocess, ONNX runtime) or remote (HTTP API). The interface is
+// intentionally minimal: the caller provides preprocessed text and an output
+// path; the engine writes a WAV file to that path.
 type Engine interface {
-	// Name returns the engine identifier (e.g. "noop", "sherpa-onnx").
+	// Name returns the engine identifier (e.g. "noop", "xtts-http").
 	Name() string
 
-	// Synthesize converts ssmlText into speech and writes a WAV file to
-	// outPath. The SSML is a W3C SSML subset (see ssml.go); engines that do
-	// not support SSML natively should use ExtractPlainText to get the raw
-	// text. outPath's parent directory is guaranteed to exist by the caller.
-	Synthesize(ctx context.Context, ssmlText string, outPath string) error
+	// Synthesize converts text into speech and writes a WAV file to outPath.
+	// The text is plain (preprocessed) text — pronunciation control is
+	// handled upstream by the preprocess command (respellings, normalization).
+	// outPath's parent directory is guaranteed to exist by the caller.
+	Synthesize(ctx context.Context, text string, outPath string) error
 }
 
 // EngineFactory constructs an Engine from the TTS configuration. Factories are

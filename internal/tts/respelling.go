@@ -1,0 +1,116 @@
+package tts
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"ebook-reader/internal/project"
+)
+
+// Respelling is the persistent respelling store (ai/respelling.json). It maps
+// Russian terms (typically names and borrowed words) to phonetic respellings
+// that XTTS v2 will pronounce correctly. Unlike IPA phonemes, respellings are
+// plain text replacements — the term is swapped for its respelled version
+// before the text is sent to the TTS engine.
+type Respelling struct {
+	Entries []RespellingEntry `json:"entries"`
+}
+
+// RespellingEntry is one term with its phonetic respelling for XTTS v2.
+type RespellingEntry struct {
+	// Term is the Russian text as it appears in the translation (e.g.
+	// "Куинн" or "Орден").
+	Term string `json:"term"`
+
+	// Respelled is the phonetic respelling that XTTS v2 will pronounce
+	// correctly. This is plain Russian text with XTTS-specific tricks:
+	// vowel doubling for stress, ё→йо, de-capitalization, etc.
+	// Example: "Куинн" → "КУинн" (stress on first syllable).
+	Respelled string `json:"respelled"`
+}
+
+// LoadRespelling reads ai/respelling.json from the project's AI directory.
+// Returns an empty store if the file does not exist (respelling is optional).
+func LoadRespelling(aiDir string) (*Respelling, error) {
+	path := aiDir + "/respelling.json"
+	if !project.Exists(path) {
+		return &Respelling{}, nil
+	}
+	var r Respelling
+	if err := project.LoadJSON(path, &r); err != nil {
+		return nil, fmt.Errorf("load respelling: %w", err)
+	}
+	return &r, nil
+}
+
+// Save writes respelling entries to ai/respelling.json, sorted by term.
+func (r *Respelling) Save(aiDir string) error {
+	r.Sort()
+	return project.SaveJSON(aiDir+"/respelling.json", r)
+}
+
+// Sort orders entries by term length (longest first) so that multi-word terms
+// are matched before their sub-terms during text replacement.
+func (r *Respelling) Sort() {
+	sort.SliceStable(r.Entries, func(i, j int) bool {
+		return len(r.Entries[i].Term) > len(r.Entries[j].Term)
+	})
+}
+
+// Lookup finds a respelling entry by term (case-insensitive). Returns the
+// entry and true if found.
+func (r *Respelling) Lookup(term string) (RespellingEntry, bool) {
+	lower := strings.ToLower(term)
+	for _, e := range r.Entries {
+		if strings.ToLower(e.Term) == lower {
+			return e, true
+		}
+	}
+	return RespellingEntry{}, false
+}
+
+// Apply replaces all occurrences of each term in the text with its respelled
+// version. Matching is case-insensitive and word-boundary aware. Longer terms
+// are replaced first (entries should be sorted by Sort, which puts longest
+// first) to avoid partial matches on multi-word terms.
+func (r *Respelling) Apply(text string) string {
+	if len(r.Entries) == 0 {
+		return text
+	}
+	for _, e := range r.Entries {
+		if e.Term == "" || e.Respelled == "" || e.Term == e.Respelled {
+			continue
+		}
+		text = replaceWordIgnoreCase(text, e.Term, e.Respelled)
+	}
+	return text
+}
+
+// replaceWordIgnoreCase replaces all case-insensitive occurrences of old with
+// replacement in s, but only at word boundaries (not inside longer words).
+func replaceWordIgnoreCase(s, old, replacement string) string {
+	if old == "" {
+		return s
+	}
+	var b strings.Builder
+	searchStart := 0
+	for {
+		idx := indexIgnoreCase(s, old, searchStart)
+		if idx < 0 {
+			break
+		}
+		end := idx + len(old)
+		if !atWordBoundary(s, idx, end) {
+			searchStart = idx + 1
+			continue
+		}
+		b.WriteString(s[searchStart:idx])
+		b.WriteString(replacement)
+		searchStart = end
+	}
+	if searchStart < len(s) {
+		b.WriteString(s[searchStart:])
+	}
+	return b.String()
+}

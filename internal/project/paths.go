@@ -63,7 +63,7 @@ func (p *Project) TranslationDir() string { return p.path(p.Cfg.Paths.Translatio
 // MemoryDir holds per-chapter summaries (M2+).
 func (p *Project) MemoryDir() string { return p.path(p.Cfg.Paths.Memory, "memory") }
 
-// TTSDir holds chapter_NNN.ssml (M3+).
+// TTSDir holds chapter_NNN.txt (preprocessed TTS text, M3+).
 func (p *Project) TTSDir() string { return p.path(p.Cfg.Paths.TTS, "tts") }
 
 // AudioDir holds chapter_NNN.wav (M3+).

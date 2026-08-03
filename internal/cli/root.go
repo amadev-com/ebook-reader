@@ -46,7 +46,7 @@ func NewRoot() *cobra.Command {
 		newTranslateCmd(),
 		newVerifyGlossaryCmd(),
 		newPronounceCmd(),
-		newSSMLCmd(),
+		newPreprocessCmd(),
 		newTTSCmd(),
 	)
 	return root

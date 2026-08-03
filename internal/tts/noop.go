@@ -11,8 +11,9 @@ import (
 
 // NoopEngine is a default Engine that writes a minimal valid WAV file
 // containing a short tone. It requires no external dependencies and is used
-// when no real TTS engine is configured, allowing the full pipeline (SSML →
-// audio → merge) to be tested end-to-end without a speech synthesis backend.
+// when no real TTS engine is configured, allowing the full pipeline
+// (preprocess → audio) to be tested end-to-end without a speech synthesis
+// backend.
 type NoopEngine struct {
 	cfg EngineConfig
 }
@@ -28,10 +29,10 @@ func (e *NoopEngine) Name() string { return "noop" }
 
 // Synthesize writes a short sine-tone WAV to outPath. The tone duration scales
 // mildly with input length so that downstream merge logic has varied file
-// sizes to work with. The SSML is not parsed — this engine exists for
+// sizes to work with. The text is not parsed — this engine exists for
 // pipeline testing only.
-func (e *NoopEngine) Synthesize(_ context.Context, ssmlText string, outPath string) error {
-	duration := noopDuration(len(ssmlText))
+func (e *NoopEngine) Synthesize(_ context.Context, text string, outPath string) error {
+	duration := noopDuration(len(text))
 	samples := noopSineWave(220.0, duration, 16000)
 	return writeWAV(outPath, samples, 16000)
 }

@@ -38,21 +38,20 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 - `bookai analyze`: extracts glossary + characters + chapter summaries via **OpenAI Batch API**. Each chapter is a single batch item (JSON mode) that returns both the glossary/characters AND a chapter summary in one JSON response — the model reads each chapter once. After the batch completes, a single "live" merge/unify request deduplicates and classifies glossary results — characters = ONLY real persons, glossary = terms WITHOUT characters. Summaries are saved to `memory/chapter_NNN.summary.txt` so they're available as context when translate builds its batch. Config `glossary.characters`/`glossary.terms` override AI-extracted translations (locked). Writes `ai/glossary.json` (terms only) + `ai/characters.json` + `memory/chapter_NNN.summary.txt`. Batch state persisted in `ai/batch_analyze.json` for `--continue` resume. Flags: `--force`, `--continue`, `--chapter N`, `--range M-N`, `--poll-interval N` (default 60s).
 - `bookai translate`: per-chapter translation via **OpenAI Batch API**. Each chapter is an independent batch item with glossary + previous 2 chapter summaries (from analyze) as context. After batch completes, translations are written to disk. No post-processing — summaries and glossary are finalized by analyze. Writes `translation/chapter_NNN.ru.txt`, updates `chapter_NNN.json` status → "translated". Batch state persisted in `ai/batch_translate.json` for `--continue` resume. Flags: `--force`, `--continue`, `--chapter N`, `--range M-N`, `--skip-memory`, `--poll-interval N` (default 60s).
 - `bookai verify-glossary`: scans translations for untranslated English glossary terms, writes `ai/glossary_violations.json`.
-- `bookai pronounce`: reads `ai/glossary.json` + `ai/characters.json`, asks helper model for IPA phonetics of Russian terms, writes `ai/pronunciation.json`. Config `pronunciation` overrides AI-generated phonemes. Consumed by `ssml` for `<phoneme>` tags. Flag: `--force`.
+- `bookai pronounce`: reads `ai/glossary.json` + `ai/characters.json`, asks helper model for **XTTS v2 phonetic respellings** (not IPA — XTTS v2 doesn't support phonemes) of Russian terms, writes `ai/respelling.json`. Config `pronunciation` overrides AI-generated respellings. Consumed by `preprocess` for text replacement. Flag: `--force`.
 - OpenAI SDK: official `github.com/openai/openai-go/v3` (v3.47.0). Uses the **Responses API** (`client.Responses.New`) for live calls and **Batch API** (`client.Batches.New`) for bulk processing. System prompt → `instructions` param, user message → `input` param, JSON mode → `text.format = json_object`. Built-in retry via `option.WithMaxRetries`.
 - Batch API flow: build JSONL → upload file (purpose `batch`) → create batch (endpoint `/v1/responses`, 24h window) → poll every N seconds → download output file → parse results. `internal/translation/batch.go` handles all batch operations. `internal/translation/batch_state.go` persists state locally.
 - Default model: `gpt-5.6-luna` for both translation and helper tasks (configurable in `config.yaml`).
 
 ## Milestone 3 — TTS pipeline (COMPLETE — scaffolding with swappable engine)
 
-- `bookai ssml`: converts `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C SSML with `<p>`/`<s>`/`<phoneme>` tags). Pronunciation hints from `ai/pronunciation.json` applied via greedy longest-match, case-insensitive, word-boundary aware.
-- `bookai tts`: synthesizes `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the configured engine. Engines produce WAV internally; CLI converts to MP3 via ffmpeg. `--merge` removed — per-chapter files only. Config: `tts.audio_format` ("mp3" default, "wav" fallback), `tts.audio_bitrate` ("128k" default).
-- Engine interface: `tts.Engine` with `Name()` and `Synthesize(ctx, ssml, outPath)`. Engines register via `tts.Register(name, factory)`. `tts.NewEngine(cfg)` looks up the factory.
-- NoopEngine: default engine that writes a valid sine-tone WAV. Requires no external deps — enables full pipeline testing (SSML → audio → merge) without a real TTS backend.
-- `tts.ExtractPlainText(ssml)`: strips SSML tags for engines that don't support SSML natively.
+- `bookai preprocess`: converts `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Respelling entries from `ai/respelling.json` are applied via greedy longest-match, case-insensitive, word-boundary aware text replacement. Also applies `NormalizeRussian` (de-capitalization of mid-sentence ALL-CAPS words). Replaces the old `ssml` command — XTTS v2 doesn't support SSML/IPA, so pronunciation control is done via text replacement.
+- `bookai tts`: synthesizes `tts/chapter_NNN.txt` into `audio/chapter_NNN.mp3` (128kbps mono) via the configured engine. Engines produce WAV internally; CLI converts to MP3 via ffmpeg. `--merge` removed — per-chapter files only. Config: `tts.audio_format` ("mp3" default, "wav" fallback), `tts.audio_bitrate` ("128k" default).
+- Engine interface: `tts.Engine` with `Name()` and `Synthesize(ctx, text, outPath)`. Engines register via `tts.Register(name, factory)`. `tts.NewEngine(cfg)` looks up the factory.
+- NoopEngine: default engine that writes a valid sine-tone WAV. Requires no external deps — enables full pipeline testing (preprocess → audio) without a real TTS backend.
 - Config: `tts.engine` ("noop" default), `tts.language`, `tts.model_path`, `tts.data_dir`, `tts.tokens_path`, `tts.device`, `tts.speed`, `tts.voice_sample`, `tts.python`.
 - Flags: `--force`, `--chapter N`, `--range M-N`.
-- Validated end-to-end: import → analyze-chapters → (fake translation) → ssml → tts → merge. Idempotent, `--force` works, pronunciation hints apply correctly.
+- Validated end-to-end: import → analyze-chapters → (fake translation) → preprocess → tts → merge. Idempotent, `--force` works, respellings apply correctly.
 - To add a real engine: create `internal/tts/<engine>.go`, implement `Engine`, call `Register("name", factory)` in `init()`. No changes needed to CLI or pipeline code.
 
 ## Conventions
@@ -65,21 +64,20 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 
 ## Milestone 3 — COMPLETE (TTS pipeline + XTTS v2 HTTP engine)
 
-- `bookai ssml`: converts `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (W3C SSML with `<p>`/`<s>`/`<phoneme>` tags). Pronunciation hints from `ai/pronunciation.json` applied via greedy longest-match, case-insensitive, word-boundary aware.
-- `bookai tts`: synthesizes `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the configured engine. Engines produce WAV internally; CLI converts to MP3 via ffmpeg. `--merge` removed — per-chapter files only. Config: `tts.audio_format` ("mp3" default, "wav" fallback), `tts.audio_bitrate` ("128k" default).
-- Engine interface: `tts.Engine` with `Name()` and `Synthesize(ctx, ssml, outPath)`. Engines register via `tts.Register(name, factory)`. `tts.NewEngine(cfg)` looks up the factory.
-- NoopEngine: default engine that writes a valid sine-tone WAV. Requires no external deps — enables full pipeline testing (SSML → audio → merge) without a real TTS backend.
-- HTTPEngine (`xtts-http`): real TTS via a remote XTTS v2 FastAPI server. Sends plain text (SSML stripped via `ExtractPlainText`) to `POST /tts`, writes the returned WAV. Config: `tts.server_url`, `tts.speaker` (or `tts.voice_sample` for absolute path). 10-minute timeout for long chapters + first model load.
-- `tts.ExtractPlainText(ssml)`: strips SSML tags for engines that don't support SSML natively.
+- `bookai preprocess`: converts `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Respelling entries from `ai/respelling.json` are applied via greedy longest-match, case-insensitive, word-boundary aware text replacement. Also applies `NormalizeRussian` (de-capitalization of mid-sentence ALL-CAPS words). Replaces the old `ssml` command — XTTS v2 doesn't support SSML/IPA, so pronunciation control is done via text replacement.
+- `bookai tts`: synthesizes `tts/chapter_NNN.txt` into `audio/chapter_NNN.mp3` (128kbps mono) via the configured engine. Engines produce WAV internally; CLI converts to MP3 via ffmpeg. `--merge` removed — per-chapter files only. Config: `tts.audio_format` ("mp3" default, "wav" fallback), `tts.audio_bitrate` ("128k" default).
+- Engine interface: `tts.Engine` with `Name()` and `Synthesize(ctx, text, outPath)`. Engines register via `tts.Register(name, factory)`. `tts.NewEngine(cfg)` looks up the factory.
+- NoopEngine: default engine that writes a valid sine-tone WAV. Requires no external deps — enables full pipeline testing (preprocess → audio) without a real TTS backend.
+- HTTPEngine (`xtts-http`): real TTS via a remote XTTS v2 FastAPI server. Sends plain text to `POST /tts`, writes the returned WAV. Config: `tts.server_url`, `tts.speaker` (or `tts.voice_sample` for absolute path). 10-minute timeout for long chapters + first model load.
+- Respelling system: `internal/tts/respelling.go` — `Respelling` store (ai/respelling.json) maps terms to phonetic respellings. `Respelling.Apply(text)` replaces terms in text. `NormalizeRussian(text)` applies always-on text normalization (de-capitalization).
 - Config: `tts.engine` ("noop" default, "xtts-http" for real TTS), `tts.language`, `tts.server_url`, `tts.speaker`, `tts.voice_sample`, `tts.speed`, `tts.audio_format` ("mp3" default, "wav"), `tts.audio_bitrate` ("128k" default), `tts.model_path`, `tts.data_dir`, `tts.tokens_path`, `tts.device`, `tts.python`.
 - Flags: `--force`, `--chapter N`, `--range M-N`.
 - TTS server: `tts-server/` directory with `docker-compose.yml` + `server.py`. Uses `athomasson2/ebook2audiobook:cu130` image (CUDA 13.0 + PyTorch 2.11 + coqui-tts 0.27.5) for Blackwell GPU support. See `tts-server/README.md`.
-- Validated end-to-end with real XTTS v2: SSML → HTTP engine → 24kHz Russian WAV. Model downloads on first call (~1.8GB, cached in `tts-server/models/`).
+- Validated end-to-end with real XTTS v2: preprocess → HTTP engine → 24kHz Russian WAV. Model downloads on first call (~1.8GB, cached in `tts-server/models/`).
 
 ## Next
 
 Potential future work:
-- Pronunciation hints: currently SSML-only. Could send phoneme hints to the XTTS server.
 - Voice sample management: CLI command to list/add/preview voices on the server.
 - Streaming synthesis: chunk long chapters to avoid timeouts and show progress.
 - Fine-tuned models: mount a custom XTTS v2 model via `tts-server/models/`.

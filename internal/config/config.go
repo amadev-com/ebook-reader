@@ -41,9 +41,10 @@ type Config struct {
 	// from context, but the translation is always overridden.
 	Glossary GlossaryOverrides `yaml:"glossary"`
 
-	// Pronunciation holds user-specified IPA phoneme overrides for the SSML
-	// <phoneme> tags. These take precedence over AI-generated hints — useful
-	// for fixing mispronunciations without re-running the model.
+	// Pronunciation holds user-specified respelling overrides for the TTS
+	// preprocessing stage. These take precedence over AI-generated respellings
+	// — useful for fixing mispronunciations without re-running the model.
+	// The Phonemes field is used as the respelled text (plain Russian).
 	Pronunciation []PronunciationOverride `yaml:"pronunciation"`
 
 	// Chapters holds settings for the analyze-chapters stage.
@@ -80,13 +81,14 @@ type GlossaryOverride struct {
 	Type   string `yaml:"type"`   // optional: character|place|organization|title|term
 }
 
-// PronunciationOverride is one user-specified IPA phoneme override. The Term
+// PronunciationOverride is one user-specified respelling override. The Term
 // field matches the Russian text as it appears in the translation; Phonemes
-// is the IPA transcription the TTS engine should use.
+// is the phonetic respelling that XTTS v2 should pronounce (plain Russian
+// text, not IPA).
 type PronunciationOverride struct {
 	Term     string `yaml:"term"`     // Russian text as it appears in translation
-	Phonemes string `yaml:"phonemes"` // IPA transcription, e.g. "kʊˈɪn"
-	Alphabet string `yaml:"alphabet"` // optional: "ipa" (default), "x-sampa"
+	Phonemes string `yaml:"phonemes"` // phonetic respelling for XTTS v2, e.g. "КУинн"
+	Alphabet string `yaml:"alphabet"` // unused (kept for backward compat)
 }
 
 // Languages is the translation direction.

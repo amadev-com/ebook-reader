@@ -16,14 +16,15 @@ import (
 )
 
 // newPronounceCmd implements `bookai pronounce`: reads ai/glossary.json and
-// ai/characters.json, asks the helper model for IPA phonetic transcriptions
-// of the Russian terms, and writes ai/pronunciation.json. This file is
-// consumed by `bookai ssml` to insert <phoneme> tags into SSML output.
+// ai/characters.json, asks the helper model for XTTS v2-compatible phonetic
+// respellings of the Russian terms, and writes ai/respelling.json. This file
+// is consumed by `bookai preprocess` to replace terms in translation text
+// before TTS synthesis.
 func newPronounceCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "pronounce",
-		Short: "Generate IPA pronunciation hints for glossary terms (ai/pronunciation.json)",
+		Short: "Generate XTTS v2 phonetic respellings for glossary terms (ai/respelling.json)",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			setupLogger()
@@ -36,17 +37,16 @@ func newPronounceCmd() *cobra.Command {
 			return runPronounce(ctx, proj, force)
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "re-generate even if pronunciation.json already exists")
+	cmd.Flags().BoolVar(&force, "force", false, "re-generate even if respelling.json already exists")
 	return cmd
 }
 
-// runPronounce loads the glossary and characters (stored separately to avoid
-// duplication), merges them at runtime, asks the model for IPA phonemes, and
-// writes ai/pronunciation.json.
+// runPronounce loads the glossary and characters, asks the model for XTTS v2
+// phonetic respellings, and writes ai/respelling.json.
 func runPronounce(ctx context.Context, proj *project.Project, force bool) error {
-	pronPath := proj.AIDir() + "/pronunciation.json"
-	if project.Exists(pronPath) && !force {
-		slog.Info("pronunciation.json already exists, skipping (use --force to re-generate)", "path", pronPath)
+	respellingPath := proj.AIDir() + "/respelling.json"
+	if project.Exists(respellingPath) && !force {
+		slog.Info("respelling.json already exists, skipping (use --force to re-generate)", "path", respellingPath)
 		return nil
 	}
 
@@ -71,7 +71,7 @@ func runPronounce(ctx context.Context, proj *project.Project, force bool) error 
 		return fmt.Errorf("glossary and characters are empty — run `bookai analyze` first")
 	}
 
-	// Build the list of Russian terms to pronounce.
+	// Build the list of Russian terms to respell.
 	var inputs []translation.PronunciationInput
 	for _, t := range merged.Terms {
 		if t.Target == "" {
@@ -83,7 +83,7 @@ func runPronounce(ctx context.Context, proj *project.Project, force bool) error 
 			Type:    t.Type,
 		})
 	}
-	slog.Info("terms to pronounce", "count", len(inputs))
+	slog.Info("terms to respell", "count", len(inputs))
 
 	// Create the OpenAI client.
 	client, err := translation.NewClient(proj.Cfg.OpenAI)
@@ -92,70 +92,64 @@ func runPronounce(ctx context.Context, proj *project.Project, force bool) error 
 	}
 	slog.Info("openai client ready", "helper_model", client.HelperModel())
 
-	// Call the model for pronunciation extraction.
-	slog.Info("calling model for pronunciation extraction", "model", client.HelperModel())
+	// Call the model for respelling generation.
+	slog.Info("calling model for respelling generation", "model", client.HelperModel())
 	resp, err := client.Chat(ctx, translation.ChatRequest{
-		System:   translation.PronunciationSystem,
-		User:     translation.PronunciationUser(inputs),
+		System:   translation.RespellingSystem,
+		User:     translation.RespellingUser(inputs),
 		Model:    client.HelperModel(),
 		JSONMode: true,
 	})
 	if err != nil {
 		return err
 	}
-	slog.Info("pronunciation extraction complete",
+	slog.Info("respelling generation complete",
 		"prompt_tokens", resp.Usage.PromptTokens,
 		"completion_tokens", resp.Usage.CompletionTokens)
 
 	// Parse the JSON response.
-	var result pronunciationResult
+	var result respellingResult
 	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
-		return fmt.Errorf("parse pronunciation JSON: %w (content: %s)", err, truncate(resp.Content, 200))
+		return fmt.Errorf("parse respelling JSON: %w (content: %s)", err, truncate(resp.Content, 200))
 	}
-	slog.Info("extracted pronunciation hints", "entries", len(result.Entries))
+	slog.Info("extracted respellings", "entries", len(result.Entries))
 
-	// Apply config overrides: force the phonemes of any entry that matches a
-	// config pronunciation override. Config entries not found by the model
-	// are added as new entries.
-	applyPronunciationOverrides(&result, proj.Cfg.Pronunciation)
+	// Apply config overrides.
+	applyRespellingOverrides(&result, proj.Cfg.Pronunciation)
 
-	// Build and save the pronunciation store.
-	pron := &tts.Pronunciation{Entries: result.Entries}
-	if err := pron.Save(proj.AIDir()); err != nil {
+	// Build and save the respelling store.
+	re := &tts.Respelling{Entries: result.Entries}
+	if err := re.Save(proj.AIDir()); err != nil {
 		return err
 	}
-	slog.Info("saved pronunciation hints", "path", pronPath, "entries", len(pron.Entries))
+	slog.Info("saved respellings", "path", respellingPath, "entries", len(re.Entries))
 
 	return nil
 }
 
-// pronunciationResult is the JSON shape we expect from the model.
-type pronunciationResult struct {
-	Entries []tts.PronunciationEntry `json:"entries"`
+// respellingResult is the JSON shape we expect from the model.
+type respellingResult struct {
+	Entries []tts.RespellingEntry `json:"entries"`
 }
 
-// applyPronunciationOverrides forces the phonemes of any entry that matches a
+// applyRespellingOverrides forces the respelling of any entry that matches a
 // config pronunciation override. Config entries not found by the model are
-// added as new entries.
-func applyPronunciationOverrides(result *pronunciationResult, overrides []config.PronunciationOverride) {
+// added as new entries. The config PronunciationOverride struct is reused —
+// the Phonemes field is used as the respelled text.
+func applyRespellingOverrides(result *respellingResult, overrides []config.PronunciationOverride) {
 	if len(overrides) == 0 {
 		return
 	}
 	overridden := 0
-	// Override existing entries.
 	for i := range result.Entries {
 		for _, ov := range overrides {
 			if strings.EqualFold(result.Entries[i].Term, ov.Term) {
-				result.Entries[i].Phonemes = ov.Phonemes
-				if ov.Alphabet != "" {
-					result.Entries[i].Alphabet = ov.Alphabet
-				}
+				result.Entries[i].Respelled = ov.Phonemes
 				overridden++
 				break
 			}
 		}
 	}
-	// Add config entries not found by the model.
 	for _, ov := range overrides {
 		found := false
 		for _, e := range result.Entries {
@@ -165,15 +159,14 @@ func applyPronunciationOverrides(result *pronunciationResult, overrides []config
 			}
 		}
 		if !found && ov.Term != "" && ov.Phonemes != "" {
-			result.Entries = append(result.Entries, tts.PronunciationEntry{
-				Term:     ov.Term,
-				Phonemes: ov.Phonemes,
-				Alphabet: ov.Alphabet,
+			result.Entries = append(result.Entries, tts.RespellingEntry{
+				Term:      ov.Term,
+				Respelled: ov.Phonemes,
 			})
 			overridden++
 		}
 	}
 	if overridden > 0 {
-		slog.Info("applied pronunciation overrides", "overridden", overridden, "config_entries", len(overrides))
+		slog.Info("applied respelling overrides", "overridden", overridden, "config_entries", len(overrides))
 	}
 }
