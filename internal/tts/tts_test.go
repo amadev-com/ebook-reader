@@ -221,6 +221,69 @@ func TestRespelling_Apply_MultipleOccurrences(t *testing.T) {
 	}
 }
 
+func TestRespelling_Apply_DoesNotLoseTextOnWordBoundaryReject(t *testing.T) {
+	// Regression test: when a term match is rejected by atWordBoundary
+	// (because it's inside a longer word), the text before the rejected
+	// match must NOT be lost. The bug was that searchStart was advanced
+	// past the rejected match, causing all text before it to be dropped.
+	resp := &Respelling{
+		Entries: []RespellingEntry{
+			{Term: "зак", Respelled: "зак"}, // no-op, but still triggers search
+			{Term: "Зак", Respelled: "зак"},
+		},
+	}
+	// "заключалась" contains "зак" but atWordBoundary should reject it
+	// (next char "л" is a word rune). The text before "заключалась"
+	// must be preserved.
+	text := "Глава 300. Настоящая проблема заключалась в другом. Зак ушёл."
+	result := resp.Apply(text)
+
+	// The entire text should be preserved (minus the "Зак" → "зак" replacement).
+	if len(result) < len(text)-10 {
+		t.Errorf("text was lost: original %d bytes, result %d bytes\nresult: %s",
+			len(text), len(result), result)
+	}
+	if !contains(result, "Глава 300") {
+		t.Errorf("beginning of text lost: %s", result)
+	}
+	if !contains(result, "заключалась") {
+		t.Errorf("word with rejected match corrupted: %s", result)
+	}
+	if !contains(result, "зак ушёл") {
+		t.Errorf("valid match not replaced: %s", result)
+	}
+}
+
+func TestRespelling_Apply_PreservesTextBeforeRejectedMatches(t *testing.T) {
+	// Another regression: multiple rejected matches should not compound
+	// text loss. Each rejected match should only skip the search position,
+	// not advance the "text written" position.
+	resp := &Respelling{
+		Entries: []RespellingEntry{
+			{Term: "Сэм", Respelled: "СЭм"},
+		},
+	}
+	// "Сэм" appears as a standalone word AND as a prefix of "Сэмми".
+	// The "Сэмми" match should be rejected, but text before it must survive.
+	text := "Сэм пришёл. Сэмми тоже. Сэм ушёл."
+	result := resp.Apply(text)
+
+	if !contains(result, "СЭм пришёл") {
+		t.Errorf("first match not replaced: %s", result)
+	}
+	if !contains(result, "Сэмми") {
+		t.Errorf("rejected match corrupted word: %s", result)
+	}
+	if !contains(result, "СЭм ушёл") {
+		t.Errorf("last match not replaced: %s", result)
+	}
+	// Full text should be preserved.
+	if len(result) < len(text)-10 {
+		t.Errorf("text was lost: original %d bytes, result %d bytes\nresult: %s",
+			len(text), len(result), result)
+	}
+}
+
 // --- NormalizeRussian tests ---
 
 func TestNormalizeRussian_DeCapitalizeMidSentence(t *testing.T) {

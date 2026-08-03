@@ -239,13 +239,12 @@ Apply these XTTS v2 respelling rules:
    - ChatGPT → чат джипити
    - РФ → эр эф
 
-6. De-capitalization: Lowercase mid-sentence uppercase words (XTTS tokenizes them awkwardly).
-   - "Орден" mid-sentence → "орден"
-
 Rules:
 - Provide respelling for the RUSSIAN text (the "target" field), not the English source.
-- Only respell terms that XTTS v2 might mispronounce: names, transliterated foreign words, invented terms, acronyms, words with ambiguous stress.
-- Skip common Russian words with unambiguous pronunciation.
+- ONLY respell terms where the respelling is DIFFERENT from the original term. If the respelling would be identical to the original, omit the entry entirely.
+- Do NOT just lowercase a term — that is handled separately by the text normalization step. Only provide a respelling if you are changing the actual spelling to guide pronunciation (vowel doubling, vowel reduction, ё→йо, colloquial spelling, acronym expansion).
+- Focus on: transliterated foreign names with ambiguous stress, invented/fantasy terms, acronyms, words with Latin characters, and words where XTTS v2 would likely get the stress wrong.
+- Skip common Russian words with unambiguous pronunciation — do not include them.
 - The respelled text must be plain Russian Cyrillic — no IPA, no Latin, no special characters.
 - Preserve the meaning — the respelling should sound the same as the correct pronunciation, just spelled differently.
 
