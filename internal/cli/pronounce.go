@@ -5,26 +5,40 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"ebook-reader/internal/chapters"
 	"ebook-reader/internal/config"
 	"ebook-reader/internal/project"
 	"ebook-reader/internal/translation"
 	"ebook-reader/internal/tts"
 )
 
-// newPronounceCmd implements `bookai pronounce`: reads ai/glossary.json and
-// ai/characters.json, asks the helper model for XTTS v2-compatible phonetic
-// respellings of the Russian terms, and writes ai/respelling.json. This file
-// is consumed by `bookai preprocess` to replace terms in translation text
-// before TTS synthesis.
+// newPronounceCmd implements `bookai pronounce`: scans each chapter's
+// translation for words that XTTS v2 will likely mispronounce and generates
+// phonetic respellings via the OpenAI Batch API. Each chapter is an
+// independent batch item — the model sees the full chapter text and returns
+// a list of {term, respelled} pairs. Results are saved per-chapter to
+// ai/respelling_NNN.json.
+//
+// The command supports a --continue flag to resume polling an interrupted
+// batch. Batch state is persisted locally in ai/batch_pronounce.json.
 func newPronounceCmd() *cobra.Command {
-	var force bool
+	var (
+		force   bool
+		cont    bool
+		chapter int
+		chRange string
+		pollInt int
+	)
 	cmd := &cobra.Command{
 		Use:   "pronounce",
-		Short: "Generate XTTS v2 phonetic respellings for glossary terms (ai/respelling.json)",
+		Short: "Generate XTTS v2 respellings per chapter via OpenAI Batch API",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			setupLogger()
@@ -34,95 +48,268 @@ func newPronounceCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runPronounce(ctx, proj, force)
+			return runPronounce(ctx, proj, force, cont, chapter, chRange, pollInt)
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "re-generate even if respelling.json already exists")
+	cmd.Flags().BoolVar(&force, "force", false, "re-generate respellings even if they already exist")
+	cmd.Flags().BoolVar(&cont, "continue", false, "resume polling an interrupted batch")
+	cmd.Flags().IntVar(&chapter, "chapter", 0, "respell only a single chapter id (1-based)")
+	cmd.Flags().StringVar(&chRange, "range", "", "respell a range of chapter ids, e.g. 5-12")
+	cmd.Flags().IntVar(&pollInt, "poll-interval", 60, "seconds between batch status polls")
 	return cmd
 }
 
-// runPronounce loads the glossary and characters, asks the model for XTTS v2
-// phonetic respellings, and writes ai/respelling.json.
-func runPronounce(ctx context.Context, proj *project.Project, force bool) error {
-	respellingPath := proj.AIDir() + "/respelling.json"
-	if project.Exists(respellingPath) && !force {
-		slog.Info("respelling.json already exists, skipping (use --force to re-generate)", "path", respellingPath)
-		return nil
+// runPronounce orchestrates the batch-based respelling flow:
+//  1. If --continue: load existing batch state and jump to polling.
+//  2. Otherwise: build JSONL with one request per chapter, upload, create batch.
+//  3. Poll batch status every pollInt seconds until terminal.
+//  4. Download results, save per-chapter respelling files.
+func runPronounce(ctx context.Context, proj *project.Project, force, cont bool, chapter int, chRange string, pollInt int) error {
+	if pollInt < 10 {
+		pollInt = 60
 	}
 
-	// Load glossary (terms only — no characters, they're stored separately).
-	glossary, err := translation.LoadGlossary(proj.AIDir())
-	if err != nil {
-		return fmt.Errorf("load glossary: %w (run `bookai analyze` first)", err)
-	}
-	slog.Info("loaded glossary", "terms", len(glossary.Terms))
-
-	// Load characters (separate file, no duplication with glossary).
-	characters, err := translation.LoadCharacters(proj.AIDir())
-	if err != nil {
-		slog.Warn("failed to load characters, continuing with glossary only", "error", err)
-		characters = &translation.Characters{}
-	}
-	slog.Info("loaded characters", "count", len(characters.Characters))
-
-	// Merge characters into glossary at runtime.
-	merged := glossary.WithCharacters(characters)
-	if len(merged.Terms) == 0 {
-		return fmt.Errorf("glossary and characters are empty — run `bookai analyze` first")
+	// --continue: resume polling an existing batch.
+	if cont {
+		return resumePronounceBatch(ctx, proj, pollInt)
 	}
 
-	// Build the list of Russian terms to respell.
-	var inputs []translation.PronunciationInput
-	for _, t := range merged.Terms {
-		if t.Target == "" {
-			continue
+	// Check for an existing pending batch.
+	if state, _ := translation.LoadBatchState(proj.AIDir(), "pronounce"); state != nil {
+		if !translation.IsTerminalStatus(state.Status) {
+			slog.Info("found pending pronounce batch, resuming polling (use --force to start a new one)",
+				"batch_id", state.BatchID, "status", state.Status)
+			return pollPronounceBatch(ctx, proj, state, pollInt)
 		}
-		inputs = append(inputs, translation.PronunciationInput{
-			Russian: t.Target,
-			Source:  t.Source,
-			Type:    t.Type,
-		})
+		slog.Info("cleaning up completed batch state from previous run", "batch_id", state.BatchID)
+		_ = translation.DeleteBatchState(proj.AIDir(), "pronounce")
 	}
-	slog.Info("terms to respell", "count", len(inputs))
 
-	// Create the OpenAI client.
-	client, err := translation.NewClient(proj.Cfg.OpenAI)
+	// Load all chapters.
+	chs, err := loadAllChapters(proj)
 	if err != nil {
 		return err
 	}
-	slog.Info("openai client ready", "helper_model", client.HelperModel())
+	if len(chs) == 0 {
+		return fmt.Errorf("no chapters found — run `bookai analyze-chapters` first")
+	}
 
-	// Call the model for respelling generation.
-	slog.Info("calling model for respelling generation", "model", client.HelperModel())
-	resp, err := client.Chat(ctx, translation.ChatRequest{
-		System:   translation.RespellingSystem,
-		User:     translation.RespellingUser(inputs),
-		Model:    client.HelperModel(),
-		JSONMode: true,
+	// Determine which chapters to respell.
+	ids, err := parseChapterFilter(chapter, chRange, len(chs))
+	if err != nil {
+		return err
+	}
+	writeAll := ids == nil
+
+	// Filter chapters that have translations and need respelling.
+	targetLang := proj.Cfg.Languages.Target
+	var toRespell []chapters.Chapter
+	skipped := 0
+	for _, ch := range chs {
+		if !writeAll && !ids[ch.ID] {
+			continue
+		}
+		translationPath := translationPath(proj.TranslationDir(), ch.ID, targetLang)
+		if !project.Exists(translationPath) {
+			skipped++
+			continue
+		}
+		respPath := filepath.Join(proj.AIDir(), fmt.Sprintf("respelling_%03d.json", ch.ID))
+		if project.Exists(respPath) && !force {
+			skipped++
+			continue
+		}
+		toRespell = append(toRespell, ch)
+	}
+	if len(toRespell) == 0 {
+		slog.Info("no chapters to respell", "skipped", skipped)
+		return nil
+	}
+	slog.Info("chapters to respell", "count", len(toRespell), "skipped", skipped)
+
+	// Build batch requests: one per chapter.
+	model := proj.Cfg.OpenAI.HelperModel
+	overrides := proj.Cfg.Pronunciation
+	reqs := make([]translation.BatchRequest, len(toRespell))
+	chapterIDs := make([]int, len(toRespell))
+	for i, ch := range toRespell {
+		translationPath := translationPath(proj.TranslationDir(), ch.ID, targetLang)
+		text, err := os.ReadFile(translationPath)
+		if err != nil {
+			return fmt.Errorf("read translation for chapter %d: %w", ch.ID, err)
+		}
+
+		reqs[i] = translation.BatchRequest{
+			CustomID:     fmt.Sprintf("pronounce-chapter-%d", ch.ID),
+			Instructions: translation.RespellingSystem,
+			Input:        translation.RespellingUser(string(text), overrides),
+			Model:        model,
+			JSONMode:     true,
+		}
+		chapterIDs[i] = ch.ID
+	}
+
+	// Build JSONL.
+	jsonlData, err := translation.BuildJSONL(reqs)
+	if err != nil {
+		return fmt.Errorf("build batch JSONL: %w", err)
+	}
+	slog.Info("built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
+
+	// Create the batch client and submit.
+	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
+	if err != nil {
+		return err
+	}
+
+	batchID, inputFileID, err := batchClient.SubmitBatch(ctx, jsonlData, map[string]string{
+		"type":    "pronounce",
+		"project": proj.Cfg.Project,
 	})
 	if err != nil {
 		return err
 	}
-	slog.Info("respelling generation complete",
-		"prompt_tokens", resp.Usage.PromptTokens,
-		"completion_tokens", resp.Usage.CompletionTokens)
+	slog.Info("batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
 
-	// Parse the JSON response.
-	var result respellingResult
-	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
-		return fmt.Errorf("parse respelling JSON: %w (content: %s)", err, truncate(resp.Content, 200))
+	// Save batch state.
+	state := &translation.BatchState{
+		BatchID:     batchID,
+		InputFileID: inputFileID,
+		Type:        "pronounce",
+		Model:       model,
+		Endpoint:    "/v1/responses",
+		Status:      "validating",
+		ChapterIDs:  chapterIDs,
+		CreatedAt:   time.Now(),
 	}
-	slog.Info("extracted respellings", "entries", len(result.Entries))
+	if err := translation.SaveBatchState(proj.AIDir(), state); err != nil {
+		return fmt.Errorf("save batch state: %w", err)
+	}
 
-	// Apply config overrides.
-	applyRespellingOverrides(&result, proj.Cfg.Pronunciation)
+	// Poll until completion.
+	return pollPronounceBatch(ctx, proj, state, pollInt)
+}
 
-	// Build and save the respelling store.
-	re := &tts.Respelling{Entries: result.Entries}
-	if err := re.Save(proj.AIDir()); err != nil {
+// resumePronounceBatch loads the persisted batch state and resumes polling.
+func resumePronounceBatch(ctx context.Context, proj *project.Project, pollInt int) error {
+	state, err := translation.LoadBatchState(proj.AIDir(), "pronounce")
+	if err != nil {
+		return fmt.Errorf("load batch state: %w", err)
+	}
+	if state == nil {
+		return fmt.Errorf("no pending pronounce batch found — run `bookai pronounce` without --continue to start a new one")
+	}
+	slog.Info("resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
+	return pollPronounceBatch(ctx, proj, state, pollInt)
+}
+
+// pollPronounceBatch polls the batch status every pollInt seconds. When the
+// batch reaches a terminal status, it downloads results and processes them.
+func pollPronounceBatch(ctx context.Context, proj *project.Project, state *translation.BatchState, pollInt int) error {
+	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
+	if err != nil {
 		return err
 	}
-	slog.Info("saved respellings", "path", respellingPath, "entries", len(re.Entries))
+
+	for {
+		if ctx.Err() != nil {
+			slog.Info("interrupted by signal", "batch_id", state.BatchID, "last_status", state.Status)
+			return ctx.Err()
+		}
+
+		info, err := batchClient.PollBatch(ctx, state.BatchID)
+		if err != nil {
+			return fmt.Errorf("poll batch: %w", err)
+		}
+
+		state.Status = info.Status
+		state.OutputFileID = info.OutputFileID
+		state.ErrorFileID = info.ErrorFileID
+		state.Total = info.Total
+		state.Completed = info.Completed
+		state.Failed = info.Failed
+		_ = translation.SaveBatchState(proj.AIDir(), state)
+
+		slog.Info("batch status",
+			"batch_id", state.BatchID, "status", info.Status,
+			"completed", info.Completed, "failed", info.Failed, "total", info.Total)
+
+		if translation.IsTerminalStatus(info.Status) {
+			break
+		}
+
+		slog.Info("waiting for batch", "poll_seconds", pollInt)
+		select {
+		case <-ctx.Done():
+			slog.Info("interrupted during poll wait", "batch_id", state.BatchID)
+			return ctx.Err()
+		case <-time.After(time.Duration(pollInt) * time.Second):
+		}
+	}
+
+	switch state.Status {
+	case "completed":
+		return processPronounceResults(ctx, proj, state, batchClient)
+	case "failed":
+		return fmt.Errorf("batch %s failed — check OpenAI dashboard for details", state.BatchID)
+	case "expired":
+		return fmt.Errorf("batch %s expired before completion", state.BatchID)
+	case "cancelled":
+		return fmt.Errorf("batch %s was cancelled", state.BatchID)
+	default:
+		return fmt.Errorf("batch %s ended in unexpected status: %s", state.BatchID, state.Status)
+	}
+}
+
+// processPronounceResults downloads the batch output and saves per-chapter
+// respelling files (ai/respelling_NNN.json).
+func processPronounceResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient) error {
+	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
+
+	results, err := batchClient.DownloadResults(ctx, state.OutputFileID)
+	if err != nil {
+		return fmt.Errorf("download results: %w", err)
+	}
+
+	respelled := 0
+	failedCount := 0
+
+	for _, res := range results {
+		chID := translation.SplitCustomID(res.CustomID, "pronounce")
+		if chID == 0 {
+			slog.Warn("unrecognized custom_id in batch output", "custom_id", res.CustomID)
+			continue
+		}
+		if res.Error != "" {
+			slog.Warn("respelling failed in batch", "chapter", chID, "error", res.Error)
+			failedCount++
+			continue
+		}
+
+		// Parse the JSON response.
+		var result respellingResult
+		if err := json.Unmarshal([]byte(res.Content), &result); err != nil {
+			slog.Warn("failed to parse respelling JSON", "chapter", chID, "error", err, "content", truncate(res.Content, 200))
+			failedCount++
+			continue
+		}
+
+		// Apply config overrides.
+		applyRespellingOverrides(&result, proj.Cfg.Pronunciation)
+
+		// Save per-chapter respelling file.
+		re := &tts.Respelling{Entries: result.Entries}
+		if err := re.SaveChapterRespelling(proj.AIDir(), chID); err != nil {
+			return fmt.Errorf("save respelling for chapter %d: %w", chID, err)
+		}
+
+		slog.Info("respellings saved", "chapter", chID, "entries", len(re.Entries))
+		respelled++
+	}
+
+	// Clean up batch state.
+	_ = translation.DeleteBatchState(proj.AIDir(), "pronounce")
+	slog.Info("pronounce batch complete", "batch_id", state.BatchID, "respelled", respelled, "failed", failedCount)
 
 	return nil
 }
@@ -134,8 +321,7 @@ type respellingResult struct {
 
 // applyRespellingOverrides forces the respelling of any entry that matches a
 // config pronunciation override. Config entries not found by the model are
-// added as new entries. The config PronunciationOverride struct is reused —
-// the Phonemes field is used as the respelled text.
+// added as new entries.
 func applyRespellingOverrides(result *respellingResult, overrides []config.PronunciationOverride) {
 	if len(overrides) == 0 {
 		return

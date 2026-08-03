@@ -24,9 +24,9 @@ ai/          (glossary.json, characters.json)
 translation/ + memory/   (chapter_NNN.ru.txt, chapter_NNN.summary.txt)
         │  5. bookai verify-glossary    ← optional QA check
         ▼
-        │  6. bookai pronounce          ← requires OPENAI_API_KEY
+        │  6. bookai pronounce          ← requires OPENAI_API_KEY (Batch API)
         ▼
-ai/          (respelling.json)
+ai/          (respelling_NNN.json per chapter)
         │  7. bookai preprocess
         ▼
 tts/         (chapter_NNN.txt)
@@ -201,7 +201,7 @@ Scans translations for untranslated English glossary terms. Writes `ai/glossary_
 bookai pronounce -p my-vampire-system
 ```
 
-Reads `ai/glossary.json` + `ai/characters.json` and asks the helper model for **XTTS v2 phonetic respellings** of the Russian terms. XTTS v2 does NOT support IPA phonemes or SSML — the only reliable way to control pronunciation is text replacement. The model generates respellings using rules like vowel doubling for stress (договор → договоор), ё→йо, de-capitalization, and acronym expansion. Writes `ai/respelling.json`. Use `--force` to re-generate.
+Scans each chapter's translation via the **OpenAI Batch API** for words that XTTS v2 will likely mispronounce. One batch item per chapter — the model sees the full chapter text and returns a list of {term, respelled} pairs. XTTS v2 does NOT support IPA phonemes or SSML — the only reliable way to control pronunciation is text replacement. The model generates respellings using rules like vowel doubling for stress (договор → договоор), ё→йо, and acronym expansion. Config `pronunciation` overrides are passed to the model. Writes per-chapter `ai/respelling_NNN.json`. Flags: `--force`, `--continue`, `--range M-N`, `--poll-interval N`.
 
 ### Step 7 — Preprocess translations
 
@@ -209,7 +209,7 @@ Reads `ai/glossary.json` + `ai/characters.json` and asks the helper model for **
 bookai preprocess -p my-vampire-system
 ```
 
-Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Terms from `ai/respelling.json` are replaced in the text, and Russian text normalization (de-capitalization of mid-sentence ALL-CAPS words) is applied. This replaces the old `ssml` command — since XTTS v2 doesn't support SSML, pronunciation control is done via text replacement before synthesis.
+Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Per-chapter respellings from `ai/respelling_NNN.json` are replaced in the text, and Russian text normalization (de-capitalization of mid-sentence ALL-CAPS words) is applied. This replaces the old `ssml` command — since XTTS v2 doesn't support SSML, pronunciation control is done via text replacement before synthesis.
 
 ### Step 8 — Synthesize audio
 
@@ -282,7 +282,7 @@ bookai pronounce        # generate respellings (requires OPENAI_API_KEY)
 bookai preprocess       # apply respellings + normalization
 ```
 
-Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Terms from `ai/respelling.json` are replaced in the text.
+Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Per-chapter respellings from `ai/respelling_NNN.json` are replaced in the text.
 
 ### Step 7 — Synthesize audio
 

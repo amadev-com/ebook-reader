@@ -60,17 +60,6 @@ func runPreprocess(_ context.Context, proj *project.Project, force bool, chapter
 	}
 	writeAll := ids == nil
 
-	// Load respellings (optional — may be empty).
-	resp, err := tts.LoadRespelling(proj.AIDir())
-	if err != nil {
-		return err
-	}
-	if len(resp.Entries) > 0 {
-		slog.Info("loaded respellings", "count", len(resp.Entries))
-	} else {
-		slog.Info("no respellings found (ai/respelling.json absent or empty — run `bookai pronounce`)")
-	}
-
 	targetLang := proj.Cfg.Languages.Target
 	if err := proj.EnsureDirs(); err != nil {
 		return err
@@ -102,6 +91,12 @@ func runPreprocess(_ context.Context, proj *project.Project, force bool, chapter
 			return fmt.Errorf("read translation for chapter %d: %w", ch.ID, err)
 		}
 
+		// Load per-chapter respellings (ai/respelling_NNN.json).
+		resp, err := tts.LoadChapterRespelling(proj.AIDir(), ch.ID)
+		if err != nil {
+			return fmt.Errorf("load respelling for chapter %d: %w", ch.ID, err)
+		}
+
 		// Apply respellings (term → phonetic replacement).
 		processed := resp.Apply(string(text))
 		// Apply Russian text normalization for XTTS v2.
@@ -117,7 +112,7 @@ func runPreprocess(_ context.Context, proj *project.Project, force bool, chapter
 			slog.Warn("failed to update chapter status", "chapter", ch.ID, "error", err)
 		}
 
-		slog.Info("TTS text generated", "chapter", ch.ID)
+		slog.Info("TTS text generated", "chapter", ch.ID, "respellings", len(resp.Entries))
 		generated++
 	}
 

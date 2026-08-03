@@ -106,7 +106,7 @@ func TestRespelling_Lookup(t *testing.T) {
 	}
 }
 
-func TestRespelling_SaveAndLoad(t *testing.T) {
+func TestRespelling_SaveAndLoadChapter(t *testing.T) {
 	tmpDir := t.TempDir()
 	resp := &Respelling{
 		Entries: []RespellingEntry{
@@ -114,13 +114,13 @@ func TestRespelling_SaveAndLoad(t *testing.T) {
 			{Term: "Альфа", Respelled: "Альфа"},
 		},
 	}
-	if err := resp.Save(tmpDir); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := resp.SaveChapterRespelling(tmpDir, 42); err != nil {
+		t.Fatalf("SaveChapterRespelling: %v", err)
 	}
 
-	loaded, err := LoadRespelling(tmpDir)
+	loaded, err := LoadChapterRespelling(tmpDir, 42)
 	if err != nil {
-		t.Fatalf("LoadRespelling: %v", err)
+		t.Fatalf("LoadChapterRespelling: %v", err)
 	}
 	if len(loaded.Entries) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(loaded.Entries))
@@ -128,6 +128,17 @@ func TestRespelling_SaveAndLoad(t *testing.T) {
 	// Should be sorted by term length (longest first).
 	if loaded.Entries[0].Term != "Альфа" {
 		t.Errorf("expected longest term first: got %q", loaded.Entries[0].Term)
+	}
+}
+
+func TestLoadChapterRespelling_AbsentFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	resp, err := LoadChapterRespelling(tmpDir, 999)
+	if err != nil {
+		t.Fatalf("LoadChapterRespelling on absent file: %v", err)
+	}
+	if resp == nil || len(resp.Entries) != 0 {
+		t.Errorf("expected empty respelling, got %+v", resp)
 	}
 }
 

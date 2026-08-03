@@ -1,6 +1,7 @@
 package translation
 
 import (
+	"ebook-reader/internal/config"
 	"fmt"
 	"strings"
 )
@@ -207,12 +208,12 @@ func GlossaryMergeUser(perChapterResults string, lockedTerms string) string {
 // --- Respelling prompts (bookai pronounce) ---
 
 // RespellingSystem is the system prompt for generating phonetic respellings
-// of Russian terms for the XTTS v2 text-to-speech engine. XTTS v2 does NOT
+// of Russian text for the XTTS v2 text-to-speech engine. XTTS v2 does NOT
 // support IPA phonemes, SSML tags, capital-letter stress, or any markup — it
 // goes directly from text to speech. The only reliable way to control
 // pronunciation is to replace the problematic word with a spelling that XTTS
 // will pronounce correctly.
-const RespellingSystem = `You are a phonetics expert specializing in Russian pronunciation for the XTTS v2 text-to-speech engine. XTTS v2 does NOT support IPA phonemes, SSML, or stress marks — it goes directly from text to speech. Your task is to provide phonetic respellings: plain Russian text replacements that make XTTS v2 pronounce terms correctly.
+const RespellingSystem = `You are a phonetics expert specializing in Russian pronunciation for the XTTS v2 text-to-speech engine. XTTS v2 does NOT support IPA phonemes, SSML, or stress marks — it goes directly from text to speech. Your task is to scan a chapter of Russian text and identify words that XTTS v2 will likely mispronounce, then provide phonetic respellings for those words.
 
 Apply these XTTS v2 respelling rules:
 
@@ -240,40 +241,43 @@ Apply these XTTS v2 respelling rules:
    - РФ → эр эф
 
 Rules:
-- Provide respelling for the RUSSIAN text (the "target" field), not the English source.
-- ONLY respell terms where the respelling is DIFFERENT from the original term. If the respelling would be identical to the original, omit the entry entirely.
-- Do NOT just lowercase a term — that is handled separately by the text normalization step. Only provide a respelling if you are changing the actual spelling to guide pronunciation (vowel doubling, vowel reduction, ё→йо, colloquial spelling, acronym expansion).
-- Focus on: transliterated foreign names with ambiguous stress, invented/fantasy terms, acronyms, words with Latin characters, and words where XTTS v2 would likely get the stress wrong.
-- Skip common Russian words with unambiguous pronunciation — do not include them.
+- Scan the chapter text and identify words where XTTS v2 will likely get the pronunciation wrong: transliterated foreign names with ambiguous stress, invented/fantasy terms, acronyms, words with Latin characters, words with implicit ё, and words with non-obvious stress.
+- For each problematic word, provide the exact term as it appears in the text and the respelled version.
+- ONLY include words where the respelling is DIFFERENT from the original. If the respelling would be identical, omit it.
+- Do NOT just lowercase words — that is handled separately. Only provide respellings that change the actual spelling to guide pronunciation.
+- Skip common Russian words with unambiguous pronunciation.
 - The respelled text must be plain Russian Cyrillic — no IPA, no Latin, no special characters.
-- Preserve the meaning — the respelling should sound the same as the correct pronunciation, just spelled differently.
+- The "term" field must match the word exactly as it appears in the chapter text (case-sensitive), so it can be found and replaced.
 
 Return a JSON object with this exact shape:
 {
-  "entries": [{"term": "Russian term as in translation", "respelled": "phonetic respelling for XTTS"}]
+  "entries": [{"term": "exact word as in text", "respelled": "phonetic respelling for XTTS"}]
 }
 
-If a term does not need respelling, omit it. If no terms need respelling, return {"entries": []}.`
+If no words need respelling, return {"entries": []}.`
 
-// RespellingUser builds the user prompt from glossary terms and character
-// names. It sends the Russian (target) text for each term so the model can
-// generate XTTS-compatible respellings.
-func RespellingUser(terms []PronunciationInput) string {
+// RespellingUser builds the user prompt for a single chapter. It sends the
+// full chapter text so the model can scan it for problematic words. Config
+// overrides are included so the model respects user-specified respellings.
+func RespellingUser(chapterText string, overrides []config.PronunciationOverride) string {
 	var b strings.Builder
-	b.WriteString("Provide XTTS v2 phonetic respellings for these Russian terms used in a book translation.\n\n")
-	b.WriteString("Terms (Russian text that the TTS engine will read):\n\n")
-	for _, t := range terms {
-		if t.Source != "" {
-			fmt.Fprintf(&b, "- %s (from English: %s, type: %s)\n", t.Russian, t.Source, t.Type)
-		} else {
-			fmt.Fprintf(&b, "- %s\n", t.Russian)
+	b.WriteString("Scan this Russian chapter text and identify words that XTTS v2 will likely mispronounce. Provide phonetic respellings for those words.\n\n")
+
+	if len(overrides) > 0 {
+		b.WriteString("The following respellings are mandatory (already defined by the user — include them in your output):\n")
+		for _, ov := range overrides {
+			fmt.Fprintf(&b, "- %s → %s\n", ov.Term, ov.Phonemes)
 		}
+		b.WriteString("\n")
 	}
-	b.WriteString("\nReturn the JSON respellings now.")
+
+	b.WriteString("Chapter text:\n\n")
+	b.WriteString(chapterText)
+	b.WriteString("\n\nReturn the JSON respellings now.")
 	return b.String()
 }
 
-// PronunciationInput is one term to generate respelling for.
+// PronunciationInput is one term to generate respelling for (used by tests).
 type PronunciationInput struct {
 	Russian string // the Russian text as it appears in translation
 	Source  string // the English source (for context, not pronounced)

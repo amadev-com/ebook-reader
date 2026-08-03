@@ -44,10 +44,26 @@ func LoadRespelling(aiDir string) (*Respelling, error) {
 	return &r, nil
 }
 
-// Save writes respelling entries to ai/respelling.json, sorted by term.
-func (r *Respelling) Save(aiDir string) error {
+// LoadChapterRespelling reads ai/respelling_NNN.json for a specific chapter.
+// Returns an empty store if the file does not exist.
+func LoadChapterRespelling(aiDir string, chapterID int) (*Respelling, error) {
+	path := fmt.Sprintf("%s/respelling_%03d.json", aiDir, chapterID)
+	if !project.Exists(path) {
+		return &Respelling{}, nil
+	}
+	var r Respelling
+	if err := project.LoadJSON(path, &r); err != nil {
+		return nil, fmt.Errorf("load chapter respelling: %w", err)
+	}
+	return &r, nil
+}
+
+// SaveChapterRespelling writes respelling entries to ai/respelling_NNN.json
+// for a specific chapter, sorted by term length (longest first).
+func (r *Respelling) SaveChapterRespelling(aiDir string, chapterID int) error {
 	r.Sort()
-	return project.SaveJSON(aiDir+"/respelling.json", r)
+	path := fmt.Sprintf("%s/respelling_%03d.json", aiDir, chapterID)
+	return project.SaveJSON(path, r)
 }
 
 // Sort orders entries by term length (longest first) so that multi-word terms

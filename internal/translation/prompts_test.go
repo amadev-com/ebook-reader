@@ -1,6 +1,7 @@
 package translation
 
 import (
+	"ebook-reader/internal/config"
 	"strings"
 	"testing"
 )
@@ -145,18 +146,22 @@ func TestRespellingSystem(t *testing.T) {
 
 func TestRespellingUser(t *testing.T) {
 	t.Parallel()
-	inputs := []PronunciationInput{
-		{Russian: "Куинн", Source: "Quinn", Type: "character"},
-		{Russian: "Орден", Source: "The Order", Type: "organization"},
-	}
-	prompt := RespellingUser(inputs)
-	if !strings.Contains(prompt, "Куинн") {
-		t.Errorf("prompt missing Russian term: %s", prompt)
-	}
-	if !strings.Contains(prompt, "Орден") {
-		t.Errorf("prompt missing second Russian term")
+	prompt := RespellingUser("Привет мир. Это тест.", nil)
+	if !strings.Contains(prompt, "Привет мир") {
+		t.Errorf("prompt missing chapter text: %s", prompt)
 	}
 	if !strings.Contains(prompt, "Return the JSON respellings") {
 		t.Errorf("prompt missing instruction")
+	}
+}
+
+func TestRespellingUser_WithOverrides(t *testing.T) {
+	t.Parallel()
+	overrides := []config.PronunciationOverride{
+		{Term: "Куинн", Phonemes: "КУинн"},
+	}
+	prompt := RespellingUser("Куинн пришёл.", overrides)
+	if !strings.Contains(prompt, "Куинн → КУинн") {
+		t.Errorf("prompt missing override: %s", prompt)
 	}
 }
