@@ -96,16 +96,6 @@ bookai import /path/to/book.epub -p /existing/project-dir
 
 > **Before continuing:** edit `my-vampire-system/config.yaml` to switch the TTS engine from `noop` to `xtts-http` and pick a voice (see [Configuration](#configuration) below).
 
-```bash
-bookai import /path/to/book.epub "My Vampire System"   # creates ./my-vampire-system/
-```
-
-To import into an explicit directory (skips auto-creation):
-
-```bash
-bookai import /path/to/book.epub -p /existing/project-dir
-```
-
 ### Step 2 — Detect chapters
 
 ```bash
@@ -233,72 +223,8 @@ Shows a directory tree and per-stage artifact counts.
 > bookai analyze-chapters
 > bookai analyze
 > bookai translate
-> bookai tts --merge
+> bookai tts
 > ```
-
-### Step 2 — Detect chapters
-
-```bash
-bookai analyze-chapters
-```
-
-Writes `chapters/chapter_NNN.json` (one per chapter), `chapters/_index.json`, and `chapters/_skipped.json` (non-chapter sections like TOC/notes).
-
-### Step 3 — Extract glossary and characters
-
-```bash
-bookai analyze
-```
-
-Uses the **OpenAI Batch API** (50% cost discount). Each chapter is analyzed independently as a batch item that returns both the glossary/characters AND a chapter summary in one JSON response. A live merge/unify request then produces the final glossary and character list. Characters = only real persons; glossary = terms without characters. Writes `ai/glossary.json`, `ai/characters.json`, and `memory/chapter_NNN.summary.txt`. Stays in polling mode — use `--continue` to resume if interrupted.
-
-### Step 4 — Translate
-
-```bash
-bookai translate
-```
-
-Uses the **OpenAI Batch API** for cost-effective translation. Each chapter is an independent batch item with glossary + previous chapter summaries (from analyze) as context. After the batch completes, translations are written to disk. No post-processing — summaries and glossary are finalized by analyze. Writes `translation/chapter_NNN.ru.txt` and updates chapter status to `translated`. Use `--continue` to resume an interrupted batch.
-
-Use `--chapter` or `--range` to translate in batches:
-
-```bash
-bookai translate --range 1-50
-bookai translate --range 51-100
-```
-
-### Step 5 — Verify glossary (optional QA)
-
-```bash
-bookai verify-glossary
-```
-
-Scans translations for untranslated English glossary terms. Writes `ai/glossary_violations.json`.
-
-### Step 6 — Preprocess translations
-
-```bash
-bookai pronounce        # generate respellings (requires OPENAI_API_KEY)
-bookai preprocess       # apply respellings + normalization
-```
-
-Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Per-chapter respellings from `ai/respelling_NNN.json` are replaced in the text.
-
-### Step 7 — Synthesize audio
-
-```bash
-bookai tts
-```
-
-Synthesizes each `tts/chapter_NNN.txt` into `audio/chapter_NNN.wav` via the XTTS v2 server.
-
-### Check progress at any time
-
-```bash
-bookai status
-```
-
-Shows a directory tree and per-stage artifact counts.
 
 ## Working with multiple books
 
