@@ -1,6 +1,10 @@
 package tts
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
 
 // indexIgnoreCase finds the first occurrence of needle in haystack starting
 // at offset, using case-insensitive comparison. Returns the byte offset or -1.
@@ -22,29 +26,39 @@ func indexIgnoreCase(haystack, needle string, offset int) int {
 
 // atWordBoundary checks that the match at [start, end) in s is bounded by
 // non-word characters (or string edges). This prevents matching "Орден"
-// inside "Орденский".
+// inside "Орденский" or "ИИ" inside "молний".
+//
+// It works at the rune level to correctly handle UTF-8: the byte before a
+// Cyrillic character is a UTF-8 continuation byte (0x80-0xBF), not a lead
+// byte, so byte-level checks would incorrectly report a word boundary.
 func atWordBoundary(s string, start, end int) bool {
 	if start > 0 {
-		prev := s[start-1]
-		if isWordRune(prev) {
-			return false
+		// Decode the rune ending at `start` (the last rune before the match).
+		prevStart := start
+		// Walk back to find the start of the previous UTF-8 rune.
+		for prevStart > 0 && !utf8.RuneStart(s[prevStart]) {
+			prevStart--
+		}
+		if prevStart < start {
+			r, _ := utf8.DecodeRuneInString(s[prevStart:start])
+			if isWordRuneValue(r) {
+				return false
+			}
 		}
 	}
 	if end < len(s) {
-		next := s[end]
-		if isWordRune(next) {
+		// Decode the rune starting at `end` (the first rune after the match).
+		r, _ := utf8.DecodeRuneInString(s[end:])
+		if isWordRuneValue(r) {
 			return false
 		}
 	}
 	return true
 }
 
-// isWordRune reports whether r is a letter or digit (word constituent).
-func isWordRune(r byte) bool {
-	return (r >= 'a' && r <= 'z') ||
-		(r >= 'A' && r <= 'Z') ||
-		(r >= '0' && r <= '9') ||
-		r >= 0xC0 // Cyrillic and other non-ASCII letters (UTF-8 continuation handled by byte range)
+// isWordRuneValue reports whether r is a letter or digit (word constituent).
+func isWordRuneValue(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // replaceWordIgnoreCase replaces all case-insensitive occurrences of old with

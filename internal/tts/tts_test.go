@@ -166,6 +166,30 @@ func TestStress_Apply_WordBoundary(t *testing.T) {
 	}
 }
 
+func TestStress_Apply_WordBoundary_CyrillicShortTerm(t *testing.T) {
+	// Regression: "ИИ" (2-char acronym) was matching inside "молний" because
+	// the byte-level word boundary check treated UTF-8 continuation bytes as
+	// non-word characters. The fix uses rune-level boundary detection.
+	s := &Stress{
+		Entries: []StressEntry{
+			{Term: "ИИ", Stressed: "И+И"},
+		},
+	}
+	// "молний" contains "ий" which matches "ИИ" case-insensitively, but
+	// it's inside a longer word — should NOT be replaced.
+	text := "молний было много."
+	result := s.Apply(text)
+	if contains(result, "И+И") {
+		t.Errorf("ИИ should not match inside 'молний': %s", result)
+	}
+	// But standalone "ИИ" should be replaced.
+	text2 := "ИИ развивается быстро."
+	result2 := s.Apply(text2)
+	if !contains(result2, "И+И") {
+		t.Errorf("standalone ИИ should be replaced: %s", result2)
+	}
+}
+
 func TestStress_Apply_CaseInsensitive(t *testing.T) {
 	s := &Stress{
 		Entries: []StressEntry{
