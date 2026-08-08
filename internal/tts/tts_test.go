@@ -461,6 +461,47 @@ func TestGenerateSSML_ExclamationAndQuestion(t *testing.T) {
 	}
 }
 
+func TestGenerateSSML_LatinToCyrillic(t *testing.T) {
+	// Latin characters in Russian text crash Silero's SSML parser.
+	// They should be replaced with Cyrillic look-alikes.
+	tests := []struct {
+		name  string
+		input string
+		want  string // substring expected in output
+		bad   string // substring that must NOT appear
+	}{
+		{
+			name:  "Latin M in MК",
+			input: "Все клетки MК старика.",
+			want:  "МК",
+			bad:   "MК",
+		},
+		{
+			name:  "Latin A for blood type",
+			input: "Употребляю групу крови A, но не знаю.",
+			want:  "крови А,",
+			bad:   "крови A,",
+		},
+		{
+			name:  "VR game",
+			input: "Внутри VR-игры игроки.",
+			want:  "ВР-игры",
+			bad:   "VR-игры",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := GenerateSSML(tc.input)
+			if !contains(result, tc.want) {
+				t.Errorf("expected %q in output: %s", tc.want, result)
+			}
+			if contains(result, tc.bad) {
+				t.Errorf("Latin %q should be replaced: %s", tc.bad, result)
+			}
+		})
+	}
+}
+
 // contains is a simple substring check for test readability.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsString(s, substr))

@@ -115,8 +115,9 @@ func splitSentences(para string) []string {
 	return sentences
 }
 
-// escapeXML escapes the five special XML characters. Stress marks (+) are
-// NOT escaped — they are valid in SSML text content.
+// escapeXML escapes the five special XML characters, replaces Latin letters
+// with their Cyrillic visual equivalents (Silero's Russian SSML parser crashes
+// on Latin characters), and preserves stress marks (+) as-is.
 func escapeXML(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -128,8 +129,75 @@ func escapeXML(s string) string {
 		case '&':
 			b.WriteString("&amp;")
 		default:
-			b.WriteRune(r)
+			b.WriteRune(latinToCyrillic(r))
 		}
 	}
 	return b.String()
+}
+
+// latinToCyrillic replaces Latin letters that have Cyrillic visual
+// equivalents. Silero's Russian TTS model cannot handle Latin characters in
+// SSML — it crashes with "'NoneType' object has no attribute 'keys'" and
+// returns silence. This maps Latin letters to their Cyrillic look-alikes
+// so the text is all-Cyrillic before sending to the server.
+func latinToCyrillic(r rune) rune {
+	switch r {
+	case 'A':
+		return 'А'
+	case 'B':
+		return 'В'
+	case 'C':
+		return 'С'
+	case 'E':
+		return 'Е'
+	case 'H':
+		return 'Н'
+	case 'K':
+		return 'К'
+	case 'M':
+		return 'М'
+	case 'O':
+		return 'О'
+	case 'P':
+		return 'Р'
+	case 'R':
+		return 'Р' // phonetic: Latin R → Cyrillic Р (both are R sound)
+	case 'T':
+		return 'Т'
+	case 'V':
+		return 'В' // phonetic: Latin V → Cyrillic В (both are V sound)
+	case 'X':
+		return 'Х'
+	case 'Y':
+		return 'У'
+	case 'a':
+		return 'а'
+	case 'b':
+		return 'в'
+	case 'c':
+		return 'с'
+	case 'e':
+		return 'е'
+	case 'h':
+		return 'н'
+	case 'k':
+		return 'к'
+	case 'm':
+		return 'м'
+	case 'o':
+		return 'о'
+	case 'p':
+		return 'р'
+	case 'r':
+		return 'р' // phonetic: Latin r → Cyrillic р
+	case 't':
+		return 'т'
+	case 'v':
+		return 'в'
+	case 'x':
+		return 'х'
+	case 'y':
+		return 'у'
+	}
+	return r
 }
