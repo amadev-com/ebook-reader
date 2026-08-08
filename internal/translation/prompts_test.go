@@ -51,6 +51,9 @@ func TestSystem(t *testing.T) {
 	if !strings.Contains(sys, "glossary consistently") {
 		t.Errorf("system prompt missing glossary rule")
 	}
+	if !strings.Contains(sys, "numbers as words") {
+		t.Errorf("system prompt missing number-to-words rule")
+	}
 
 	// With glossary block.
 	sys = System("[character]\n  Quinn = Куинн\n", "")

@@ -57,28 +57,6 @@ func (s *Stress) Save(aiDir string) error {
 	return project.SaveJSON(path, s)
 }
 
-// LoadChapterStress reads ai/stress_NNN.json for a specific chapter.
-// Returns an empty store if the file does not exist.
-func LoadChapterStress(aiDir string, chapterID int) (*Stress, error) {
-	path := fmt.Sprintf("%s/stress_%03d.json", aiDir, chapterID)
-	if !project.Exists(path) {
-		return &Stress{}, nil
-	}
-	var s Stress
-	if err := project.LoadJSON(path, &s); err != nil {
-		return nil, fmt.Errorf("load chapter stress: %w", err)
-	}
-	return &s, nil
-}
-
-// SaveChapterStress writes stress entries to ai/stress_NNN.json for a specific
-// chapter, sorted by term length (longest first).
-func (s *Stress) SaveChapterStress(aiDir string, chapterID int) error {
-	s.Sort()
-	path := fmt.Sprintf("%s/stress_%03d.json", aiDir, chapterID)
-	return project.SaveJSON(path, s)
-}
-
 // Sort orders entries by term length (longest first) so that multi-word terms
 // are matched before their sub-terms during text replacement.
 func (s *Stress) Sort() {

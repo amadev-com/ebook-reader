@@ -105,7 +105,8 @@ Rules:
 - Use the glossary consistently: every glossary term must be translated exactly as specified.
 - Keep paragraph breaks exactly as in the source (separated by blank lines).
 - Do not add commentary, notes, or explanations. Output ONLY the translated text.
-- If you discover a new recurring term not in the glossary, translate it consistently within this chapter. The system will extract new terms separately.`)
+- If you discover a new recurring term not in the glossary, translate it consistently within this chapter. The system will extract new terms separately.
+- Write ALL numbers as words in Russian, with correct gender and case agreement. For example: "5 лет" → "пять лет", "5-го этажа" → "пятого этажа", "300 человек" → "триста человек", "2 раза" → "два раза". Never leave digits in the translated text — the text-to-speech engine cannot read numbers.`)
 	if glossaryBlock != "" {
 		b.WriteString("\n\n")
 		b.WriteString(glossaryBlock)

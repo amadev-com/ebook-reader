@@ -109,7 +109,7 @@ func TestStress_Lookup(t *testing.T) {
 	}
 }
 
-func TestStress_SaveAndLoadChapter(t *testing.T) {
+func TestStress_SaveAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := &Stress{
 		Entries: []StressEntry{
@@ -117,13 +117,13 @@ func TestStress_SaveAndLoadChapter(t *testing.T) {
 			{Term: "Альфа", Stressed: "+Альфа"},
 		},
 	}
-	if err := s.SaveChapterStress(tmpDir, 42); err != nil {
-		t.Fatalf("SaveChapterStress: %v", err)
+	if err := s.Save(tmpDir); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
 
-	loaded, err := LoadChapterStress(tmpDir, 42)
+	loaded, err := LoadStress(tmpDir)
 	if err != nil {
-		t.Fatalf("LoadChapterStress: %v", err)
+		t.Fatalf("LoadStress: %v", err)
 	}
 	if len(loaded.Entries) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(loaded.Entries))
@@ -131,17 +131,6 @@ func TestStress_SaveAndLoadChapter(t *testing.T) {
 	// Should be sorted by term length (longest first).
 	if loaded.Entries[0].Term != "Альфа" {
 		t.Errorf("expected longest term first: got %q", loaded.Entries[0].Term)
-	}
-}
-
-func TestLoadChapterStress_AbsentFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	s, err := LoadChapterStress(tmpDir, 999)
-	if err != nil {
-		t.Fatalf("LoadChapterStress on absent file: %v", err)
-	}
-	if s == nil || len(s.Entries) != 0 {
-		t.Errorf("expected empty stress, got %+v", s)
 	}
 }
 

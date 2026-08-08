@@ -266,10 +266,11 @@ func pollPronounceBatch(ctx context.Context, proj *project.Project, state *trans
 	}
 }
 
-// processPronounceResults downloads the batch output, saves per-chapter stress
-// files (ai/stress_NNN.json), then merges all results into a single global
-// ai/stress.json vocabulary. Conflicts (same term, different stressed forms)
-// are resolved interactively in the CLI.
+// processPronounceResults downloads the batch output and merges each
+// chapter's stress marks directly into the global ai/stress.json
+// vocabulary. Conflicts (same term, different stressed forms) are resolved
+// interactively in the CLI. Per-chapter stress files are never written to
+// disk — results are merged in memory as they're parsed.
 func processPronounceResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient, reset bool) error {
 	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
 
@@ -278,9 +279,23 @@ func processPronounceResults(ctx context.Context, proj *project.Project, state *
 		return fmt.Errorf("download results: %w", err)
 	}
 
+	// Load existing global stress or start fresh.
+	var global *tts.Stress
+	if reset {
+		slog.Info("resetting global stress vocabulary (--reset)")
+		global = &tts.Stress{}
+	} else {
+		existing, err := tts.LoadStress(proj.AIDir())
+		if err != nil {
+			return fmt.Errorf("load existing stress: %w", err)
+		}
+		global = existing
+		slog.Info("merging with existing stress vocabulary", "existing_entries", len(global.Entries))
+	}
+
 	processed := 0
 	failedCount := 0
-	var chapterStresses []*tts.Stress
+	var allConflicts []tts.StressConflict
 
 	for _, res := range results {
 		chID := translation.SplitCustomID(res.CustomID, "pronounce")
@@ -305,52 +320,13 @@ func processPronounceResults(ctx context.Context, proj *project.Project, state *
 		// Apply config overrides.
 		applyStressOverrides(&result, proj.Cfg.Pronunciation)
 
-		// Save per-chapter stress file.
-		se := &tts.Stress{Entries: result.Entries}
-		if err := se.SaveChapterStress(proj.AIDir(), chID); err != nil {
-			return fmt.Errorf("save stress for chapter %d: %w", chID, err)
-		}
-
-		slog.Info("stress marks saved", "chapter", chID, "entries", len(se.Entries))
-		chapterStresses = append(chapterStresses, se)
-		processed++
-	}
-
-	// Merge per-chapter results into global vocabulary.
-	if err := mergeStressResults(proj, chapterStresses, reset); err != nil {
-		return err
-	}
-
-	// Clean up batch state.
-	_ = translation.DeleteBatchState(proj.AIDir(), "pronounce")
-	slog.Info("pronounce batch complete", "batch_id", state.BatchID, "processed", processed, "failed", failedCount)
-
-	return nil
-}
-
-// mergeStressResults merges per-chapter stress stores into the global
-// ai/stress.json. If reset is false, it merges with the existing file.
-// Conflicts are resolved interactively.
-func mergeStressResults(proj *project.Project, chapterStresses []*tts.Stress, reset bool) error {
-	// Start with existing global stress or empty.
-	var global *tts.Stress
-	if reset {
-		slog.Info("resetting global stress vocabulary (--reset)")
-		global = &tts.Stress{}
-	} else {
-		existing, err := tts.LoadStress(proj.AIDir())
-		if err != nil {
-			return fmt.Errorf("load existing stress: %w", err)
-		}
-		global = existing
-		slog.Info("merging with existing stress vocabulary", "existing_entries", len(global.Entries))
-	}
-
-	// Merge all chapter results into the global store.
-	var allConflicts []tts.StressConflict
-	for _, cs := range chapterStresses {
-		conflicts := global.Merge(cs)
+		// Merge directly into global vocabulary (no per-chapter file).
+		chapterStress := &tts.Stress{Entries: result.Entries}
+		conflicts := global.Merge(chapterStress)
 		allConflicts = append(allConflicts, conflicts...)
+
+		slog.Info("stress marks merged", "chapter", chID, "entries", len(result.Entries))
+		processed++
 	}
 
 	// Resolve conflicts interactively.
@@ -365,8 +341,12 @@ func mergeStressResults(proj *project.Project, chapterStresses []*tts.Stress, re
 	if err := global.Save(proj.AIDir()); err != nil {
 		return fmt.Errorf("save global stress: %w", err)
 	}
-
 	slog.Info("global stress vocabulary saved", "entries", len(global.Entries))
+
+	// Clean up batch state.
+	_ = translation.DeleteBatchState(proj.AIDir(), "pronounce")
+	slog.Info("pronounce batch complete", "batch_id", state.BatchID, "processed", processed, "failed", failedCount)
+
 	return nil
 }
 
