@@ -167,7 +167,7 @@ func TestStress_Apply_WordBoundary(t *testing.T) {
 }
 
 func TestStress_Apply_WordBoundary_CyrillicShortTerm(t *testing.T) {
-	// Regression: "ИИ" (2-char acronym) was matching inside "молний" because
+	// Regression: "ИИ" (2-char acronym) was matching inside words because
 	// the byte-level word boundary check treated UTF-8 continuation bytes as
 	// non-word characters. The fix uses rune-level boundary detection.
 	s := &Stress{
@@ -175,18 +175,48 @@ func TestStress_Apply_WordBoundary_CyrillicShortTerm(t *testing.T) {
 			{Term: "ИИ", Stressed: "И+И"},
 		},
 	}
-	// "молний" contains "ий" which matches "ИИ" case-insensitively, but
-	// it's inside a longer word — should NOT be replaced.
+
+	// Case 1: "ий" in the middle of a word (previous char is a letter).
+	// "молний" contains "ий" which matches "ИИ" case-insensitively.
 	text := "молний было много."
 	result := s.Apply(text)
 	if contains(result, "И+И") {
 		t.Errorf("ИИ should not match inside 'молний': %s", result)
 	}
-	// But standalone "ИИ" should be replaced.
-	text2 := "ИИ развивается быстро."
+
+	// Case 2: "ии" at the END of a word (match ends at word boundary, but
+	// starts inside the word). This was the actual bug — the walk-back
+	// from the match start didn't go past the current rune start, so the
+	// previous character was never checked.
+	// "армии", "стратегии", "молнии" all end in "ии" which matches "ИИ".
+	for _, word := range []string{"армии", "стратегии", "молнии", "линии"} {
+		text := word + " было много."
+		result := s.Apply(text)
+		if contains(result, "И+И") {
+			t.Errorf("ИИ should not match at end of %q: %s", word, result)
+		}
+	}
+
+	// Case 3: "ИИ" before punctuation (still a word boundary on the right,
+	// but must not match if preceded by a letter).
+	text2 := "в армии, стратегии и линии."
 	result2 := s.Apply(text2)
-	if !contains(result2, "И+И") {
-		t.Errorf("standalone ИИ should be replaced: %s", result2)
+	if contains(result2, "И+И") {
+		t.Errorf("ИИ should not match inside words before punctuation: %s", result2)
+	}
+
+	// Case 4: standalone "ИИ" should be replaced.
+	text3 := "ИИ развивается быстро."
+	result3 := s.Apply(text3)
+	if !contains(result3, "И+И") {
+		t.Errorf("standalone ИИ should be replaced: %s", result3)
+	}
+
+	// Case 5: standalone "ИИ" before punctuation should be replaced.
+	text4 := "ИИ, развивайся!"
+	result4 := s.Apply(text4)
+	if !contains(result4, "И+И") {
+		t.Errorf("standalone ИИ before punctuation should be replaced: %s", result4)
 	}
 }
 

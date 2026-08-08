@@ -34,12 +34,18 @@ func indexIgnoreCase(haystack, needle string, offset int) int {
 func atWordBoundary(s string, start, end int) bool {
 	if start > 0 {
 		// Decode the rune ending at `start` (the last rune before the match).
-		prevStart := start
 		// Walk back to find the start of the previous UTF-8 rune.
+		prevStart := start
+		// First, skip continuation bytes of the current rune boundary.
+		// If start is at a RuneStart, we need to go back to the PREVIOUS rune.
+		if utf8.RuneStart(s[prevStart]) {
+			prevStart--
+		}
+		// Now skip continuation bytes to find the lead byte of the previous rune.
 		for prevStart > 0 && !utf8.RuneStart(s[prevStart]) {
 			prevStart--
 		}
-		if prevStart < start {
+		if prevStart >= 0 && prevStart < start {
 			r, _ := utf8.DecodeRuneInString(s[prevStart:start])
 			if isWordRuneValue(r) {
 				return false
