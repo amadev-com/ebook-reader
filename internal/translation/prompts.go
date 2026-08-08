@@ -205,66 +205,48 @@ func GlossaryMergeUser(perChapterResults string, lockedTerms string) string {
 	return b.String()
 }
 
-// --- Respelling prompts (bookai pronounce) ---
+// --- Stress marks prompts (bookai pronounce) ---
 
-// RespellingSystem is the system prompt for generating phonetic respellings
-// of Russian text for the XTTS v2 text-to-speech engine. XTTS v2 does NOT
-// support IPA phonemes, SSML tags, capital-letter stress, or any markup — it
-// goes directly from text to speech. The only reliable way to control
-// pronunciation is to replace the problematic word with a spelling that XTTS
-// will pronounce correctly.
-const RespellingSystem = `You are a phonetics expert specializing in Russian pronunciation for the XTTS v2 text-to-speech engine. XTTS v2 does NOT support IPA phonemes, SSML, or stress marks — it goes directly from text to speech. Your task is to scan a chapter of Russian text and identify words that XTTS v2 will likely mispronounce, then provide phonetic respellings for those words.
+// StressSystem is the system prompt for generating stress marks for Russian
+// text for the Silero text-to-speech engine. Silero natively supports stress
+// marks: a '+' before the stressed vowel (e.g., "к+едров" = stress on "е").
+// This is much cleaner than respelling — the word stays intact, only the
+// stress position is annotated.
+const StressSystem = `You are a Russian phonetics expert. Your task is to scan a chapter of Russian text and identify words with non-obvious or ambiguous stress, then provide the stressed form using the Silero TTS convention: place a '+' before the stressed vowel.
 
-Apply these XTTS v2 respelling rules:
-
-1. Vowel Doubling for Syllable Stress: To force correct stress on a syllable, repeat the stressed vowel 2-3 times.
-   - договор → договоор (stress on 2nd syllable)
-   - звонит → звоонит (stress on 1st syllable)
-
-2. Explicit Vowel Reduction: Replace unstressed vowels with their spoken equivalents.
-   - Unstressed hard о → а: молоко → малако
-   - Unstressed soft е/я → и: бежать → бижать
-
-3. Converting "Ё" to "ЙО": XTTS frequently misses implicit ё. Replace with explicit ё or йо.
-   - еж → йож
-   - серьезно → серьёзна
-
-4. Literal Spelling of Colloquial Transitions: Spell words as they are pronounced.
-   - что → што
-   - конечно → канешна
-   - кого → каво
-
-5. Acronym and Foreign Abbreviation Expansion: Spell out Latin characters and uppercase initials in Russian homophones.
-   - IT → айти
-   - AI → эйай
-   - ChatGPT → чат джипити
-   - РФ → эр эф
+Stress mark convention:
+- The '+' goes IMMEDIATELY BEFORE the stressed vowel in the word.
+- кедров → к+едров (stress on "е")
+- договор → догов+ор (stress on second "о")
+- звонит → зв+онит (stress on "о")
+- красивее → крас+ивее (stress on "и")
 
 Rules:
-- Scan the chapter text and identify words where XTTS v2 will likely get the pronunciation wrong: transliterated foreign names with ambiguous stress, invented/fantasy terms, acronyms, words with Latin characters, words with implicit ё, and words with non-obvious stress.
-- For each problematic word, provide the exact term as it appears in the text and the respelled version.
-- ONLY include words where the respelling is DIFFERENT from the original. If the respelling would be identical, omit it.
-- Do NOT just lowercase words — that is handled separately. Only provide respellings that change the actual spelling to guide pronunciation.
-- Skip common Russian words with unambiguous pronunciation.
-- The respelled text must be plain Russian Cyrillic — no IPA, no Latin, no special characters.
+- Scan the chapter text and identify words where stress is non-obvious or commonly mispronounced: transliterated foreign names, invented/fantasy terms, words with multiple possible stress positions, and words where wrong stress changes meaning.
+- For each problematic word, provide the exact term as it appears in the text and the stressed form with '+' before the stressed vowel.
+- ONLY include words where the stressed form is DIFFERENT from the original (i.e., it has a '+' mark). If the word has obvious stress, omit it.
+- Skip common Russian words with unambiguous stress (e.g., "мама", "дом", "кот").
+- Do NOT change the spelling of the word — only insert '+' before the stressed vowel.
 - The "term" field must match the word exactly as it appears in the chapter text (case-sensitive), so it can be found and replaced.
+- The "stressed" field must be the same word with a '+' inserted before the stressed vowel.
 
 Return a JSON object with this exact shape:
 {
-  "entries": [{"term": "exact word as in text", "respelled": "phonetic respelling for XTTS"}]
+  "entries": [{"term": "exact word as in text", "stressed": "word with + before stressed vowel"}]
 }
 
-If no words need respelling, return {"entries": []}.`
+If no words need stress marks, return {"entries": []}.`
 
-// RespellingUser builds the user prompt for a single chapter. It sends the
-// full chapter text so the model can scan it for problematic words. Config
-// overrides are included so the model respects user-specified respellings.
-func RespellingUser(chapterText string, overrides []config.PronunciationOverride) string {
+// StressUser builds the user prompt for a single chapter. It sends the full
+// chapter text so the model can scan it for words with non-obvious stress.
+// Config overrides are included so the model respects user-specified stress
+// marks.
+func StressUser(chapterText string, overrides []config.PronunciationOverride) string {
 	var b strings.Builder
-	b.WriteString("Scan this Russian chapter text and identify words that XTTS v2 will likely mispronounce. Provide phonetic respellings for those words.\n\n")
+	b.WriteString("Scan this Russian chapter text and identify words with non-obvious or ambiguous stress. Provide the stressed form with '+' before the stressed vowel for each problematic word.\n\n")
 
 	if len(overrides) > 0 {
-		b.WriteString("The following respellings are mandatory (already defined by the user — include them in your output):\n")
+		b.WriteString("The following stress marks are mandatory (already defined by the user — include them in your output):\n")
 		for _, ov := range overrides {
 			fmt.Fprintf(&b, "- %s → %s\n", ov.Term, ov.Phonemes)
 		}
@@ -273,7 +255,7 @@ func RespellingUser(chapterText string, overrides []config.PronunciationOverride
 
 	b.WriteString("Chapter text:\n\n")
 	b.WriteString(chapterText)
-	b.WriteString("\n\nReturn the JSON respellings now.")
+	b.WriteString("\n\nReturn the JSON stress marks now.")
 	return b.String()
 }
 

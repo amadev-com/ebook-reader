@@ -11,37 +11,48 @@ import (
 	"testing"
 )
 
-func TestNewHTTPEngine_RequiresServerURL(t *testing.T) {
-	_, err := NewHTTPEngine(EngineConfig{Engine: "xtts-http"})
+func TestNewSileroEngine_RequiresServerURL(t *testing.T) {
+	_, err := NewSileroEngine(EngineConfig{
+		Engine: "silero-http",
+		Voice:  "silero:v5_5_ru#xenia",
+	})
 	if err == nil {
 		t.Fatal("expected error when server_url is empty")
 	}
 }
 
-func TestNewHTTPEngine_Success(t *testing.T) {
-	engine, err := NewHTTPEngine(EngineConfig{
-		Engine:    "xtts-http",
-		ServerURL: "http://localhost:8020",
-		Speaker:   "test",
+func TestNewSileroEngine_RequiresVoice(t *testing.T) {
+	_, err := NewSileroEngine(EngineConfig{
+		Engine:    "silero-http",
+		ServerURL: "http://localhost:5555",
+	})
+	if err == nil {
+		t.Fatal("expected error when voice is empty")
+	}
+}
+
+func TestNewSileroEngine_Success(t *testing.T) {
+	engine, err := NewSileroEngine(EngineConfig{
+		Engine:    "silero-http",
+		ServerURL: "http://localhost:5555",
+		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPEngine: %v", err)
+		t.Fatalf("NewSileroEngine: %v", err)
 	}
-	if engine.Name() != "xtts-http" {
+	if engine.Name() != "silero-http" {
 		t.Errorf("name: got %q", engine.Name())
 	}
 }
 
-func TestHTTPEngine_Synthesize(t *testing.T) {
-	// Create a test server that returns a minimal WAV.
+func TestSileroEngine_Synthesize(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/tts" {
+		if r.URL.Path != "/api/tts" {
 			http.NotFound(w, r)
 			return
 		}
-		// Verify the request body.
-		var body ttsRequestBody
+		var body sileroRequestBody
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -50,31 +61,41 @@ func TestHTTPEngine_Synthesize(t *testing.T) {
 			http.Error(w, "empty text", http.StatusBadRequest)
 			return
 		}
+		if !body.SSML {
+			http.Error(w, "ssml flag should be true", http.StatusBadRequest)
+			return
+		}
+		if body.Voice == "" {
+			http.Error(w, "voice required", http.StatusBadRequest)
+			return
+		}
 		// Return a minimal WAV header (44 bytes).
 		wav := make([]byte, 44)
 		copy(wav[0:4], []byte("RIFF"))
-		wav[4] = 36 // file size - 8
+		wav[4] = 36
 		copy(wav[8:12], []byte("WAVE"))
 		_, _ = w.Write(wav)
 	}))
 	defer ts.Close()
 
-	engine, err := NewHTTPEngine(EngineConfig{
-		Engine:    "xtts-http",
+	engine, err := NewSileroEngine(EngineConfig{
+		Engine:    "silero-http",
 		ServerURL: ts.URL,
-		Speaker:   "test",
+		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
 		Speed:     1.0,
+		Pitch:     1.0,
+		SampleRate: 48000,
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPEngine: %v", err)
+		t.Fatalf("NewSileroEngine: %v", err)
 	}
 
 	tmpDir := t.TempDir()
 	outPath := filepath.Join(tmpDir, "output.wav")
 
 	err = engine.Synthesize(context.Background(),
-		"Привет мир.", outPath)
+		"<speak><p><s>Привет мир.</s></p></speak>", outPath)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -87,7 +108,6 @@ func TestHTTPEngine_Synthesize(t *testing.T) {
 		t.Errorf("output too small: %d bytes", info.Size())
 	}
 
-	// Verify RIFF header.
 	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read output: %v", err)
@@ -97,12 +117,14 @@ func TestHTTPEngine_Synthesize(t *testing.T) {
 	}
 }
 
-func TestHTTPEngine_PassesTextThrough(t *testing.T) {
+func TestSileroEngine_PassesSSMLThrough(t *testing.T) {
 	var receivedText string
+	var receivedSSML bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body ttsRequestBody
+		var body sileroRequestBody
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		receivedText = body.Text
+		receivedSSML = body.SSML
 		wav := make([]byte, 44)
 		copy(wav[0:4], []byte("RIFF"))
 		copy(wav[8:12], []byte("WAVE"))
@@ -110,18 +132,18 @@ func TestHTTPEngine_PassesTextThrough(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	engine, err := NewHTTPEngine(EngineConfig{
-		Engine:    "xtts-http",
+	engine, err := NewSileroEngine(EngineConfig{
+		Engine:    "silero-http",
 		ServerURL: ts.URL,
-		Speaker:   "test",
+		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPEngine: %v", err)
+		t.Fatalf("NewSileroEngine: %v", err)
 	}
 
 	tmpDir := t.TempDir()
-	text := "Привет мир."
+	text := "<speak><p><s>Привет мир.</s></p></speak>"
 	err = engine.Synthesize(context.Background(), text, filepath.Join(tmpDir, "out.wav"))
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
@@ -130,42 +152,25 @@ func TestHTTPEngine_PassesTextThrough(t *testing.T) {
 	if receivedText != text {
 		t.Errorf("server received %q, want %q", receivedText, text)
 	}
-}
-
-func TestHTTPEngine_RequiresSpeaker(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
-	defer ts.Close()
-
-	engine, err := NewHTTPEngine(EngineConfig{
-		Engine:    "xtts-http",
-		ServerURL: ts.URL,
-		Language:  "ru",
-		// No Speaker or VoiceSample
-	})
-	if err != nil {
-		t.Fatalf("NewHTTPEngine: %v", err)
-	}
-
-	err = engine.Synthesize(context.Background(), "test text", "/tmp/out.wav")
-	if err == nil {
-		t.Fatal("expected error when no speaker configured")
+	if !receivedSSML {
+		t.Error("ssml flag should be true")
 	}
 }
 
-func TestHTTPEngine_ServerError(t *testing.T) {
+func TestSileroEngine_ServerError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "model not loaded", http.StatusInternalServerError)
 	}))
 	defer ts.Close()
 
-	engine, err := NewHTTPEngine(EngineConfig{
-		Engine:    "xtts-http",
+	engine, err := NewSileroEngine(EngineConfig{
+		Engine:    "silero-http",
 		ServerURL: ts.URL,
-		Speaker:   "test",
+		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPEngine: %v", err)
+		t.Fatalf("NewSileroEngine: %v", err)
 	}
 
 	err = engine.Synthesize(context.Background(), "test text", "/tmp/out.wav")
@@ -174,7 +179,7 @@ func TestHTTPEngine_ServerError(t *testing.T) {
 	}
 }
 
-func TestHTTPEngine_CheckHealth(t *testing.T) {
+func TestSileroEngine_CheckHealth(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			w.WriteHeader(http.StatusOK)
@@ -185,45 +190,35 @@ func TestHTTPEngine_CheckHealth(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	engine, err := NewHTTPEngine(EngineConfig{
-		Engine:    "xtts-http",
+	engine, err := NewSileroEngine(EngineConfig{
+		Engine:    "silero-http",
 		ServerURL: ts.URL,
-		Speaker:   "test",
+		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
 	})
 	if err != nil {
-		t.Fatalf("NewHTTPEngine: %v", err)
+		t.Fatalf("NewSileroEngine: %v", err)
 	}
 
-	httpEngine, ok := engine.(*HTTPEngine)
+	sileroEngine, ok := engine.(*SileroEngine)
 	if !ok {
-		t.Fatalf("expected *HTTPEngine, got %T", engine)
+		t.Fatalf("expected *SileroEngine, got %T", engine)
 	}
-	if err := httpEngine.CheckHealth(context.Background()); err != nil {
+	if err := sileroEngine.CheckHealth(context.Background()); err != nil {
 		t.Errorf("CheckHealth: %v", err)
 	}
 }
 
-func TestNewEngine_HTTP(t *testing.T) {
+func TestNewEngine_Silero(t *testing.T) {
 	engine, err := NewEngine(EngineConfig{
-		Engine:    "xtts-http",
+		Engine:    "silero-http",
 		ServerURL: "http://localhost:9999",
-		Speaker:   "test",
+		Voice:     "silero:v5_5_ru#xenia",
 	})
 	if err != nil {
-		t.Fatalf("NewEngine xtts-http: %v", err)
+		t.Fatalf("NewEngine silero-http: %v", err)
 	}
-	if engine.Name() != "xtts-http" {
+	if engine.Name() != "silero-http" {
 		t.Errorf("engine name: got %q", engine.Name())
-	}
-}
-
-func TestAvailableEngines_IncludesHTTP(t *testing.T) {
-	engines := AvailableEngines()
-	if !contains(engines, "noop") {
-		t.Errorf("noop should be available: %s", engines)
-	}
-	if !contains(engines, "xtts-http") {
-		t.Errorf("xtts-http should be available: %s", engines)
 	}
 }

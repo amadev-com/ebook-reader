@@ -71,56 +71,59 @@ func TestAvailableEngines(t *testing.T) {
 	if !contains(engines, "noop") {
 		t.Errorf("noop should be in available engines: %s", engines)
 	}
+	if !contains(engines, "silero-http") {
+		t.Errorf("silero-http should be in available engines: %s", engines)
+	}
 }
 
-// --- Respelling tests ---
+// --- Stress tests ---
 
-func TestLoadRespelling_AbsentFile(t *testing.T) {
+func TestLoadStress_AbsentFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	resp, err := LoadRespelling(tmpDir)
+	s, err := LoadStress(tmpDir)
 	if err != nil {
-		t.Fatalf("LoadRespelling on absent file: %v", err)
+		t.Fatalf("LoadStress on absent file: %v", err)
 	}
-	if resp == nil || len(resp.Entries) != 0 {
-		t.Errorf("expected empty respelling, got %+v", resp)
+	if s == nil || len(s.Entries) != 0 {
+		t.Errorf("expected empty stress, got %+v", s)
 	}
 }
 
-func TestRespelling_Lookup(t *testing.T) {
-	resp := &Respelling{
-		Entries: []RespellingEntry{
-			{Term: "Куинн", Respelled: "КУинн"},
+func TestStress_Lookup(t *testing.T) {
+	s := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров"},
 		},
 	}
-	entry, ok := resp.Lookup("куинн") // case-insensitive
+	entry, ok := s.Lookup("Кедров") // case-insensitive
 	if !ok {
 		t.Fatal("case-insensitive lookup failed")
 	}
-	if entry.Respelled != "КУинн" {
-		t.Errorf("lookup respelled: got %q", entry.Respelled)
+	if entry.Stressed != "к+едров" {
+		t.Errorf("lookup stressed: got %q", entry.Stressed)
 	}
 
-	_, ok = resp.Lookup("nonexistent")
+	_, ok = s.Lookup("nonexistent")
 	if ok {
 		t.Error("lookup of nonexistent term should return false")
 	}
 }
 
-func TestRespelling_SaveAndLoadChapter(t *testing.T) {
+func TestStress_SaveAndLoadChapter(t *testing.T) {
 	tmpDir := t.TempDir()
-	resp := &Respelling{
-		Entries: []RespellingEntry{
-			{Term: "Бета", Respelled: "БЭта"},
-			{Term: "Альфа", Respelled: "Альфа"},
+	s := &Stress{
+		Entries: []StressEntry{
+			{Term: "Бета", Stressed: "Б+ета"},
+			{Term: "Альфа", Stressed: "+Альфа"},
 		},
 	}
-	if err := resp.SaveChapterRespelling(tmpDir, 42); err != nil {
-		t.Fatalf("SaveChapterRespelling: %v", err)
+	if err := s.SaveChapterStress(tmpDir, 42); err != nil {
+		t.Fatalf("SaveChapterStress: %v", err)
 	}
 
-	loaded, err := LoadChapterRespelling(tmpDir, 42)
+	loaded, err := LoadChapterStress(tmpDir, 42)
 	if err != nil {
-		t.Fatalf("LoadChapterRespelling: %v", err)
+		t.Fatalf("LoadChapterStress: %v", err)
 	}
 	if len(loaded.Entries) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(loaded.Entries))
@@ -131,125 +134,97 @@ func TestRespelling_SaveAndLoadChapter(t *testing.T) {
 	}
 }
 
-func TestLoadChapterRespelling_AbsentFile(t *testing.T) {
+func TestLoadChapterStress_AbsentFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	resp, err := LoadChapterRespelling(tmpDir, 999)
+	s, err := LoadChapterStress(tmpDir, 999)
 	if err != nil {
-		t.Fatalf("LoadChapterRespelling on absent file: %v", err)
+		t.Fatalf("LoadChapterStress on absent file: %v", err)
 	}
-	if resp == nil || len(resp.Entries) != 0 {
-		t.Errorf("expected empty respelling, got %+v", resp)
+	if s == nil || len(s.Entries) != 0 {
+		t.Errorf("expected empty stress, got %+v", s)
 	}
 }
 
-func TestRespelling_Apply(t *testing.T) {
-	resp := &Respelling{
-		Entries: []RespellingEntry{
-			{Term: "Куинн", Respelled: "КУинн"},
-			{Term: "Ларри Стил", Respelled: "Ларри Стиил"},
+func TestStress_Apply(t *testing.T) {
+	s := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров"},
+			{Term: "Ларри Стил", Stressed: "Л+арри Ст+ил"},
 		},
 	}
-	text := "Куинн был убеждён, что этот Ларри Стил и есть."
-	result := resp.Apply(text)
+	text := "кедров было много. Ларри Стил пришёл."
+	result := s.Apply(text)
 
-	if !contains(result, "КУинн") {
-		t.Errorf("respelling not applied: %s", result)
+	if !contains(result, "к+едров") {
+		t.Errorf("stress not applied: %s", result)
 	}
-	if !contains(result, "Ларри Стиил") {
-		t.Errorf("multi-word respelling not applied: %s", result)
-	}
-	if contains(result, "Куинн ") {
-		t.Errorf("original term should be replaced: %s", result)
+	if !contains(result, "Л+арри Ст+ил") {
+		t.Errorf("multi-word stress not applied: %s", result)
 	}
 }
 
-func TestRespelling_Apply_WordBoundary(t *testing.T) {
-	resp := &Respelling{
-		Entries: []RespellingEntry{
-			{Term: "Орден", Respelled: "Ордэн"},
+func TestStress_Apply_WordBoundary(t *testing.T) {
+	s := &Stress{
+		Entries: []StressEntry{
+			{Term: "Орден", Stressed: "+Орден"},
 		},
 	}
 	// "Орденский" should NOT match "Орден" because of word boundary.
 	text := "Орденский собор был красив."
-	result := resp.Apply(text)
-	if contains(result, "Ордэн") {
+	result := s.Apply(text)
+	if contains(result, "+Орден") {
 		t.Errorf("should not replace inside a longer word: %s", result)
 	}
 }
 
-func TestRespelling_Apply_CaseInsensitive(t *testing.T) {
-	resp := &Respelling{
-		Entries: []RespellingEntry{
-			{Term: "орден", Respelled: "ордэн"},
+func TestStress_Apply_CaseInsensitive(t *testing.T) {
+	s := &Stress{
+		Entries: []StressEntry{
+			{Term: "орден", Stressed: "+орден"},
 		},
 	}
 	text := "ОРДЕН был велик."
-	result := resp.Apply(text)
-	if !contains(result, "ордэн") {
+	result := s.Apply(text)
+	if !contains(result, "+орден") {
 		t.Errorf("case-insensitive replacement failed: %s", result)
 	}
 }
 
-func TestRespelling_Apply_GreedyLongerMatchFirst(t *testing.T) {
-	resp := &Respelling{
-		Entries: []RespellingEntry{
-			{Term: "Орден", Respelled: "Ордэн"},
-			{Term: "Орден Света", Respelled: "Ордэн Свэта"},
-		},
-	}
-	// Sort to ensure longest-first (Save does this, but Apply expects it).
-	resp.Sort()
-
-	text := "Орден Света был силён."
-	result := resp.Apply(text)
-	if contains(result, "Ордэн ") && !contains(result, "Ордэн Свэта") {
-		t.Errorf("should match longer term first, got: %s", result)
-	}
-	if !contains(result, "Ордэн Свэта") {
-		t.Errorf("longer match not applied: %s", result)
-	}
-}
-
-func TestRespelling_Apply_Empty(t *testing.T) {
-	resp := &Respelling{}
+func TestStress_Apply_Empty(t *testing.T) {
+	s := &Stress{}
 	text := "Привет мир."
-	result := resp.Apply(text)
+	result := s.Apply(text)
 	if result != text {
-		t.Errorf("empty respelling should not change text: got %q", result)
+		t.Errorf("empty stress should not change text: got %q", result)
 	}
 }
 
-func TestRespelling_Apply_MultipleOccurrences(t *testing.T) {
-	resp := &Respelling{
-		Entries: []RespellingEntry{
-			{Term: "Нейт", Respelled: "НЭйт"},
+func TestStress_Apply_MultipleOccurrences(t *testing.T) {
+	s := &Stress{
+		Entries: []StressEntry{
+			{Term: "Нейт", Stressed: "Н+ейт"},
 		},
 	}
 	text := "Нейт сказал. Нейт ушёл."
-	result := resp.Apply(text)
-	if strings.Count(result, "НЭйт") != 2 {
-		t.Errorf("expected 2 replacements, got %d in: %s", strings.Count(result, "НЭйт"), result)
+	result := s.Apply(text)
+	if strings.Count(result, "Н+ейт") != 2 {
+		t.Errorf("expected 2 replacements, got %d in: %s", strings.Count(result, "Н+ейт"), result)
 	}
 }
 
-func TestRespelling_Apply_DoesNotLoseTextOnWordBoundaryReject(t *testing.T) {
+func TestStress_Apply_DoesNotLoseTextOnWordBoundaryReject(t *testing.T) {
 	// Regression test: when a term match is rejected by atWordBoundary
 	// (because it's inside a longer word), the text before the rejected
-	// match must NOT be lost. The bug was that searchStart was advanced
-	// past the rejected match, causing all text before it to be dropped.
-	resp := &Respelling{
-		Entries: []RespellingEntry{
-			{Term: "зак", Respelled: "зак"}, // no-op, but still triggers search
-			{Term: "Зак", Respelled: "зак"},
+	// match must NOT be lost.
+	s := &Stress{
+		Entries: []StressEntry{
+			{Term: "зак", Stressed: "з+ак"},
 		},
 	}
-	// "заключалась" contains "зак" but atWordBoundary should reject it
-	// (next char "л" is a word rune). The text before "заключалась"
-	// must be preserved.
+	// "заключалась" contains "зак" but atWordBoundary should reject it.
 	text := "Глава 300. Настоящая проблема заключалась в другом. Зак ушёл."
-	result := resp.Apply(text)
+	result := s.Apply(text)
 
-	// The entire text should be preserved (minus the "Зак" → "зак" replacement).
 	if len(result) < len(text)-10 {
 		t.Errorf("text was lost: original %d bytes, result %d bytes\nresult: %s",
 			len(text), len(result), result)
@@ -260,146 +235,186 @@ func TestRespelling_Apply_DoesNotLoseTextOnWordBoundaryReject(t *testing.T) {
 	if !contains(result, "заключалась") {
 		t.Errorf("word with rejected match corrupted: %s", result)
 	}
-	if !contains(result, "зак ушёл") {
+	if !contains(result, "з+ак ушёл") {
 		t.Errorf("valid match not replaced: %s", result)
 	}
 }
 
-func TestRespelling_Apply_PreservesTextBeforeRejectedMatches(t *testing.T) {
-	// Another regression: multiple rejected matches should not compound
-	// text loss. Each rejected match should only skip the search position,
-	// not advance the "text written" position.
-	resp := &Respelling{
-		Entries: []RespellingEntry{
-			{Term: "Сэм", Respelled: "СЭм"},
+// --- Stress merge tests ---
+
+func TestStress_Merge_NoConflicts(t *testing.T) {
+	global := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров"},
 		},
 	}
-	// "Сэм" appears as a standalone word AND as a prefix of "Сэмми".
-	// The "Сэмми" match should be rejected, but text before it must survive.
-	text := "Сэм пришёл. Сэмми тоже. Сэм ушёл."
-	result := resp.Apply(text)
-
-	if !contains(result, "СЭм пришёл") {
-		t.Errorf("first match not replaced: %s", result)
+	other := &Stress{
+		Entries: []StressEntry{
+			{Term: "договор", Stressed: "догов+ор"},
+			{Term: "кедров", Stressed: "к+едров"}, // same — no conflict
+		},
 	}
-	if !contains(result, "Сэмми") {
-		t.Errorf("rejected match corrupted word: %s", result)
+	conflicts := global.Merge(other)
+	if len(conflicts) != 0 {
+		t.Errorf("expected no conflicts, got %d", len(conflicts))
 	}
-	if !contains(result, "СЭм ушёл") {
-		t.Errorf("last match not replaced: %s", result)
-	}
-	// Full text should be preserved.
-	if len(result) < len(text)-10 {
-		t.Errorf("text was lost: original %d bytes, result %d bytes\nresult: %s",
-			len(text), len(result), result)
+	if len(global.Entries) != 2 {
+		t.Errorf("expected 2 entries after merge, got %d", len(global.Entries))
 	}
 }
 
-// --- NormalizeRussian tests ---
-
-func TestNormalizeRussian_DeCapitalizeMidSentence(t *testing.T) {
-	// ALL-CAPS word in the middle of a sentence should be lowercased.
-	text := "Он сказал ПРИВЕТ всем."
-	result := NormalizeRussian(text)
-	if !contains(result, "привет") {
-		t.Errorf("mid-sentence ALL-CAPS should be lowercased: %s", result)
+func TestStress_Merge_Conflicts(t *testing.T) {
+	global := &Stress{
+		Entries: []StressEntry{
+			{Term: "договор", Stressed: "догов+ор"},
+		},
+	}
+	other := &Stress{
+		Entries: []StressEntry{
+			{Term: "договор", Stressed: "д+оговор"}, // different stress — conflict
+		},
+	}
+	conflicts := global.Merge(other)
+	if len(conflicts) != 1 {
+		t.Fatalf("expected 1 conflict, got %d", len(conflicts))
+	}
+	if conflicts[0].Term != "договор" {
+		t.Errorf("conflict term: got %q", conflicts[0].Term)
+	}
+	if len(conflicts[0].Variants) != 2 {
+		t.Errorf("expected 2 variants, got %d", len(conflicts[0].Variants))
 	}
 }
 
-func TestNormalizeRussian_KeepSentenceStartCapital(t *testing.T) {
-	// Word at start of sentence should keep its capitalization.
-	text := "ПРИВЕТ всем. ПОКА друзья."
-	result := NormalizeRussian(text)
-	// After normalization, sentence-start words keep capitals.
-	if !contains(result, "ПРИВЕТ") || !contains(result, "ПОКА") {
-		t.Errorf("sentence-start capitals should be kept: %s", result)
+func TestMergeAll(t *testing.T) {
+	ch1 := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров"},
+			{Term: "договор", Stressed: "догов+ор"},
+		},
+	}
+	ch2 := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров"}, // same — no conflict
+			{Term: "звонит", Stressed: "зв+онит"},
+		},
+	}
+	ch3 := &Stress{
+		Entries: []StressEntry{
+			{Term: "договор", Stressed: "д+оговор"}, // conflict with ch1
+		},
+	}
+	merged, conflicts := MergeAll([]*Stress{ch1, ch2, ch3})
+	if len(conflicts) != 1 {
+		t.Fatalf("expected 1 conflict, got %d", len(conflicts))
+	}
+	if conflicts[0].Term != "договор" {
+		t.Errorf("conflict term: got %q", conflicts[0].Term)
+	}
+	if len(merged.Entries) != 3 {
+		t.Errorf("expected 3 merged entries, got %d", len(merged.Entries))
 	}
 }
 
-func TestNormalizeRussian_KeepSingleCharWord(t *testing.T) {
-	// Single-character "Я" (I) should not be lowercased.
-	text := "Я сказал."
-	result := NormalizeRussian(text)
-	if !contains(result, "Я ") {
-		t.Errorf("single-char 'Я' should keep capital: %s", result)
+func TestStress_ResolveConflict(t *testing.T) {
+	s := &Stress{
+		Entries: []StressEntry{
+			{Term: "договор", Stressed: "догов+ор"},
+		},
+	}
+	// Update existing.
+	s.ResolveConflict("договор", "д+оговор")
+	if entry, _ := s.Lookup("договор"); entry.Stressed != "д+оговор" {
+		t.Errorf("resolve failed: got %q", entry.Stressed)
+	}
+	// Remove by empty stressed.
+	s.ResolveConflict("договор", "")
+	if _, ok := s.Lookup("договор"); ok {
+		t.Error("entry should be removed")
+	}
+	// Add new.
+	s.ResolveConflict("новый", "н+овый")
+	if entry, _ := s.Lookup("новый"); entry.Stressed != "н+овый" {
+		t.Errorf("add failed: got %q", entry.Stressed)
 	}
 }
 
-func TestReplaceSentenceDots_EndOfText(t *testing.T) {
-	text := "Привет мир."
-	result := NormalizeRussian(text)
-	if result != "Привет мир,!" {
-		t.Errorf("expected sentence-ending dot replaced: got %q", result)
+// --- SSML generation tests ---
+
+func TestGenerateSSML_Simple(t *testing.T) {
+	text := "Привет мир. До свидания."
+	result := GenerateSSML(text)
+
+	if !strings.HasPrefix(result, "<speak>") {
+		t.Errorf("should start with <speak>: %s", result)
+	}
+	if !strings.HasSuffix(result, "</speak>") {
+		t.Errorf("should end with </speak>: %s", result)
+	}
+	if !contains(result, "<p>") {
+		t.Errorf("should contain <p>: %s", result)
+	}
+	if !contains(result, "<s>Привет мир.</s>") {
+		t.Errorf("should contain first sentence: %s", result)
+	}
+	if !contains(result, "<s>До свидания.</s>") {
+		t.Errorf("should contain second sentence: %s", result)
 	}
 }
 
-func TestReplaceSentenceDots_BetweenSentences(t *testing.T) {
-	text := "Первое предложение. Второе предложение."
-	result := NormalizeRussian(text)
-	expected := "Первое предложение,! Второе предложение,!"
-	if result != expected {
-		t.Errorf("expected both dots replaced: got %q", result)
+func TestGenerateSSML_MultipleParagraphs(t *testing.T) {
+	text := "Первый абзац.\n\nВторой абзац."
+	result := GenerateSSML(text)
+
+	pCount := strings.Count(result, "<p>")
+	if pCount != 2 {
+		t.Errorf("expected 2 paragraphs, got %d: %s", pCount, result)
 	}
 }
 
-func TestReplaceSentenceDots_PreserveAbbreviation(t *testing.T) {
-	text := "т. е. это значит."
-	result := NormalizeRussian(text)
-	// Only the final sentence-ending dot should be replaced.
-	if !contains(result, "т. е.") {
-		t.Errorf("abbreviation dots should be preserved: %q", result)
+func TestGenerateSSML_PreservesStressMarks(t *testing.T) {
+	text := "В недрах тундры выдры в г+етрах т+ырят в вёдра ядра к+едров."
+	result := GenerateSSML(text)
+
+	if !contains(result, "г+етрах") {
+		t.Errorf("stress mark should be preserved: %s", result)
 	}
-	if !contains(result, "значит,!") {
-		t.Errorf("sentence-ending dot should be replaced: %q", result)
+	if !contains(result, "к+едров") {
+		t.Errorf("stress mark should be preserved: %s", result)
 	}
 }
 
-func TestReplaceSentenceDots_PreserveDecimalNumber(t *testing.T) {
-	text := "Это 3.14 значение."
-	result := NormalizeRussian(text)
-	if !contains(result, "3.14") {
-		t.Errorf("decimal number should be preserved: %q", result)
+func TestGenerateSSML_Empty(t *testing.T) {
+	result := GenerateSSML("")
+	if result != "<speak></speak>" {
+		t.Errorf("empty text should produce empty SSML: got %q", result)
 	}
 }
 
-func TestReplaceSentenceDots_PreserveEllipsis(t *testing.T) {
-	text := "Он подумал... и сказал."
-	result := NormalizeRussian(text)
-	if !contains(result, "...") {
-		t.Errorf("ellipsis should be preserved: %q", result)
+func TestGenerateSSML_EscapesXML(t *testing.T) {
+	text := "5 < 10 & 20 > 15."
+	result := GenerateSSML(text)
+
+	if !contains(result, "&lt;") {
+		t.Errorf("should escape <: %s", result)
 	}
-	if !contains(result, "сказал,!") {
-		t.Errorf("sentence-ending dot should be replaced: %q", result)
+	if !contains(result, "&gt;") {
+		t.Errorf("should escape >: %s", result)
+	}
+	if !contains(result, "&amp;") {
+		t.Errorf("should escape &: %s", result)
 	}
 }
 
-func TestReplaceSentenceDots_NewlineAfter(t *testing.T) {
-	text := "Конец абзаца.\nНовый абзац."
-	result := NormalizeRussian(text)
-	if !contains(result, "абзаца,!\n") {
-		t.Errorf("dot before newline should be replaced: %q", result)
-	}
-}
+func TestGenerateSSML_ExclamationAndQuestion(t *testing.T) {
+	text := "Что это? Как интересно!"
+	result := GenerateSSML(text)
 
-func TestReplaceSentenceDots_QuoteAfter(t *testing.T) {
-	text := `Он сказал."Цитата"`
-	result := NormalizeRussian(text)
-	if !contains(result, `сказал,!"`) {
-		t.Errorf("dot before quote should be replaced: %q", result)
+	if !contains(result, "<s>Что это?</s>") {
+		t.Errorf("should split on ?: %s", result)
 	}
-}
-
-func TestReplaceSentenceDots_MultipleParagraphs(t *testing.T) {
-	text := "Первый.\n\nВторой.\n\nТретий."
-	result := NormalizeRussian(text)
-	if !contains(result, "Первый,!") {
-		t.Errorf("first paragraph dot: %q", result)
-	}
-	if !contains(result, "Второй,!") {
-		t.Errorf("second paragraph dot: %q", result)
-	}
-	if !contains(result, "Третий,!") {
-		t.Errorf("third paragraph dot: %q", result)
+	if !contains(result, "<s>Как интересно!</s>") {
+		t.Errorf("should split on !: %s", result)
 	}
 }
 

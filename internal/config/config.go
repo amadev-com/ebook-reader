@@ -41,10 +41,10 @@ type Config struct {
 	// from context, but the translation is always overridden.
 	Glossary GlossaryOverrides `yaml:"glossary"`
 
-	// Pronunciation holds user-specified respelling overrides for the TTS
-	// preprocessing stage. These take precedence over AI-generated respellings
-	// — useful for fixing mispronunciations without re-running the model.
-	// The Phonemes field is used as the respelled text (plain Russian).
+	// Pronunciation holds user-specified stress mark overrides for the TTS
+	// preprocessing stage. These take precedence over AI-generated stress marks
+	// — useful for fixing pronunciation without re-running the model.
+	// The Phonemes field is the stressed form with + before the stressed vowel.
 	Pronunciation []PronunciationOverride `yaml:"pronunciation"`
 
 	// Chapters holds settings for the analyze-chapters stage.
@@ -81,13 +81,12 @@ type GlossaryOverride struct {
 	Type   string `yaml:"type"`   // optional: character|place|organization|title|term
 }
 
-// PronunciationOverride is one user-specified respelling override. The Term
+// PronunciationOverride is one user-specified stress mark override. The Term
 // field matches the Russian text as it appears in the translation; Phonemes
-// is the phonetic respelling that XTTS v2 should pronounce (plain Russian
-// text, not IPA).
+// is the stressed form with + before the stressed vowel (Silero convention).
 type PronunciationOverride struct {
 	Term     string `yaml:"term"`     // Russian text as it appears in translation
-	Phonemes string `yaml:"phonemes"` // phonetic respelling for XTTS v2, e.g. "КУинн"
+	Phonemes string `yaml:"phonemes"` // stressed form for Silero, e.g. "к+едров"
 	Alphabet string `yaml:"alphabet"` // unused (kept for backward compat)
 }
 
@@ -105,21 +104,17 @@ type OpenAI struct {
 	MaxRetries       int    `yaml:"max_retries"`
 }
 
-// TTS is text-to-speech configuration (M3+). The Engine field selects which
-// registered TTS backend to use. Engine-specific paths (model, data dir,
-// tokens) are resolved by the CLI layer into an tts.EngineConfig.
+// TTS is text-to-speech configuration. The Engine field selects which
+// registered TTS backend to use. The Silero engine sends SSML to a remote
+// Silero TTS server via HTTP.
 type TTS struct {
-	Engine       string  `yaml:"engine"`        // "noop" (default), "xtts-http", "sherpa-onnx", "piper", ...
-	VoiceSample  string  `yaml:"voice_sample"`  // path to a short reference wav (voice-cloning engines)
+	Engine       string  `yaml:"engine"`        // "noop" (default), "silero-http"
+	Voice        string  `yaml:"voice"`         // Silero voice ID, e.g. "silero:v5_5_ru#xenia"
 	Language     string  `yaml:"language"`      // target language code, e.g. "ru"
-	Python       string  `yaml:"python"`        // python interpreter (subprocess engines), default "python3"
-	ModelPath    string  `yaml:"model_path"`    // path to ONNX/model file
-	DataDir      string  `yaml:"data_dir"`      // path to espeak-ng-data / phoneme data
-	TokensPath   string  `yaml:"tokens_path"`   // path to tokens file
-	Device       string  `yaml:"device"`        // "cpu" (default), "cuda", etc.
 	Speed        float64 `yaml:"speed"`         // playback speed multiplier, 1.0 = normal
-	ServerURL    string  `yaml:"server_url"`    // HTTP endpoint for remote TTS engines, e.g. "http://localhost:8020"
-	Speaker      string  `yaml:"speaker"`       // speaker name for voice-cloning engines (matches a file in the server's speakers dir)
+	Pitch        float64 `yaml:"pitch"`         // pitch multiplier, 1.0 = normal
+	SampleRate   int     `yaml:"sample_rate"`   // output sample rate, 48000 for Silero
+	ServerURL    string  `yaml:"server_url"`    // HTTP endpoint for remote TTS, e.g. "http://localhost:5555"
 	AudioFormat  string  `yaml:"audio_format"`  // output format: "mp3" (default) or "wav"
 	AudioBitrate string  `yaml:"audio_bitrate"` // MP3 bitrate, e.g. "128k", "192k" (default "128k")
 }
@@ -157,8 +152,9 @@ func Default(projectName string) Config {
 		TTS: TTS{
 			Engine:       "noop",
 			Language:     "ru",
-			Python:       "python3",
 			Speed:        1.0,
+			Pitch:        1.0,
+			SampleRate:   48000,
 			AudioFormat:  "mp3",
 			AudioBitrate: "128k",
 		},

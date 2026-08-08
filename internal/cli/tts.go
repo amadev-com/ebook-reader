@@ -15,12 +15,11 @@ import (
 	"ebook-reader/internal/tts"
 )
 
-// newTTSCmd implements `bookai tts`: synthesizes audio from preprocessed text
-// files using the configured TTS engine. The engine is selected from
-// config.yaml (tts.engine) and is swappable via the tts.Engine registry.
-// Engines produce WAV audio; the CLI layer converts to the configured output
-// format (MP3 by default) via ffmpeg. Output files are written to
-// audio/chapter_NNN.mp3.
+// newTTSCmd implements `bookai tts`: synthesizes audio from SSML files using
+// the configured TTS engine. The engine is selected from config.yaml
+// (tts.engine) and is swappable via the tts.Engine registry. Engines produce
+// WAV audio; the CLI layer converts to the configured output format (MP3 by
+// default) via ffmpeg. Output files are written to audio/chapter_NNN.mp3.
 func newTTSCmd() *cobra.Command {
 	var (
 		force   bool
@@ -29,7 +28,7 @@ func newTTSCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "tts",
-		Short: "Synthesize audio from preprocessed text via the configured TTS engine",
+		Short: "Synthesize audio from SSML via the configured TTS engine",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			setupLogger()
@@ -93,14 +92,9 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 			return ctx.Err()
 		}
 
-		ttsPath := ttsTextPath(proj.TTSDir(), ch.ID)
-		if !project.Exists(ttsPath) {
-			// Check for legacy SSML files and warn.
-			if project.Exists(ssmlPath(proj.TTSDir(), ch.ID)) {
-				slog.Warn("found stale .ssml file — run `bookai preprocess` to generate .txt files", "chapter", ch.ID)
-			} else {
-				slog.Debug("skip chapter without preprocessed text", "chapter", ch.ID)
-			}
+		ssmlPath := ssmlFilePath(proj.TTSDir(), ch.ID)
+		if !project.Exists(ssmlPath) {
+			slog.Debug("skip chapter without SSML", "chapter", ch.ID)
 			skipped++
 			continue
 		}
@@ -116,22 +110,22 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 			continue
 		}
 
-		textContent, err := os.ReadFile(ttsPath)
+		ssmlContent, err := os.ReadFile(ssmlPath)
 		if err != nil {
-			return fmt.Errorf("read TTS text for chapter %d: %w", ch.ID, err)
+			return fmt.Errorf("read SSML for chapter %d: %w", ch.ID, err)
 		}
 
 		slog.Info("synthesizing chapter", "id", ch.ID, "title", ch.Title)
 
 		if audioFormat == "wav" {
 			// Engine writes WAV directly to the output path.
-			if err := engine.Synthesize(ctx, string(textContent), outPath); err != nil {
+			if err := engine.Synthesize(ctx, string(ssmlContent), outPath); err != nil {
 				return fmt.Errorf("synthesize chapter %d: %w", ch.ID, err)
 			}
 		} else {
 			// Engine writes WAV to a temp file, then we convert to the target format.
 			wavPath := tempWAVPath(proj.AudioDir(), ch.ID)
-			if err := engine.Synthesize(ctx, string(textContent), wavPath); err != nil {
+			if err := engine.Synthesize(ctx, string(ssmlContent), wavPath); err != nil {
 				return fmt.Errorf("synthesize chapter %d: %w", ch.ID, err)
 			}
 			if err := convertAudio(wavPath, outPath, audioFormat, proj.Cfg.TTS.AudioBitrate); err != nil {
@@ -155,8 +149,7 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 	return nil
 }
 
-// buildEngineConfig converts the project's TTS config into an tts.EngineConfig
-// with resolved paths.
+// buildEngineConfig converts the project's TTS config into an tts.EngineConfig.
 func buildEngineConfig(proj *project.Project) tts.EngineConfig {
 	cfg := proj.Cfg.TTS
 	lang := cfg.Language
@@ -164,30 +157,14 @@ func buildEngineConfig(proj *project.Project) tts.EngineConfig {
 		lang = proj.Cfg.Languages.Target
 	}
 	return tts.EngineConfig{
-		Engine:      cfg.Engine,
-		Language:    lang,
-		VoiceSample: resolvePath(proj.Root, cfg.VoiceSample),
-		ModelPath:   resolvePath(proj.Root, cfg.ModelPath),
-		DataDir:     resolvePath(proj.Root, cfg.DataDir),
-		TokensPath:  resolvePath(proj.Root, cfg.TokensPath),
-		Python:      cfg.Python,
-		Device:      cfg.Device,
-		Speed:       cfg.Speed,
-		ServerURL:   cfg.ServerURL,
-		Speaker:     cfg.Speaker,
+		Engine:     cfg.Engine,
+		Language:   lang,
+		Voice:      cfg.Voice,
+		Speed:      cfg.Speed,
+		Pitch:      cfg.Pitch,
+		SampleRate: cfg.SampleRate,
+		ServerURL:  cfg.ServerURL,
 	}
-}
-
-// resolvePath makes a path absolute relative to the project root if it is
-// non-empty and not already absolute.
-func resolvePath(root, p string) string {
-	if p == "" {
-		return ""
-	}
-	if filepath.IsAbs(p) {
-		return p
-	}
-	return filepath.Join(root, p)
 }
 
 // audioExtension returns the file extension for the given audio format.

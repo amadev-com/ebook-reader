@@ -1,0 +1,202 @@
+package tts
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"ebook-reader/internal/project"
+)
+
+// Stress is the persistent stress marks store. It maps Russian terms to their
+// stressed forms using the Silero convention: a '+' before the stressed vowel
+// (e.g., "кедров" → "к+едров"). The store is used by the ssml command to
+// apply stress marks to chapter text before wrapping it in SSML tags.
+type Stress struct {
+	Entries []StressEntry `json:"entries"`
+}
+
+// StressEntry is one term with its stressed form for Silero TTS.
+type StressEntry struct {
+	// Term is the Russian text as it appears in the translation (e.g.
+	// "кедров" or "договор").
+	Term string `json:"term"`
+
+	// Stressed is the stressed form with '+' before the stressed vowel
+	// (e.g., "к+едров" or "догов+ор").
+	Stressed string `json:"stressed"`
+}
+
+// StressConflict represents a term where different chapters produced
+// different stressed forms.
+type StressConflict struct {
+	Term     string   `json:"term"`
+	Variants []string `json:"variants"`
+}
+
+// LoadStress reads the global ai/stress.json from the project's AI directory.
+// Returns an empty store if the file does not exist (stress marks are optional).
+func LoadStress(aiDir string) (*Stress, error) {
+	path := aiDir + "/stress.json"
+	if !project.Exists(path) {
+		return &Stress{}, nil
+	}
+	var s Stress
+	if err := project.LoadJSON(path, &s); err != nil {
+		return nil, fmt.Errorf("load stress: %w", err)
+	}
+	return &s, nil
+}
+
+// Save writes the global stress vocabulary to ai/stress.json, sorted by term
+// length (longest first) so that multi-word terms are matched before their
+// sub-terms during text replacement.
+func (s *Stress) Save(aiDir string) error {
+	s.Sort()
+	path := aiDir + "/stress.json"
+	return project.SaveJSON(path, s)
+}
+
+// LoadChapterStress reads ai/stress_NNN.json for a specific chapter.
+// Returns an empty store if the file does not exist.
+func LoadChapterStress(aiDir string, chapterID int) (*Stress, error) {
+	path := fmt.Sprintf("%s/stress_%03d.json", aiDir, chapterID)
+	if !project.Exists(path) {
+		return &Stress{}, nil
+	}
+	var s Stress
+	if err := project.LoadJSON(path, &s); err != nil {
+		return nil, fmt.Errorf("load chapter stress: %w", err)
+	}
+	return &s, nil
+}
+
+// SaveChapterStress writes stress entries to ai/stress_NNN.json for a specific
+// chapter, sorted by term length (longest first).
+func (s *Stress) SaveChapterStress(aiDir string, chapterID int) error {
+	s.Sort()
+	path := fmt.Sprintf("%s/stress_%03d.json", aiDir, chapterID)
+	return project.SaveJSON(path, s)
+}
+
+// Sort orders entries by term length (longest first) so that multi-word terms
+// are matched before their sub-terms during text replacement.
+func (s *Stress) Sort() {
+	sort.SliceStable(s.Entries, func(i, j int) bool {
+		return len(s.Entries[i].Term) > len(s.Entries[j].Term)
+	})
+}
+
+// Lookup finds a stress entry by term (case-insensitive). Returns the entry
+// and true if found.
+func (s *Stress) Lookup(term string) (StressEntry, bool) {
+	lower := strings.ToLower(term)
+	for _, e := range s.Entries {
+		if strings.ToLower(e.Term) == lower {
+			return e, true
+		}
+	}
+	return StressEntry{}, false
+}
+
+// Apply replaces all occurrences of each term in the text with its stressed
+// version. Matching is case-insensitive and word-boundary aware. Longer terms
+// are replaced first (entries should be sorted by Sort, which puts longest
+// first) to avoid partial matches on multi-word terms.
+func (s *Stress) Apply(text string) string {
+	if len(s.Entries) == 0 {
+		return text
+	}
+	for _, e := range s.Entries {
+		if e.Term == "" || e.Stressed == "" || e.Term == e.Stressed {
+			continue
+		}
+		text = replaceWordIgnoreCase(text, e.Term, e.Stressed)
+	}
+	return text
+}
+
+// Merge merges other into s. If a term exists in both with the same stressed
+// form, it's kept once. If a term exists in both with different stressed
+// forms, the entry from s is kept and a StressConflict is returned. New terms
+// from other are appended.
+func (s *Stress) Merge(other *Stress) []StressConflict {
+	var conflicts []StressConflict
+	conflictMap := make(map[string]bool) // track terms already in conflicts
+
+	for _, oe := range other.Entries {
+		if oe.Term == "" || oe.Stressed == "" {
+			continue
+		}
+		found := false
+		for i := range s.Entries {
+			if strings.EqualFold(s.Entries[i].Term, oe.Term) {
+				found = true
+				if !strings.EqualFold(s.Entries[i].Stressed, oe.Stressed) {
+					if !conflictMap[strings.ToLower(oe.Term)] {
+						conflicts = append(conflicts, StressConflict{
+							Term:     oe.Term,
+							Variants: uniqueVariants(s.Entries[i].Stressed, oe.Stressed),
+						})
+						conflictMap[strings.ToLower(oe.Term)] = true
+					}
+				}
+				break
+			}
+		}
+		if !found {
+			s.Entries = append(s.Entries, oe)
+		}
+	}
+
+	return conflicts
+}
+
+// MergeAll merges multiple per-chapter stress stores into a single global
+// vocabulary. Returns the merged store and a list of conflicts for terms with
+// disagreeing stress marks across chapters.
+func MergeAll(chapters []*Stress) (merged *Stress, conflicts []StressConflict) {
+	merged = &Stress{}
+	for _, ch := range chapters {
+		c := merged.Merge(ch)
+		conflicts = append(conflicts, c...)
+	}
+	merged.Sort()
+	return merged, conflicts
+}
+
+// uniqueVariants returns the unique stressed forms from the given list,
+// preserving order.
+func uniqueVariants(forms ...string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, f := range forms {
+		if f == "" {
+			continue
+		}
+		lower := strings.ToLower(f)
+		if !seen[lower] {
+			seen[lower] = true
+			result = append(result, f)
+		}
+	}
+	return result
+}
+
+// ResolveConflict updates the stressed form for a term in the store. If the
+// term doesn't exist, it's added. If stressed is empty, the entry is removed.
+func (s *Stress) ResolveConflict(term, stressed string) {
+	for i := range s.Entries {
+		if strings.EqualFold(s.Entries[i].Term, term) {
+			if stressed == "" {
+				s.Entries = append(s.Entries[:i], s.Entries[i+1:]...)
+			} else {
+				s.Entries[i].Stressed = stressed
+			}
+			return
+		}
+	}
+	if stressed != "" {
+		s.Entries = append(s.Entries, StressEntry{Term: term, Stressed: stressed})
+	}
+}

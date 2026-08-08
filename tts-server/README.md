@@ -1,103 +1,78 @@
-# XTTS v2 TTS Server
+# Silero TTS Server
 
-A Dockerized XTTS v2 text-to-speech server for the `bookai` pipeline.
-Optimized for NVIDIA Blackwell GPUs (RTX 50xx series, SM 12.0).
+REST server for Silero text-to-speech synthesis with SSML and stress mark support.
 
-## Architecture
+Based on [biblio-tts-server-silero](https://github.com/vpoluyaktov/biblio-tts-server-silero) — uses the prebuilt Docker image, no custom server code needed.
 
-Uses the `athomasson2/ebook2audiobook:cu130` Docker image as a base because
-it provides CUDA 13.0 + PyTorch 2.11 + coqui-tts 0.27.5 — the only pre-built
-image that supports Blackwell GPUs out of the box. The entrypoint is
-overridden to run a minimal FastAPI server (`server.py`) instead of the full
-ebook2audiobook Gradio app.
+## Quick Start
 
-## Setup
-
-1. The container bundles 119 voice samples (English, Russian, Arabic, Czech,
-   German, Farsi, French, Japanese). They are copied to `speakers/` on first
-   run. To list available voices:
-
-   ```bash
-   curl http://localhost:8020/voices | python3 -m json.tool
-   ```
-
-   To add your own voice samples, place WAV files in `speakers/` (mono,
-   22050 Hz, 7-9 seconds). The directory structure is preserved — voices are
-   referenced by their relative path, e.g. `eng/adult/male/MorganFreeman.wav`.
-
-2. Start the server:
-   ```bash
-   docker compose up -d
-   ```
-
-3. The server will be available at `http://localhost:8020`.
-   API docs at `http://localhost:8020/docs`.
-
-4. On first synthesis, the XTTS v2 model (~1.8 GB) will be downloaded from
-   HuggingFace and cached in `models/`. Subsequent starts are fast.
-
-## API
-
-### `GET /health`
-Returns GPU/CUDA availability and model load status.
-
-### `GET /voices`
-Lists available speaker WAV files in the `speakers/` directory.
-
-### `POST /tts`
-Synthesizes text to a WAV file. Returns `audio/wav`.
-
-```json
-{
-  "text": "Привет мир",
-  "language": "ru",
-  "speaker_wav": "speaker_name.wav",
-  "speed": 1.0
-}
+```bash
+docker compose up -d
 ```
 
-Alternatively, use `speaker_wav_path` to specify an absolute path to a WAV
-file inside the container.
+The server will be available at `http://localhost:5555`.
 
-### `POST /tts_to_file`
-Same as `/tts` but saves to a path inside the container and returns JSON.
+- API docs: `http://localhost:5555/docs`
+- OpenAPI spec: `http://localhost:5555/openapi.json`
+- Health check: `http://localhost:5555/health`
 
-## bookai configuration
+## API Endpoints
 
-In your project's `config.yaml`:
+- `POST /api/tts` — Synthesize speech (accepts JSON body with `text`, `voice`, `ssml`, `sample_rate`, `speed`, `pitch`)
+- `GET /api/voices` — List available voices (filter by `language`)
+- `GET /api/models` — List available models (filter by `language`)
+- `GET /health` — Health check
+
+## Configuration
+
+The `docker-compose.yml` sets these environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SILERO_DEVICE` | PyTorch device (`cpu` or `cuda`) | `cpu` |
+| `SILERO_SERVED_MODELS` | Comma-separated models to serve | `v5_5_ru` |
+
+## Available Russian Models
+
+- `v5_ru`, `v5_2_ru`, `v5_3_ru`, `v5_4_ru`, `v5_5_ru`
+
+## Available Russian Voices
+
+| Voice ID | Speaker | Gender |
+|----------|---------|--------|
+| `silero:v5_5_ru#aidar` | Aidar | M |
+| `silero:v5_5_ru#baya` | Baya | F |
+| `silero:v5_5_ru#kseniya` | Kseniya | F |
+| `silero:v5_5_ru#eugene` | Eugene | M |
+| `silero:v5_5_ru#xenia` | Xenia | F |
+
+## SSML Support
+
+Silero supports the following SSML tags:
+
+- `<speak>` — Root tag
+- `<p>` — Paragraph (equivalent to `x-strong` pause)
+- `<s>` — Sentence (equivalent to `strong` pause)
+- `<break time="3s"/>` — Pause with specified duration
+- `<prosody rate="x-slow">` — Speech rate (`x-slow`, `slow`, `medium`, `fast`, `x-fast`)
+- `<prosody pitch="x-high">` — Pitch (`x-low`, `low`, `medium`, `high`, `x-high`)
+
+## Stress Marks
+
+Silero supports stress marks: a `+` before the stressed vowel.
+
+Example: `к+едров` = stress on "е"
+
+## bookai Configuration
+
+In `config.yaml`:
 
 ```yaml
 tts:
-  engine: xtts-http
-  language: ru
-  server_url: http://localhost:8020
-  speaker: eng/adult/male/MorganFreeman.wav  # or any voice from /voices
+  engine: "silero-http"
+  server_url: "http://localhost:5555"
+  voice: "silero:v5_5_ru#xenia"
+  sample_rate: 48000
   speed: 1.0
-```
-
-## Voice samples
-
-Good voice samples are critical for quality. Guidelines:
-
-- 7-9 seconds of clean, flowing speech
-- Mono, 22050 Hz, 16-bit WAV
-- No background noise or music
-- No breathy sounds at start/end
-- Show some vocal range
-
-To prepare a sample with ffmpeg:
-```bash
-ffmpeg -i input.wav -ar 22050 -ac 1 -acodec pcm_s16le speakers/my_voice.wav
-```
-
-## Logs
-
-```bash
-docker compose logs -f
-```
-
-## Stop
-
-```bash
-docker compose down
+  pitch: 1.0
 ```

@@ -134,34 +134,34 @@ func TestNewTermsSystem(t *testing.T) {
 	}
 }
 
-func TestRespellingSystem(t *testing.T) {
+func TestStressSystem(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(RespellingSystem, "XTTS") {
-		t.Error("respelling system prompt missing XTTS")
+	if !strings.Contains(StressSystem, "Silero") {
+		t.Error("stress system prompt missing Silero")
 	}
-	if !strings.Contains(RespellingSystem, "JSON") {
-		t.Error("respelling system prompt missing JSON instruction")
+	if !strings.Contains(StressSystem, "JSON") {
+		t.Error("stress system prompt missing JSON instruction")
 	}
 }
 
-func TestRespellingUser(t *testing.T) {
+func TestStressUser(t *testing.T) {
 	t.Parallel()
-	prompt := RespellingUser("Привет мир. Это тест.", nil)
+	prompt := StressUser("Привет мир. Это тест.", nil)
 	if !strings.Contains(prompt, "Привет мир") {
 		t.Errorf("prompt missing chapter text: %s", prompt)
 	}
-	if !strings.Contains(prompt, "Return the JSON respellings") {
+	if !strings.Contains(prompt, "Return the JSON stress marks") {
 		t.Errorf("prompt missing instruction")
 	}
 }
 
-func TestRespellingUser_WithOverrides(t *testing.T) {
+func TestStressUser_WithOverrides(t *testing.T) {
 	t.Parallel()
 	overrides := []config.PronunciationOverride{
-		{Term: "Куинн", Phonemes: "КУинн"},
+		{Term: "кедров", Phonemes: "к+едров"},
 	}
-	prompt := RespellingUser("Куинн пришёл.", overrides)
-	if !strings.Contains(prompt, "Куинн → КУинн") {
+	prompt := StressUser("кедров много.", overrides)
+	if !strings.Contains(prompt, "кедров → к+едров") {
 		t.Errorf("prompt missing override: %s", prompt)
 	}
 }

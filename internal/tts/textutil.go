@@ -46,3 +46,36 @@ func isWordRune(r byte) bool {
 		(r >= '0' && r <= '9') ||
 		r >= 0xC0 // Cyrillic and other non-ASCII letters (UTF-8 continuation handled by byte range)
 }
+
+// replaceWordIgnoreCase replaces all case-insensitive occurrences of old with
+// replacement in s, but only at word boundaries (not inside longer words).
+func replaceWordIgnoreCase(s, old, replacement string) string {
+	if old == "" {
+		return s
+	}
+	var b strings.Builder
+	written := 0  // byte position up to which text has been written to builder
+	searchAt := 0 // byte position to search from
+	for {
+		idx := indexIgnoreCase(s, old, searchAt)
+		if idx < 0 {
+			break
+		}
+		end := idx + len(old)
+		if !atWordBoundary(s, idx, end) {
+			// Not at a word boundary — skip this match but don't lose text.
+			// Advance search past the match, but keep `written` unchanged so
+			// the text before this match is included in the next write.
+			searchAt = end
+			continue
+		}
+		b.WriteString(s[written:idx])
+		b.WriteString(replacement)
+		written = end
+		searchAt = end
+	}
+	if written < len(s) {
+		b.WriteString(s[written:])
+	}
+	return b.String()
+}

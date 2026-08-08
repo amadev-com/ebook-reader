@@ -6,7 +6,7 @@
 /bookai
 *.epub
 
-# tts-server runtime volumes (models, voices, output)
+# tts-server runtime volumes (old XTTS models, kept for reference)
 /tts-server/models
 /tts-server/output
 /tts-server/speakers/

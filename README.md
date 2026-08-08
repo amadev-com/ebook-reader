@@ -2,7 +2,7 @@
 
 A local, file-based batch pipeline that turns an EPUB into a consistently-translated, glossary-backed audiobook.
 
-> **Status: Milestone 3 complete.** EPUB import, chapter detection, glossary extraction, translation, text preprocessing with phonetic respellings, and XTTS v2 text-to-speech are implemented.
+> **Status: Milestone 3 complete.** EPUB import, chapter detection, glossary extraction, translation, SSML generation with stress marks, and Silero text-to-speech are implemented.
 
 ## How it works
 
@@ -26,11 +26,11 @@ translation/ + memory/   (chapter_NNN.ru.txt, chapter_NNN.summary.txt)
         ▼
         │  6. bookai pronounce          ← requires OPENAI_API_KEY (Batch API)
         ▼
-ai/          (respelling_NNN.json per chapter)
-        │  7. bookai preprocess
+ai/          (stress_NNN.json per chapter → merged into stress.json)
+        │  7. bookai ssml               ← local: apply stress marks + wrap in SSML
         ▼
-tts/         (chapter_NNN.txt)
-        │  8. bookai tts                ← requires TTS server (Docker)
+tts/         (chapter_NNN.ssml)
+        │  8. bookai tts                ← requires Silero TTS server (Docker)
         ▼
 audio/       (chapter_NNN.mp3)
 ```
@@ -55,17 +55,17 @@ The key is read from the environment only — it is never stored in `config.yaml
 
 ### 3. Start the TTS server (one-time, Docker)
 
-The XTTS v2 server runs in Docker and is optimized for NVIDIA Blackwell GPUs (RTX 50xx series). It stays running across books — start it once.
+The Silero TTS server runs in Docker and provides SSML and stress mark support for high-quality Russian speech synthesis. It stays running across books — start it once.
 
 ```bash
 cd tts-server
 docker compose up -d
 ```
 
-The server listens on `http://localhost:8020`. On first synthesis, the XTTS v2 model (~1.8 GB) downloads from HuggingFace and caches in `tts-server/models/`. The container also bundles 119 voice samples — list them with:
+The server listens on `http://localhost:5555`. Models are preloaded at startup. List available voices with:
 
 ```bash
-curl -s http://localhost:8020/voices | python3 -m json.tool
+curl -s http://localhost:5555/api/voices?language=ru | python3 -m json.tool
 ```
 
 See [`tts-server/README.md`](tts-server/README.md) for full details.
@@ -94,7 +94,7 @@ To import into an explicit directory (skips auto-creation):
 bookai import /path/to/book.epub -p /existing/project-dir
 ```
 
-> **Before continuing:** edit `my-vampire-system/config.yaml` to switch the TTS engine from `noop` to `xtts-http` and pick a voice (see [Configuration](#configuration) below).
+> **Before continuing:** edit `my-vampire-system/config.yaml` to switch the TTS engine from `noop` to `silero-http` and pick a voice (see [Configuration](#configuration) below).
 
 ### Step 2 — Detect chapters
 
@@ -185,21 +185,23 @@ bookai verify-glossary -p my-vampire-system
 
 Scans translations for untranslated English glossary terms. Writes `ai/glossary_violations.json`.
 
-### Step 6 — Generate respellings
+### Step 6 — Generate stress marks
 
 ```bash
 bookai pronounce -p my-vampire-system
 ```
 
-Scans each chapter's translation via the **OpenAI Batch API** for words that XTTS v2 will likely mispronounce. One batch item per chapter — the model sees the full chapter text and returns a list of {term, respelled} pairs. XTTS v2 does NOT support IPA phonemes or SSML — the only reliable way to control pronunciation is text replacement. The model generates respellings using rules like vowel doubling for stress (договор → договоор), ё→йо, and acronym expansion. Config `pronunciation` overrides are passed to the model. Writes per-chapter `ai/respelling_NNN.json`. Flags: `--force`, `--continue`, `--range M-N`, `--poll-interval N`.
+Scans each chapter's translation via the **OpenAI Batch API** for words with non-obvious or ambiguous stress. One batch item per chapter — the model sees the full chapter text and returns a list of {term, stressed} pairs using the Silero stress mark convention: a `+` before the stressed vowel (e.g., `кедров` → `к+едров`). Per-chapter results are saved to `ai/stress_NNN.json`, then merged into a single global `ai/stress.json` vocabulary. If the same term has different stress marks across chapters, you'll be prompted to resolve the conflict interactively. Config `pronunciation` overrides are passed to the model. Flags: `--force`, `--continue`, `--reset`, `--range M-N`, `--poll-interval N`.
 
-### Step 7 — Preprocess translations
+- `--reset` — erase existing `ai/stress.json` and rebuild from scratch (without it, new results are merged with the existing file)
+
+### Step 7 — Generate SSML
 
 ```bash
-bookai preprocess -p my-vampire-system
+bookai ssml -p my-vampire-system
 ```
 
-Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Per-chapter respellings from `ai/respelling_NNN.json` are replaced in the text, and Russian text normalization (de-capitalization of mid-sentence ALL-CAPS words) is applied. This replaces the old `ssml` command — since XTTS v2 doesn't support SSML, pronunciation control is done via text replacement before synthesis.
+Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (SSML with stress marks applied). Stress marks from the global `ai/stress.json` are applied to the text, then the text is wrapped in SSML tags (`<speak>`, `<p>`, `<s>`) for Silero TTS. This is local processing — no AI or network needed. Flags: `--force`, `--chapter N`, `--range M-N`.
 
 ### Step 8 — Synthesize audio
 
@@ -207,7 +209,7 @@ Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain
 bookai tts -p my-vampire-system
 ```
 
-Synthesizes each `tts/chapter_NNN.txt` into `audio/chapter_NNN.mp3` (128kbps mono) via the XTTS v2 server. Engines produce WAV internally; the CLI converts to MP3 via ffmpeg. To output WAV instead, set `tts.audio_format: wav` in `config.yaml`.
+Synthesizes each `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the Silero TTS server. The engine sends SSML text with `ssml: true` to the server's `POST /api/tts` endpoint. Engines produce WAV internally; the CLI converts to MP3 via ffmpeg. To output WAV instead, set `tts.audio_format: wav` in `config.yaml`.
 
 ### Check progress at any time
 
@@ -241,11 +243,11 @@ Then run the remaining stages for each, pointing `-p` at the project directory:
 ```bash
 bookai analyze-chapters -p first-book
 bookai translate -p first-book
-bookai tts -p first-book --merge
+bookai tts -p first-book
 
 bookai analyze-chapters -p second-book
 bookai translate -p second-book
-bookai tts -p second-book --merge
+bookai tts -p second-book
 ```
 
 The TTS server (`tts-server/`) and `OPENAI_API_KEY` are shared across all books.
@@ -262,7 +264,7 @@ To redo a specific stage without nuking everything, use `--force` on the relevan
 
 ```bash
 bookai translate --chapter 5 --force    # re-translate chapter 5 only
-bookai preprocess --force               # regenerate all TTS text
+bookai ssml --force                     # regenerate all SSML
 bookai tts --force                      # re-synthesize all audio
 ```
 
@@ -270,7 +272,7 @@ To selectively clean a stage, remove its output directory and rerun:
 
 ```bash
 rm -rf audio/ && bookai tts          # re-synthesize all audio
-rm -rf tts/ && bookai preprocess     # regenerate all TTS text
+rm -rf tts/ && bookai ssml           # regenerate all SSML
 ```
 
 > **Note:** `ai/glossary.json` accumulates terms across chapters during translation. Deleting it and rerunning `bookai analyze` + `bookai translate --force` will rebuild it from scratch, but you'll lose any manual edits.
@@ -308,11 +310,13 @@ chapters:                         # optional: default --strip patterns for analy
     - "For MVS artwork"
     - "Want another mass release"
 tts:
-  engine: xtts-http              # "noop" (default) or "xtts-http"
+  engine: silero-http            # "noop" (default) or "silero-http"
   language: ru
-  server_url: http://localhost:8020
-  speaker: eng/adult/male/MorganFreeman.wav  # any voice from /voices
-  speed: 1.0
+  server_url: http://localhost:5555
+  voice: silero:v5_5_ru#xenia    # Silero voice ID (model#speaker)
+  sample_rate: 48000             # output sample rate
+  speed: 1.0                     # playback speed (1.0 = normal)
+  pitch: 1.0                     # pitch multiplier (1.0 = normal)
   audio_format: mp3              # "mp3" (default) or "wav"
   audio_bitrate: "128k"          # MP3 bitrate (default 128k)
 glossary:                        # optional: lock specific translations
@@ -328,11 +332,11 @@ glossary:                        # optional: lock specific translations
     - source: Dalki
       target: Далки
       type: term
-pronunciation:                   # optional: lock respellings for XTTS v2
+pronunciation:                   # optional: lock stress marks for Silero
   - term: Куинн
-    phonemes: КУинн               # phonetic respelling (plain Russian, not IPA)
+    phonemes: К+уинн              # + before stressed vowel
   - term: Далки
-    phonemes: ДАлки
+    phonemes: Д+алки
 ```
 
 The OpenAI API key is read from the `OPENAI_API_KEY` environment variable — it is **never** stored in `config.yaml`.

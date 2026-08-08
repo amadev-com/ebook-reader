@@ -19,7 +19,7 @@ Project layout: `cmd/bookai` (binary) + `internal/{epub,chapters,project,config,
 - Go 1.26, Cobra CLI, YAML config (`gopkg.in/yaml.v3`).
 - EPUB parsing: custom reader (`archive/zip` + `encoding/xml` + `golang.org/x/net/html`).
 - Translation: OpenAI **official** SDK (`github.com/openai/openai-go`), `gpt-5.6-luna` (default). EN→RU. Uses **Batch API** for cost-effective processing (50% discount). (M2)
-- TTS: swappable Engine interface (`internal/tts/engine.go`). Default "noop" engine for pipeline testing. `xtts-http` engine for real XTTS v2 via Docker server. (M3)
+- TTS: swappable Engine interface (`internal/tts/engine.go`). Default "noop" engine for pipeline testing. `silero-http` engine for real Silero TTS via Docker server. (M3)
 - `bookai import <epub> [name]` auto-creates a project dir (slugified name) in CWD, writes default `config.yaml`, copies EPUB. Other commands use `-p`/`--project` flag (defaults to CWD).
 - Chapter classifier: rules-only in M1 (AI fallback designed but not wired).
 
@@ -38,20 +38,23 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 - `bookai analyze`: extracts glossary + characters + chapter summaries via **OpenAI Batch API**. Each chapter is a single batch item (JSON mode) that returns both the glossary/characters AND a chapter summary in one JSON response — the model reads each chapter once. After the batch completes, a single "live" merge/unify request deduplicates and classifies glossary results — characters = ONLY real persons, glossary = terms WITHOUT characters. Summaries are saved to `memory/chapter_NNN.summary.txt` so they're available as context when translate builds its batch. Config `glossary.characters`/`glossary.terms` override AI-extracted translations (locked). Writes `ai/glossary.json` (terms only) + `ai/characters.json` + `memory/chapter_NNN.summary.txt`. Batch state persisted in `ai/batch_analyze.json` for `--continue` resume. Flags: `--force`, `--continue`, `--chapter N`, `--range M-N`, `--poll-interval N` (default 60s).
 - `bookai translate`: per-chapter translation via **OpenAI Batch API**. Each chapter is an independent batch item with glossary + previous 2 chapter summaries (from analyze) as context. After batch completes, translations are written to disk. No post-processing — summaries and glossary are finalized by analyze. Writes `translation/chapter_NNN.ru.txt`, updates `chapter_NNN.json` status → "translated". Batch state persisted in `ai/batch_translate.json` for `--continue` resume. Flags: `--force`, `--continue`, `--chapter N`, `--range M-N`, `--skip-memory`, `--poll-interval N` (default 60s).
 - `bookai verify-glossary`: scans translations for untranslated English glossary terms, writes `ai/glossary_violations.json`.
-- `bookai pronounce`: scans each chapter's translation via **OpenAI Batch API** for words XTTS v2 will likely mispronounce. One batch item per chapter — the model sees the full chapter text and returns {term, respelled} pairs. Config `pronunciation` overrides are passed to the model. Writes per-chapter `ai/respelling_NNN.json`. Batch state persisted in `ai/batch_pronounce.json`. Flags: `--force`, `--continue`, `--chapter N`, `--range M-N`, `--poll-interval N` (default 60s).
+- `bookai pronounce`: scans each chapter's translation via **OpenAI Batch API** for words with non-obvious stress. One batch item per chapter — the model sees the full chapter text and returns {term, stressed} pairs using Silero stress marks (`+` before the stressed vowel, e.g., `кедров` → `к+едров`). Per-chapter results saved to `ai/stress_NNN.json`, then merged into global `ai/stress.json`. Conflicts (same term, different stress) resolved interactively. Config `pronunciation` overrides are passed to the model. Batch state persisted in `ai/batch_pronounce.json`. Flags: `--force`, `--continue`, `--reset`, `--chapter N`, `--range M-N`, `--poll-interval N` (default 60s).
 - OpenAI SDK: official `github.com/openai/openai-go/v3` (v3.47.0). Uses the **Responses API** (`client.Responses.New`) for live calls and **Batch API** (`client.Batches.New`) for bulk processing. System prompt → `instructions` param, user message → `input` param, JSON mode → `text.format = json_object`. Built-in retry via `option.WithMaxRetries`.
 - Batch API flow: build JSONL → upload file (purpose `batch`) → create batch (endpoint `/v1/responses`, 24h window) → poll every N seconds → download output file → parse results. `internal/translation/batch.go` handles all batch operations. `internal/translation/batch_state.go` persists state locally.
 - Default model: `gpt-5.6-luna` for both translation and helper tasks (configurable in `config.yaml`).
 
-## Milestone 3 — TTS pipeline (COMPLETE — scaffolding with swappable engine)
+## Milestone 3 — TTS pipeline (COMPLETE — Silero TTS with SSML and stress marks)
 
-- `bookai preprocess`: converts `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Per-chapter respelling entries from `ai/respelling_NNN.json` are applied via greedy longest-match, case-insensitive, word-boundary aware text replacement. Also applies `NormalizeRussian` (de-capitalization of mid-sentence ALL-CAPS words). Replaces the old `ssml` command — XTTS v2 doesn't support SSML/IPA, so pronunciation control is done via text replacement.
-- `bookai tts`: synthesizes `tts/chapter_NNN.txt` into `audio/chapter_NNN.mp3` (128kbps mono) via the configured engine. Engines produce WAV internally; CLI converts to MP3 via ffmpeg. `--merge` removed — per-chapter files only. Config: `tts.audio_format` ("mp3" default, "wav" fallback), `tts.audio_bitrate` ("128k" default).
+- `bookai ssml`: converts `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (SSML with stress marks applied). Stress marks from the global `ai/stress.json` are applied via greedy longest-match, case-insensitive, word-boundary aware text replacement. Text is then wrapped in SSML tags (`<speak>`, `<p>`, `<s>`) for Silero TTS. Local processing — no AI or network needed. Flags: `--force`, `--chapter N`, `--range M-N`.
+- `bookai tts`: synthesizes `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the configured engine. Engines produce WAV internally; CLI converts to MP3 via ffmpeg. Config: `tts.audio_format` ("mp3" default, "wav" fallback), `tts.audio_bitrate` ("128k" default).
 - Engine interface: `tts.Engine` with `Name()` and `Synthesize(ctx, text, outPath)`. Engines register via `tts.Register(name, factory)`. `tts.NewEngine(cfg)` looks up the factory.
-- NoopEngine: default engine that writes a valid sine-tone WAV. Requires no external deps — enables full pipeline testing (preprocess → audio) without a real TTS backend.
-- Config: `tts.engine` ("noop" default), `tts.language`, `tts.model_path`, `tts.data_dir`, `tts.tokens_path`, `tts.device`, `tts.speed`, `tts.voice_sample`, `tts.python`.
+- NoopEngine: default engine that writes a valid sine-tone WAV. Requires no external deps — enables full pipeline testing (ssml → audio) without a real TTS backend.
+- SileroEngine (`silero-http`): real TTS via a remote Silero TTS server (biblio-tts-server-silero). Sends SSML text to `POST /api/tts` with `ssml: true`, writes the returned WAV. Config: `tts.server_url`, `tts.voice` (e.g., `silero:v5_5_ru#xenia`). 10-minute timeout for long chapters + first model load.
+- Stress marks system: `internal/tts/stress.go` — `Stress` store (ai/stress.json global, ai/stress_NNN.json per chapter) maps terms to stressed forms with `+` before the stressed vowel. `Stress.Apply(text)` replaces terms in text. `MergeAll()` merges per-chapter results with conflict detection.
+- SSML generation: `internal/tts/ssml.go` — `GenerateSSML(text)` splits text into paragraphs and sentences, wraps in `<speak>`/`<p>`/`<s>` tags. Stress marks preserved as-is.
+- Config: `tts.engine` ("noop" default, "silero-http" for real TTS), `tts.language`, `tts.server_url`, `tts.voice`, `tts.speed`, `tts.pitch`, `tts.sample_rate`, `tts.audio_format` ("mp3" default, "wav"), `tts.audio_bitrate` ("128k" default).
 - Flags: `--force`, `--chapter N`, `--range M-N`.
-- Validated end-to-end: import → analyze-chapters → (fake translation) → preprocess → tts → merge. Idempotent, `--force` works, respellings apply correctly.
+- TTS server: `tts-server/` directory with `docker-compose.yml` using prebuilt `vpoluyaktov/biblio-tts-server-silero:latest` image. See `tts-server/README.md`.
 - To add a real engine: create `internal/tts/<engine>.go`, implement `Engine`, call `Register("name", factory)` in `init()`. No changes needed to CLI or pipeline code.
 
 ## Conventions
@@ -62,25 +65,11 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 - Context: every stage takes `context.Context`; CLI wires a `signal.NotifyContext` root.
 - Doc comments on exported symbols must start with the symbol name (revive rule).
 
-## Milestone 3 — COMPLETE (TTS pipeline + XTTS v2 HTTP engine)
-
-- `bookai preprocess`: converts `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.txt` (plain text with phonetic respellings applied). Per-chapter respelling entries from `ai/respelling_NNN.json` are applied via greedy longest-match, case-insensitive, word-boundary aware text replacement. Also applies `NormalizeRussian` (de-capitalization of mid-sentence ALL-CAPS words). Replaces the old `ssml` command — XTTS v2 doesn't support SSML/IPA, so pronunciation control is done via text replacement.
-- `bookai tts`: synthesizes `tts/chapter_NNN.txt` into `audio/chapter_NNN.mp3` (128kbps mono) via the configured engine. Engines produce WAV internally; CLI converts to MP3 via ffmpeg. `--merge` removed — per-chapter files only. Config: `tts.audio_format` ("mp3" default, "wav" fallback), `tts.audio_bitrate` ("128k" default).
-- Engine interface: `tts.Engine` with `Name()` and `Synthesize(ctx, text, outPath)`. Engines register via `tts.Register(name, factory)`. `tts.NewEngine(cfg)` looks up the factory.
-- NoopEngine: default engine that writes a valid sine-tone WAV. Requires no external deps — enables full pipeline testing (preprocess → audio) without a real TTS backend.
-- HTTPEngine (`xtts-http`): real TTS via a remote XTTS v2 FastAPI server. Sends plain text to `POST /tts`, writes the returned WAV. Config: `tts.server_url`, `tts.speaker` (or `tts.voice_sample` for absolute path). 10-minute timeout for long chapters + first model load.
-- Respelling system: `internal/tts/respelling.go` — `Respelling` store (ai/respelling_NNN.json per chapter) maps terms to phonetic respellings. `Respelling.Apply(text)` replaces terms in text. `NormalizeRussian(text)` applies always-on text normalization (de-capitalization).
-- Config: `tts.engine` ("noop" default, "xtts-http" for real TTS), `tts.language`, `tts.server_url`, `tts.speaker`, `tts.voice_sample`, `tts.speed`, `tts.audio_format` ("mp3" default, "wav"), `tts.audio_bitrate` ("128k" default), `tts.model_path`, `tts.data_dir`, `tts.tokens_path`, `tts.device`, `tts.python`.
-- Flags: `--force`, `--chapter N`, `--range M-N`.
-- TTS server: `tts-server/` directory with `docker-compose.yml` + `server.py`. Uses `athomasson2/ebook2audiobook:cu130` image (CUDA 13.0 + PyTorch 2.11 + coqui-tts 0.27.5) for Blackwell GPU support. See `tts-server/README.md`.
-- Validated end-to-end with real XTTS v2: preprocess → HTTP engine → 24kHz Russian WAV. Model downloads on first call (~1.8GB, cached in `tts-server/models/`).
-
 ## Next
 
 Potential future work:
-- Voice sample management: CLI command to list/add/preview voices on the server.
+- Voice management: CLI command to list/preview Silero voices on the server.
 - Streaming synthesis: chunk long chapters to avoid timeouts and show progress.
-- Fine-tuned models: mount a custom XTTS v2 model via `tts-server/models/`.
 - **Character→voice mapping (postponed)**: see "Future: Character→voice mapping" below.
 
 ## Future: Character→voice mapping (postponed)
@@ -98,30 +87,28 @@ which adds significant complexity. The feature was scoped but not implemented.
 1. **Config section** — optional `tts.character_voices` map in `config.yaml`:
    ```yaml
    tts:
-     engine: xtts-http
-     speaker: eng/adult/male/MorganFreeman.wav  # default/narrator voice
+     engine: silero-http
+     voice: silero:v5_5_ru#xenia  # default/narrator voice
      character_voices:
-       "Джон": eng/adult/male/AaronDreschner.wav
-       "Мэри": eng/adult/female/AlexandraHisakawa.wav
+       "Джон": silero:v5_5_ru#aidar
+       "Мэри": silero:v5_5_ru#baya
    ```
-   If a character isn't in the map, the default `speaker` is used.
+   If a character isn't in the map, the default `voice` is used.
 
 2. **New command: `bookai assign-voices`** — uses AI to match characters to
    voices. Reads `ai/characters.json` (already has name, role, description
    from `bookai analyze`), fetches the voice list from the TTS server
-   (`GET /voices`), and asks the helper model to pick the best voice for
+   (`GET /api/voices`), and asks the helper model to pick the best voice for
    each character. Writes the mapping to `ai/voice_mapping.json` (or directly
    into `config.yaml`).
 
-3. **Voice characteristics** — the 119 bundled voices are organized as
-   `language/age/gender/name.wav` (e.g. `eng/adult/male/MorganFreeman.wav`).
-   Three options for describing voices to the AI:
-   - **Derive from path + name**: pass `eng/adult/male/MorganFreeman` →
-     "English, adult, male, Morgan Freeman" + let AI infer timbre from the
-     celebrity name. No extra files needed.
-   - **Pre-generated `voices.json`**: a metadata file in `tts-server/` with
-     a short description per voice (generated once via AI or manually).
-     Reusable across all books.
+3. **Voice characteristics** — Silero Russian voices are: aidar (M), baya (F),
+   kseniya (F), eugene (M), xenia (F). Voice IDs are `silero:{model}#{speaker}`.
+   Options for describing voices to the AI:
+   - **Derive from speaker name**: pass "aidar" → let AI infer gender from
+     the name. No extra files needed.
+   - **Pre-generated `voices.json`**: a metadata file with a short description
+     per voice. Reusable across all books.
    - **AI describes on-the-fly**: during `assign-voices`, ask the model to
      describe each voice based on its name, then match.
 
@@ -133,14 +120,14 @@ which adds significant complexity. The feature was scoped but not implemented.
    - **Postponed entirely**: just build the config + `assign-voices` command
      now, use one voice for all text. Add dialogue detection later.
 
-5. **XTTS v2 server changes** — the current `/tts` endpoint takes one
-   `speaker_wav`. For multi-voice synthesis, either:
-   - Client-side: split text into segments, call `/tts` per segment with the
+5. **Silero server changes** — the current `POST /api/tts` endpoint takes one
+   `voice` parameter. For multi-voice synthesis, either:
+   - Client-side: split text into segments, call `/api/tts` per segment with the
      appropriate voice, concatenate WAVs. Simple but slower (more requests).
-   - Server-side: add a `/tts-multi` endpoint that accepts segments with
+   - Server-side: add a `/api/tts-multi` endpoint that accepts segments with
      per-segment voice assignments. Faster, single inference pass.
 
 **Prerequisites before implementing**:
 - `ai/characters.json` must exist (run `bookai analyze` first).
-- TTS server must be running (for `GET /voices`).
+- TTS server must be running (for `GET /api/voices`).
 - Decide on dialogue detection approach (full vs narrator-split vs none).
