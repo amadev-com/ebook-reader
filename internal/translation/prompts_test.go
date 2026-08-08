@@ -72,11 +72,12 @@ func TestUser(t *testing.T) {
 	t.Parallel()
 	ch := ChapterInfo{ID: 5, Title: "The Awakening"}
 	prompt := User(ch, "The source text here.")
-	if !strings.Contains(prompt, "Chapter 5") {
+	if !strings.Contains(prompt, "chapter 5") {
 		t.Errorf("user prompt missing chapter id")
 	}
-	if !strings.Contains(prompt, "The Awakening") {
-		t.Errorf("user prompt missing chapter title")
+	// Title should NOT be in the prompt header (it's in the source text).
+	if strings.Contains(prompt, "The Awakening") {
+		t.Errorf("user prompt should not include title in header (causes duplicates)")
 	}
 	if !strings.Contains(prompt, "The source text here.") {
 		t.Errorf("user prompt missing source text")

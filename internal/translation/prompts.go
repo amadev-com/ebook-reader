@@ -106,7 +106,7 @@ Rules:
 - Keep paragraph breaks exactly as in the source (separated by blank lines).
 - Do not add commentary, notes, or explanations. Output ONLY the translated text.
 - If you discover a new recurring term not in the glossary, translate it consistently within this chapter. The system will extract new terms separately.
-- Write ALL numbers as words in Russian, with correct gender and case agreement. For example: "5 лет" → "пять лет", "5-го этажа" → "пятого этажа", "300 человек" → "триста человек", "2 раза" → "два раза". Never leave digits in the translated text — the text-to-speech engine cannot read numbers.`)
+- Write ALL numbers as words in Russian, with correct gender and case agreement — including numbers in chapter titles. For example: "Глава 384" → "Глава триста восемьдесят четыре", "5 лет" → "пять лет", "5-го этажа" → "пятого этажа", "300 человек" → "триста человек", "2 раза" → "два раза". Never leave digits in the translated text — the text-to-speech engine cannot read numbers.`)
 	if glossaryBlock != "" {
 		b.WriteString("\n\n")
 		b.WriteString(glossaryBlock)
@@ -118,9 +118,12 @@ Rules:
 	return b.String()
 }
 
-// User builds the user prompt for translating one chapter.
+// User builds the user prompt for translating one chapter. The title is not
+// included in the prompt header because it is already embedded in the source
+// text (chapter source starts with the title line). Including it twice would
+// cause the translator to duplicate it in the output.
 func User(ch ChapterInfo, source string) string {
-	return fmt.Sprintf("Translate Chapter %d: %s\n\n%s", ch.ID, ch.Title, source)
+	return fmt.Sprintf("Translate chapter %d. The source text begins with the chapter title — translate it as part of the text.\n\n%s", ch.ID, source)
 }
 
 // --- Summary prompts (post-translation memory) ---

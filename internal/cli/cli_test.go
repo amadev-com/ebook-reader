@@ -339,3 +339,52 @@ func TestImportWithExplicitProjectFlag(t *testing.T) {
 		t.Errorf("EPUB not in explicit project dir %s", projDir)
 	}
 }
+
+func TestDeduplicateTitle(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "duplicate title",
+			input: "Глава 384: Глупый поступок!\n\nГлава 384: Глупый поступок!\n\nБыл полдень.",
+			want:  "Глава 384: Глупый поступок!\n\nБыл полдень.",
+		},
+		{
+			name:  "no duplicate",
+			input: "Глава 385: Скованные\n\nТело текста здесь.",
+			want:  "Глава 385: Скованные\n\nТело текста здесь.",
+		},
+		{
+			name:  "single line",
+			input: "Только одна строка.",
+			want:  "Только одна строка.",
+		},
+		{
+			name:  "empty",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "duplicate with extra blank lines",
+			input: "Title\n\n\n\nTitle\n\nBody",
+			want:  "Title\n\nBody",
+		},
+		{
+			name:  "different first and third lines",
+			input: "Title one\n\nTitle two\n\nBody",
+			want:  "Title one\n\nTitle two\n\nBody",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := deduplicateTitle(tc.input)
+			if got != tc.want {
+				t.Errorf("deduplicateTitle:\ninput: %q\ngot:   %q\nwant:  %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}

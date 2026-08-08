@@ -306,7 +306,9 @@ func processTranslateResults(ctx context.Context, proj *project.Project, state *
 		}
 
 		translationPath := translationPath(proj.TranslationDir(), chID, targetLang)
-		if err := project.SaveBytes(translationPath, []byte(strings.TrimSpace(res.Content)+"\n")); err != nil {
+		content := strings.TrimSpace(res.Content)
+		content = deduplicateTitle(content)
+		if err := project.SaveBytes(translationPath, []byte(content+"\n")); err != nil {
 			return fmt.Errorf("write translation for chapter %d: %w", chID, err)
 		}
 
@@ -335,6 +337,50 @@ func processTranslateResults(ctx context.Context, proj *project.Project, state *
 // translationPath returns the path for a chapter's translation file.
 func translationPath(translationDir string, chapterID int, targetLang string) string {
 	return filepath.Join(translationDir, fmt.Sprintf("chapter_%03d.%s.txt", chapterID, targetLang))
+}
+
+// deduplicateTitle removes a duplicated title line at the start of a
+// translation. Some chapter sources begin with the title line, and the
+// translation prompt used to repeat the title in the header — causing the
+// model to output the title twice. This strips the duplicate: if the text
+// starts with "Title\n\nTitle\n...", it becomes "Title\n\n...".
+func deduplicateTitle(text string) string {
+	// Find the first non-empty line.
+	firstNL := strings.IndexByte(text, '\n')
+	if firstNL < 0 {
+		return text
+	}
+	firstLine := strings.TrimSpace(text[:firstNL])
+	if firstLine == "" {
+		return text
+	}
+
+	// Skip the blank line(s) after the first line.
+	rest := text[firstNL+1:]
+	rest = strings.TrimLeft(rest, "\n\r \t")
+	if rest == "" {
+		return text
+	}
+
+	// Check if the remaining text starts with the same line.
+	secondNL := strings.IndexByte(rest, '\n')
+	var secondLine string
+	if secondNL < 0 {
+		secondLine = rest
+	} else {
+		secondLine = rest[:secondNL]
+	}
+	secondLine = strings.TrimSpace(secondLine)
+
+	if secondLine == firstLine {
+		// Duplicate detected: keep the first line + blank line + rest after second line.
+		afterSecond := rest
+		if secondNL >= 0 {
+			afterSecond = rest[secondNL+1:]
+		}
+		return firstLine + "\n\n" + strings.TrimLeft(afterSecond, "\n\r \t")
+	}
+	return text
 }
 
 // loadTranslatedChapters returns the IDs of chapters that have a translation
