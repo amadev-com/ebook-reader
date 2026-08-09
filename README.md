@@ -209,7 +209,7 @@ Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (SSML
 bookai tts -p my-vampire-system
 ```
 
-Synthesizes each `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the Silero TTS server. The engine sends SSML text with `ssml: true` to the server's `POST /api/tts` endpoint. Engines produce WAV internally; the CLI converts to MP3 via ffmpeg. To output WAV instead, set `tts.audio_format: wav` in `config.yaml`.
+Synthesizes each `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the Silero TTS server. The engine sends SSML text with `ssml: true` to the server's `POST /api/tts` endpoint. Long chapters are split into chunks under 900 characters; with `tts.parallel > 1` (default 1), chunks are synthesized concurrently and concatenated in order. Engines produce WAV internally; the CLI converts to MP3 via ffmpeg. To output WAV instead, set `tts.audio_format: wav` in `config.yaml`.
 
 ### Check progress at any time
 
@@ -319,6 +319,7 @@ tts:
   pitch: 1.0                     # pitch multiplier (1.0 = normal)
   audio_format: mp3              # "mp3" (default) or "wav"
   audio_bitrate: "128k"          # MP3 bitrate (default 128k)
+  parallel: 4                    # concurrent API requests per chapter (default 1)
 glossary:                        # optional: lock specific translations
   characters:
     - source: Quinn
