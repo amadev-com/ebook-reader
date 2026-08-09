@@ -196,3 +196,55 @@ func (c *Characters) Save(aiDir string) error {
 	})
 	return project.SaveJSON(aiDir+"/characters.json", c)
 }
+
+// Find looks up a character by name (case-insensitive). Returns the character
+// and true if found.
+func (c *Characters) Find(name string) (Character, bool) {
+	lower := strings.ToLower(name)
+	for _, ch := range c.Characters {
+		if strings.ToLower(ch.Name) == lower {
+			return ch, true
+		}
+	}
+	return Character{}, false
+}
+
+// Merge adds or updates characters from newChars. If a character with the same
+// name (case-insensitive) already exists, its fields are updated only if the
+// new values are more complete (non-empty where existing is empty). New
+// characters are appended. Returns the number of characters actually added.
+func (c *Characters) Merge(newChars []Character) int {
+	added := 0
+	for _, nc := range newChars {
+		if nc.Name == "" {
+			continue
+		}
+		if i, ok := c.findIndex(nc.Name); ok {
+			// Update fields if new is more complete.
+			if c.Characters[i].Translation == "" && nc.Translation != "" {
+				c.Characters[i].Translation = nc.Translation
+			}
+			if c.Characters[i].Role == "" && nc.Role != "" {
+				c.Characters[i].Role = nc.Role
+			}
+			if c.Characters[i].Description == "" && nc.Description != "" {
+				c.Characters[i].Description = nc.Description
+			}
+			continue
+		}
+		c.Characters = append(c.Characters, nc)
+		added++
+	}
+	return added
+}
+
+// findIndex returns the index of a character by name (case-insensitive).
+func (c *Characters) findIndex(name string) (int, bool) {
+	lower := strings.ToLower(name)
+	for i, ch := range c.Characters {
+		if strings.ToLower(ch.Name) == lower {
+			return i, true
+		}
+	}
+	return 0, false
+}

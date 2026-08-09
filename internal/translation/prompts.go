@@ -193,8 +193,9 @@ The "role" field for characters should be one of: "protagonist", "antagonist", "
 
 // GlossaryMergeUser builds the user prompt for the merge step. It receives all
 // per-chapter extraction results serialized as JSON, plus the locked terms
-// from config overrides.
-func GlossaryMergeUser(perChapterResults string, lockedTerms string) string {
+// from config overrides. If existing glossary/characters are provided, they
+// are included so the AI can merge new entries with the existing vocabulary.
+func GlossaryMergeUser(perChapterResults string, lockedTerms string, existingGlossary string, existingCharacters string) string {
 	var b strings.Builder
 	b.WriteString("Merge and unify these per-chapter glossary extraction results into a single clean glossary + character list.\n\n")
 	if lockedTerms != "" {
@@ -202,6 +203,21 @@ func GlossaryMergeUser(perChapterResults string, lockedTerms string) string {
 		b.WriteString("Do not change them:\n\n")
 		b.WriteString(lockedTerms)
 		b.WriteString("\n\n")
+	}
+	if existingGlossary != "" || existingCharacters != "" {
+		b.WriteString("EXISTING VOCABULARY — merge the new per-chapter results with these existing entries. ")
+		b.WriteString("Keep existing entries that are not contradicted by new results, and add new entries from the per-chapter results. ")
+		b.WriteString("If a term or character appears in both, prefer the more complete description/translation.\n\n")
+		if existingCharacters != "" {
+			b.WriteString("Existing characters (JSON):\n")
+			b.WriteString(existingCharacters)
+			b.WriteString("\n\n")
+		}
+		if existingGlossary != "" {
+			b.WriteString("Existing glossary terms (JSON):\n")
+			b.WriteString(existingGlossary)
+			b.WriteString("\n\n")
+		}
 	}
 	b.WriteString("Per-chapter extraction results (JSON array, one object per chapter):\n\n")
 	b.WriteString(perChapterResults)

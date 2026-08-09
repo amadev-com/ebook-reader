@@ -169,3 +169,41 @@ func TestStressUser_WithOverrides(t *testing.T) {
 		t.Errorf("prompt missing override: %s", prompt)
 	}
 }
+
+func TestGlossaryMergeUser_NoExisting(t *testing.T) {
+	t.Parallel()
+	prompt := GlossaryMergeUser(`[{"terms":[]}]`, "", "", "")
+	if !strings.Contains(prompt, "Per-chapter extraction results") {
+		t.Errorf("prompt missing per-chapter results header")
+	}
+	if strings.Contains(prompt, "EXISTING VOCABULARY") {
+		t.Errorf("prompt should not include existing vocabulary section when empty")
+	}
+}
+
+func TestGlossaryMergeUser_WithExisting(t *testing.T) {
+	t.Parallel()
+	prompt := GlossaryMergeUser(`[{"terms":[]}]`, "",
+		`[{"source":"Guild","target":"Гильдия","type":"organization"}]`,
+		`[{"name":"Quinn","translation":"Куинн","role":"protagonist"}]`)
+	if !strings.Contains(prompt, "EXISTING VOCABULARY") {
+		t.Errorf("prompt missing existing vocabulary section")
+	}
+	if !strings.Contains(prompt, "Guild") {
+		t.Errorf("prompt missing existing glossary term")
+	}
+	if !strings.Contains(prompt, "Quinn") {
+		t.Errorf("prompt missing existing character")
+	}
+}
+
+func TestGlossaryMergeUser_WithLockedTerms(t *testing.T) {
+	t.Parallel()
+	prompt := GlossaryMergeUser(`[{"terms":[]}]`, "  Guild = Гильдия\n", "", "")
+	if !strings.Contains(prompt, "LOCKED TRANSLATIONS") {
+		t.Errorf("prompt missing locked translations section")
+	}
+	if !strings.Contains(prompt, "Guild = Гильдия") {
+		t.Errorf("prompt missing locked term")
+	}
+}

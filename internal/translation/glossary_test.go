@@ -227,6 +227,98 @@ func TestGlossaryWithCharacters(t *testing.T) {
 // Ensure filepath is used (for potential path joins in future tests).
 var _ = filepath.Join
 
+func TestCharactersFind(t *testing.T) {
+	t.Parallel()
+	c := &Characters{
+		Characters: []Character{
+			{Name: "Quinn", Translation: "Куинн"},
+			{Name: "Mona", Translation: "Мона"},
+		},
+	}
+	if _, ok := c.Find("quinn"); !ok {
+		t.Error("Find should be case-insensitive")
+	}
+	if _, ok := c.Find("Nonexistent"); ok {
+		t.Error("Find should return false for nonexistent")
+	}
+}
+
+func TestCharactersMerge_NewCharacters(t *testing.T) {
+	t.Parallel()
+	c := &Characters{
+		Characters: []Character{
+			{Name: "Quinn", Translation: "Куинн", Role: "protagonist"},
+		},
+	}
+	added := c.Merge([]Character{
+		{Name: "Mona", Translation: "Мона"},
+		{Name: "Jack", Translation: "Джек"},
+	})
+	if added != 2 {
+		t.Errorf("added = %d, want 2", added)
+	}
+	if len(c.Characters) != 3 {
+		t.Errorf("total characters = %d, want 3", len(c.Characters))
+	}
+}
+
+func TestCharactersMerge_UpdateExisting(t *testing.T) {
+	t.Parallel()
+	c := &Characters{
+		Characters: []Character{
+			{Name: "Quinn", Translation: "", Role: "", Description: ""},
+		},
+	}
+	added := c.Merge([]Character{
+		{Name: "Quinn", Translation: "Куинн", Role: "protagonist", Description: "The main character"},
+	})
+	if added != 0 {
+		t.Errorf("added = %d, want 0 (existing was updated)", added)
+	}
+	if c.Characters[0].Translation != "Куинн" {
+		t.Errorf("translation not updated: %q", c.Characters[0].Translation)
+	}
+	if c.Characters[0].Role != "protagonist" {
+		t.Errorf("role not updated: %q", c.Characters[0].Role)
+	}
+	if c.Characters[0].Description != "The main character" {
+		t.Errorf("description not updated: %q", c.Characters[0].Description)
+	}
+}
+
+func TestCharactersMerge_DoesNotOverwriteExisting(t *testing.T) {
+	t.Parallel()
+	c := &Characters{
+		Characters: []Character{
+			{Name: "Quinn", Translation: "Куинн", Role: "protagonist", Description: "Original desc"},
+		},
+	}
+	added := c.Merge([]Character{
+		{Name: "Quinn", Translation: "NEW", Role: "supporting", Description: "New desc"},
+	})
+	if added != 0 {
+		t.Errorf("added = %d, want 0", added)
+	}
+	// Existing values should NOT be overwritten.
+	if c.Characters[0].Translation != "Куинн" {
+		t.Errorf("translation overwritten: %q", c.Characters[0].Translation)
+	}
+	if c.Characters[0].Role != "protagonist" {
+		t.Errorf("role overwritten: %q", c.Characters[0].Role)
+	}
+}
+
+func TestCharactersMerge_EmptyName(t *testing.T) {
+	t.Parallel()
+	c := &Characters{}
+	added := c.Merge([]Character{
+		{Name: "", Translation: "test"},
+	})
+	if added != 0 {
+		t.Errorf("added = %d, want 0 for empty name", added)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || containsStr(s, substr))
 }

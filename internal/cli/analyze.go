@@ -23,6 +23,10 @@ import (
 // completes, a single "live" (non-batch) request merges and unifies all
 // per-chapter results into the final glossary.json + characters.json.
 //
+// When run on a subset of chapters (--chapter/--range), new results are merged
+// with the existing glossary.json + characters.json. The --force flag starts
+// fresh (ignores existing files and replaces them).
+//
 // The command supports a --continue flag to resume polling an interrupted
 // batch. Batch state is persisted locally in ai/batch_analyze.json.
 func newAnalyzeCmd() *cobra.Command {
@@ -48,7 +52,7 @@ func newAnalyzeCmd() *cobra.Command {
 			return runAnalyze(ctx, proj, force, cont, chapter, chRange, pollInt)
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "re-analyze even if glossary.json already exists")
+	cmd.Flags().BoolVar(&force, "force", false, "start fresh — ignore existing glossary/characters and replace them")
 	cmd.Flags().BoolVar(&cont, "continue", false, "resume polling an interrupted batch")
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "analyze only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "analyze a range of chapter ids, e.g. 5-12")
@@ -66,17 +70,25 @@ func runAnalyze(ctx context.Context, proj *project.Project, force, cont bool, ch
 		pollInt = 60
 	}
 
-	glossaryPath := filepath.Join(proj.AIDir(), "glossary.json")
-
 	// --continue: resume polling an existing batch.
 	if cont {
 		return resumeAnalyzeBatch(ctx, proj, pollInt)
 	}
 
-	// Fresh run: check if glossary already exists.
-	if project.Exists(glossaryPath) && !force {
-		slog.Info("glossary already exists, skipping (use --force to re-analyze)", "path", glossaryPath)
-		return nil
+	// Load existing glossary + characters for merging (unless --force).
+	// --force means "start fresh" — ignore existing files.
+	var existingGlossary *translation.Glossary
+	var existingCharacters *translation.Characters
+	if !force {
+		existingGlossary, _ = translation.LoadGlossary(proj.AIDir())
+		existingCharacters, _ = translation.LoadCharacters(proj.AIDir())
+		if len(existingGlossary.Terms) > 0 || len(existingCharacters.Characters) > 0 {
+			slog.Info("merging with existing vocabulary",
+				"existing_terms", len(existingGlossary.Terms),
+				"existing_characters", len(existingCharacters.Characters))
+		}
+	} else {
+		slog.Info("starting fresh (--force, ignoring existing glossary/characters)")
 	}
 
 	// Check for an existing pending batch.
@@ -84,7 +96,7 @@ func runAnalyze(ctx context.Context, proj *project.Project, force, cont bool, ch
 		if !translation.IsTerminalStatus(state.Status) {
 			slog.Info("found pending analyze batch, resuming polling (use --force to start a new one)",
 				"batch_id", state.BatchID, "status", state.Status)
-			return pollAnalyzeBatch(ctx, proj, state, pollInt)
+			return pollAnalyzeBatch(ctx, proj, state, pollInt, existingGlossary, existingCharacters)
 		}
 		slog.Info("cleaning up completed batch state from previous run", "batch_id", state.BatchID)
 		_ = translation.DeleteBatchState(proj.AIDir(), "analyze")
@@ -173,7 +185,7 @@ func runAnalyze(ctx context.Context, proj *project.Project, force, cont bool, ch
 	}
 
 	// Poll until completion.
-	return pollAnalyzeBatch(ctx, proj, state, pollInt)
+	return pollAnalyzeBatch(ctx, proj, state, pollInt, existingGlossary, existingCharacters)
 }
 
 // resumeAnalyzeBatch loads the persisted batch state and resumes polling.
@@ -189,12 +201,15 @@ func resumeAnalyzeBatch(ctx context.Context, proj *project.Project, pollInt int)
 		slog.Info("batch already reached terminal status, processing results", "batch_id", state.BatchID, "status", state.Status)
 	}
 	slog.Info("resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
-	return pollAnalyzeBatch(ctx, proj, state, pollInt)
+	return pollAnalyzeBatch(ctx, proj, state, pollInt, nil, nil)
 }
 
 // pollAnalyzeBatch polls the batch status every pollInt seconds. When the batch
 // reaches a terminal status, it downloads results and processes them.
-func pollAnalyzeBatch(ctx context.Context, proj *project.Project, state *translation.BatchState, pollInt int) error {
+// existingGlossary and existingCharacters are passed to the merge step so new
+// results can be merged with existing vocabulary (nil for --force or --continue
+// without existing files).
+func pollAnalyzeBatch(ctx context.Context, proj *project.Project, state *translation.BatchState, pollInt int, existingGlossary *translation.Glossary, existingCharacters *translation.Characters) error {
 	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
 	if err != nil {
 		return err
@@ -239,7 +254,7 @@ func pollAnalyzeBatch(ctx context.Context, proj *project.Project, state *transla
 	// Terminal status reached.
 	switch state.Status {
 	case "completed":
-		return processAnalyzeResults(ctx, proj, state, batchClient)
+		return processAnalyzeResults(ctx, proj, state, batchClient, existingGlossary, existingCharacters)
 	case "failed":
 		return fmt.Errorf("batch %s failed — check OpenAI dashboard for details", state.BatchID)
 	case "expired":
@@ -255,7 +270,9 @@ func pollAnalyzeBatch(ctx context.Context, proj *project.Project, state *transla
 // glossary results and summaries (both from the same JSON response), saves
 // summaries to memory/, sends a live merge/unify request for glossary results,
 // applies config overrides, and saves the final glossary.json + characters.json.
-func processAnalyzeResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient) error {
+// If existingGlossary/existingCharacters are non-nil, their entries are passed
+// to the merge prompt so the AI can merge new results with existing vocabulary.
+func processAnalyzeResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient, existingGlossary *translation.Glossary, existingCharacters *translation.Characters) error {
 	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
 
 	results, err := batchClient.DownloadResults(ctx, state.OutputFileID)
@@ -310,6 +327,21 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 		return fmt.Errorf("marshal per-chapter results: %w", err)
 	}
 
+	// Serialize existing glossary/characters for the merge prompt (if any).
+	var existingGlossaryJSON, existingCharactersJSON string
+	if existingGlossary != nil && len(existingGlossary.Terms) > 0 {
+		data, err := json.Marshal(existingGlossary.Terms)
+		if err == nil {
+			existingGlossaryJSON = string(data)
+		}
+	}
+	if existingCharacters != nil && len(existingCharacters.Characters) > 0 {
+		data, err := json.Marshal(existingCharacters.Characters)
+		if err == nil {
+			existingCharactersJSON = string(data)
+		}
+	}
+
 	// Send a live merge/unify request.
 	client, err := translation.NewClient(proj.Cfg.OpenAI)
 	if err != nil {
@@ -317,11 +349,15 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 	}
 	lockedTerms := buildLockedTerms(proj.Cfg.Glossary)
 
-	slog.Info("sending merge/unify request", "chapters", len(perChapter), "model", client.HelperModel())
+	slog.Info("sending merge/unify request",
+		"chapters", len(perChapter),
+		"existing_terms", len(existingGlossary.Terms),
+		"existing_characters", len(existingCharacters.Characters),
+		"model", client.HelperModel())
 
 	resp, err := client.Chat(ctx, translation.ChatRequest{
 		System:   translation.GlossaryMergeSystem,
-		User:     translation.GlossaryMergeUser(string(perChapterJSON), lockedTerms),
+		User:     translation.GlossaryMergeUser(string(perChapterJSON), lockedTerms, existingGlossaryJSON, existingCharactersJSON),
 		Model:    client.HelperModel(),
 		JSONMode: true,
 	})
