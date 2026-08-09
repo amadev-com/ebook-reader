@@ -2,7 +2,7 @@
 
 REST server for Silero text-to-speech synthesis with SSML and stress mark support.
 
-Based on [biblio-tts-server-silero](https://github.com/vpoluyaktov/biblio-tts-server-silero) — uses the prebuilt Docker image, no custom server code needed.
+Based on [biblio-tts-server-silero](https://github.com/vpoluyaktov/biblio-tts-server-silero) — uses the prebuilt Docker image with a custom entry point (`server.py`) that enables multi-worker parallel processing.
 
 ## Quick Start
 
@@ -31,6 +31,23 @@ The `docker-compose.yml` sets these environment variables:
 |----------|-------------|---------|
 | `SILERO_DEVICE` | PyTorch device (`cpu` or `cuda`) | `cpu` |
 | `SILERO_SERVED_MODELS` | Comma-separated models to serve | `v5_5_ru` |
+| `SILERO_WORKERS` | Number of parallel uvicorn worker processes | `4` |
+| `OMP_NUM_THREADS` | Torch/numpy threads per worker (keep at 1) | `1` |
+| `MKL_NUM_THREADS` | MKL threads per worker (keep at 1) | `1` |
+
+## Parallel Processing
+
+The server runs multiple uvicorn worker processes, each with its own model copy
+and a single torch thread. This enables true parallel request processing:
+
+- **4 workers** = 4 concurrent TTS requests processed simultaneously
+- Each worker uses 1 CPU core (no oversubscription)
+- Model is small (~30MB), so 4 copies use ~120MB RAM total
+- **~3x speedup** on real workloads (700-char chunks: 5.4s sequential → 1.7s parallel)
+
+Tune `SILERO_WORKERS` to match your CPU core count. The `tts.parallel` setting in
+`config.yaml` controls how many concurrent requests the bookai client sends per
+chapter — set it to match `SILERO_WORKERS` for optimal throughput.
 
 ## Available Russian Models
 
@@ -75,4 +92,5 @@ tts:
   sample_rate: 48000
   speed: 1.0
   pitch: 1.0
+  parallel: 4                    # concurrent chunk requests (match SILERO_WORKERS)
 ```

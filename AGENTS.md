@@ -54,7 +54,7 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 - SSML generation: `internal/tts/ssml.go` — `GenerateSSML(text)` splits text into paragraphs and sentences, wraps in `<speak>`/`<p>`/`<s>` tags. Stress marks preserved as-is. Malformed stress marks (`+` not before a Cyrillic vowel) are stripped via `sanitizeStressMarks()`. Latin characters are replaced with Cyrillic look-alikes via `latinToCyrillic()` to prevent Silero parser crashes.
 - Config: `tts.engine` ("noop" default, "silero-http" for real TTS), `tts.language`, `tts.server_url`, `tts.voice`, `tts.speed`, `tts.pitch`, `tts.sample_rate`, `tts.audio_format` ("mp3" default, "wav"), `tts.audio_bitrate` ("128k" default), `tts.parallel` (concurrent chunk requests, default 1).
 - Flags: `--force`, `--chapter N`, `--range M-N`.
-- TTS server: `tts-server/` directory with `docker-compose.yml` using prebuilt `vpoluyaktov/biblio-tts-server-silero:latest` image. See `tts-server/README.md`.
+- TTS server: `tts-server/` directory with `docker-compose.yml` using prebuilt `vpoluyaktov/bibliohub-tts-server-silero:dev-latest` image + custom `server.py` entry point that runs multiple uvicorn workers for parallel request processing. Each worker has its own model copy and `torch.set_num_threads(1)` to avoid CPU oversubscription. `SILERO_WORKERS` env var controls worker count (default 4). See `tts-server/README.md`.
 - To add a real engine: create `internal/tts/<engine>.go`, implement `Engine`, call `Register("name", factory)` in `init()`. No changes needed to CLI or pipeline code.
 
 ## Conventions

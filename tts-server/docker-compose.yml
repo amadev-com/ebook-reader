@@ -1,7 +1,9 @@
 # docker-compose.yml — Silero TTS server for bookai
 #
-# Uses the prebuilt biblio-tts-server-silero image, which provides a
-# FastAPI REST server for Silero TTS with SSML and stress mark support.
+# Uses the prebuilt biblio-tts-server-silero image with a custom entry
+# point (server.py) that runs multiple uvicorn workers for parallel
+# request processing. Each worker has its own model copy and 1 torch
+# thread, so N workers = N concurrent inferences on N CPU cores.
 #
 # Usage:
 #   docker compose up -d          # start the TTS server
@@ -14,16 +16,30 @@
 #
 # Available Russian voices: aidar (M), baya (F), kseniya (F), eugene (M), xenia (F)
 # Voice ID format: silero:{model}#{speaker}, e.g. silero:v5_5_ru#xenia
+#
+# Performance tuning:
+#   SILERO_WORKERS controls how many concurrent requests the server can
+#   process. Set it to match your CPU core count (or slightly below).
+#   Each worker loads its own ~30MB model copy, so RAM usage is roughly
+#   workers × 200MB. With 4 workers on a 4-core machine, 4 chunks are
+#   synthesized simultaneously — ~4x speedup vs sequential.
 
 services:
   silero:
-    image: vpoluyaktov/biblio-tts-server-silero:latest
+    image: vpoluyaktov/bibliohub-tts-server-silero:dev-latest
     container_name: bookai-silero
     ports:
-      - "5555:80"
+      - "5555:5555"
     environment:
-      - SILERO_DEVICE=cpu          # "cpu" or "cuda" (for GPU)
+      - SILERO_DEVICE=cpu             # "cpu" or "cuda" (for GPU)
       - SILERO_SERVED_MODELS=v5_5_ru  # comma-separated models to preload
+      - SILERO_WORKERS=4              # number of parallel worker processes
+      - OMP_NUM_THREADS=1             # limit torch/numpy to 1 thread per worker
+      - MKL_NUM_THREADS=1
+    volumes:
+      # Mount our custom entry point that enables multi-worker mode
+      - ./server.py:/app/server.py:ro
+    command: ["python", "/app/server.py"]
     # For GPU support, uncomment:
     # deploy:
     #   resources:
