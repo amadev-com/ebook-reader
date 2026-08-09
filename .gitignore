@@ -5,3 +5,6 @@
 # build artifacts
 /bookai
 *.epub
+
+# TTS server model cache (pre-downloaded Silero models, ~140MB)
+/tts-server/models/

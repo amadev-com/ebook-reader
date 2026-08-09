@@ -16,6 +16,32 @@ The server will be available at `http://localhost:5555`.
 - OpenAPI spec: `http://localhost:5555/openapi.json`
 - Health check: `http://localhost:5555/health`
 
+## Model Cache
+
+The `models/` directory contains pre-downloaded Silero model files (~140MB).
+It is mounted read-only into the container at `/data/silero`, so all workers
+load the model from local cache instead of downloading in parallel on first
+start.
+
+To populate the cache on a new machine:
+
+```bash
+# 1. Start the server without the models mount (comment out the volume in
+#    docker-compose.yml), or use the original image directly:
+docker run --rm -p 5555:5555 -e SILERO_SERVED_MODELS=v5_5_ru \
+  vpoluyaktov/bibliohub-tts-server-silero:dev-latest
+
+# 2. Trigger a synthesis request to download the model:
+curl -X POST http://localhost:5555/api/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text":"<speak><s>тест</s></speak>","voice":"silero:v5_5_ru#xenia","ssml":true,"sample_rate":48000}'
+
+# 3. Copy the cache from the container:
+docker cp <container_id>:/data/silero/. ./models/
+
+# 4. Stop the container, then docker compose up -d with the mount active.
+```
+
 ## API Endpoints
 
 - `POST /api/tts` — Synthesize speech (accepts JSON body with `text`, `voice`, `ssml`, `sample_rate`, `speed`, `pitch`)
@@ -31,7 +57,7 @@ The `docker-compose.yml` sets these environment variables:
 |----------|-------------|---------|
 | `SILERO_DEVICE` | PyTorch device (`cpu` or `cuda`) | `cpu` |
 | `SILERO_SERVED_MODELS` | Comma-separated models to serve | `v5_5_ru` |
-| `SILERO_WORKERS` | Number of parallel uvicorn worker processes | `4` |
+| `SILERO_WORKERS` | Number of parallel uvicorn worker processes | CPU cores (capped at 12) |
 | `OMP_NUM_THREADS` | Torch/numpy threads per worker (keep at 1) | `1` |
 | `MKL_NUM_THREADS` | MKL threads per worker (keep at 1) | `1` |
 

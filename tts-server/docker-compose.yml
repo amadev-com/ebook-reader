@@ -33,12 +33,18 @@ services:
     environment:
       - SILERO_DEVICE=cpu             # "cpu" or "cuda" (for GPU)
       - SILERO_SERVED_MODELS=v5_5_ru  # comma-separated models to preload
-      - SILERO_WORKERS=4              # number of parallel worker processes
       - OMP_NUM_THREADS=1             # limit torch/numpy to 1 thread per worker
       - MKL_NUM_THREADS=1
+      # SILERO_WORKERS defaults to CPU core count. Uncomment to override:
+      # - SILERO_WORKERS=4
     volumes:
       # Mount our custom entry point that enables multi-worker mode
       - ./server.py:/app/server.py:ro
+      # Mount pre-downloaded model cache so workers don't download in parallel
+      # on first start. The models/ dir contains the Silero .pt files and
+      # latest_silero_models.yml. To populate it, run the server once without
+      # this mount, then: docker cp bookai-silero:/data/silero/. ./models/
+      - ./models:/data/silero:ro
     command: ["python", "/app/server.py"]
     # For GPU support, uncomment:
     # deploy:

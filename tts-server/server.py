@@ -6,7 +6,7 @@ the Silero model (~30MB) and uses a single torch thread to avoid CPU
 oversubscription.
 
 Environment variables:
-    SILERO_WORKERS  — number of uvicorn worker processes (default 4)
+    SILERO_WORKERS  — number of uvicorn worker processes (default: CPU cores)
     SILERO_HOST      — bind host (default 0.0.0.0)
     SILERO_PORT      — bind port (default 80, mapped to 5555 in compose)
     SILERO_DEVICE    — "cpu" or "cuda" (default cpu)
@@ -30,7 +30,13 @@ from biblio_tts_server_silero.config import Settings
 
 settings = Settings()
 
-workers = int(os.environ.get("SILERO_WORKERS", "4"))
+# Default to available CPU cores, capped at 12 to avoid excessive memory
+# usage (each worker loads its own ~200MB model copy). Each worker uses
+# 1 core (torch threads=1), so N workers = N concurrent inferences.
+# Override via SILERO_WORKERS env var if you need more or fewer.
+cpu_count = os.cpu_count() or 1
+default_workers = min(cpu_count, 12)
+workers = int(os.environ.get("SILERO_WORKERS", str(default_workers)))
 host = os.environ.get("SILERO_HOST", settings.host)
 port = int(os.environ.get("SILERO_PORT", str(settings.port)))
 
