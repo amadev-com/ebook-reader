@@ -25,6 +25,12 @@ type StressEntry struct {
 	// Stressed is the stressed form with '+' before the stressed vowel
 	// (e.g., "к+едров" or "догов+ор").
 	Stressed string `json:"stressed"`
+
+	// Approved indicates that the user has manually confirmed this stressed
+	// form during conflict resolution. Approved entries are not re-asked on
+	// future runs — if a new chapter produces a different stressed form for
+	// the same term, the approved form is kept silently.
+	Approved bool `json:"approved,omitempty"`
 }
 
 // StressConflict represents a term where different chapters produced
@@ -96,7 +102,9 @@ func (s *Stress) Apply(text string) string {
 
 // Merge merges other into s. If a term exists in both with the same stressed
 // form, it's kept once. If a term exists in both with different stressed
-// forms, the entry from s is kept and a StressConflict is returned. New terms
+// forms, the entry from s is kept and a StressConflict is returned — UNLESS
+// the existing entry is Approved, in which case the conflict is silently
+// resolved (the approved form is kept, no conflict reported). New terms
 // from other are appended.
 func (s *Stress) Merge(other *Stress) []StressConflict {
 	var conflicts []StressConflict
@@ -111,6 +119,11 @@ func (s *Stress) Merge(other *Stress) []StressConflict {
 			if strings.EqualFold(s.Entries[i].Term, oe.Term) {
 				found = true
 				if !strings.EqualFold(s.Entries[i].Stressed, oe.Stressed) {
+					// If the existing entry is approved, silently keep it.
+					// Don't report a conflict — the user already decided.
+					if s.Entries[i].Approved {
+						break
+					}
 					if !conflictMap[strings.ToLower(oe.Term)] {
 						conflicts = append(conflicts, StressConflict{
 							Term:     oe.Term,
@@ -163,6 +176,8 @@ func uniqueVariants(forms ...string) []string {
 
 // ResolveConflict updates the stressed form for a term in the store. If the
 // term doesn't exist, it's added. If stressed is empty, the entry is removed.
+// The resolved entry is marked as Approved so future runs won't re-ask the
+// user for the same term.
 func (s *Stress) ResolveConflict(term, stressed string) {
 	for i := range s.Entries {
 		if strings.EqualFold(s.Entries[i].Term, term) {
@@ -170,11 +185,16 @@ func (s *Stress) ResolveConflict(term, stressed string) {
 				s.Entries = append(s.Entries[:i], s.Entries[i+1:]...)
 			} else {
 				s.Entries[i].Stressed = stressed
+				s.Entries[i].Approved = true
 			}
 			return
 		}
 	}
 	if stressed != "" {
-		s.Entries = append(s.Entries, StressEntry{Term: term, Stressed: stressed})
+		s.Entries = append(s.Entries, StressEntry{
+			Term:     term,
+			Stressed: stressed,
+			Approved: true,
+		})
 	}
 }

@@ -367,8 +367,12 @@ func TestStress_ResolveConflict(t *testing.T) {
 	}
 	// Update existing.
 	s.ResolveConflict("договор", "д+оговор")
-	if entry, _ := s.Lookup("договор"); entry.Stressed != "д+оговор" {
+	entry, _ := s.Lookup("договор")
+	if entry.Stressed != "д+оговор" {
 		t.Errorf("resolve failed: got %q", entry.Stressed)
+	}
+	if !entry.Approved {
+		t.Error("resolved entry should be marked Approved")
 	}
 	// Remove by empty stressed.
 	s.ResolveConflict("договор", "")
@@ -377,8 +381,74 @@ func TestStress_ResolveConflict(t *testing.T) {
 	}
 	// Add new.
 	s.ResolveConflict("новый", "н+овый")
-	if entry, _ := s.Lookup("новый"); entry.Stressed != "н+овый" {
+	entry, _ = s.Lookup("новый")
+	if entry.Stressed != "н+овый" {
 		t.Errorf("add failed: got %q", entry.Stressed)
+	}
+	if !entry.Approved {
+		t.Error("new resolved entry should be marked Approved")
+	}
+}
+
+func TestStress_Merge_ApprovedNoConflict(t *testing.T) {
+	global := &Stress{
+		Entries: []StressEntry{
+			{Term: "договор", Stressed: "догов+ор", Approved: true},
+		},
+	}
+	other := &Stress{
+		Entries: []StressEntry{
+			{Term: "договор", Stressed: "д+оговор"}, // different stress, but existing is approved
+		},
+	}
+	conflicts := global.Merge(other)
+	if len(conflicts) != 0 {
+		t.Errorf("approved entry should not produce conflict, got %d", len(conflicts))
+	}
+	// Existing approved form should be kept.
+	if entry, _ := global.Lookup("договор"); entry.Stressed != "догов+ор" {
+		t.Errorf("approved form should be kept, got %q", entry.Stressed)
+	}
+}
+
+func TestStress_Merge_NotApprovedStillConflicts(t *testing.T) {
+	global := &Stress{
+		Entries: []StressEntry{
+			{Term: "договор", Stressed: "догов+ор", Approved: false},
+		},
+	}
+	other := &Stress{
+		Entries: []StressEntry{
+			{Term: "договор", Stressed: "д+оговор"},
+		},
+	}
+	conflicts := global.Merge(other)
+	if len(conflicts) != 1 {
+		t.Fatalf("non-approved entry should still conflict, got %d", len(conflicts))
+	}
+}
+
+func TestHasValidStressMark(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"к+едров", true},
+		{"догов+ор", true},
+		{"+Эдвард", true},
+		{"кедров", false},      // no + at all
+		{"М+С", false},         // + before consonant
+		{"фамил+ьяр", false},   // + before soft sign
+		{"текст+", false},      // + at end
+		{"+текст", false},      // + before consonant at start
+		{"к+едров д+ом", true}, // multiple valid marks
+		{"", false},
+	}
+	for _, tc := range tests {
+		got := HasValidStressMark(tc.input)
+		if got != tc.want {
+			t.Errorf("HasValidStressMark(%q) = %v, want %v", tc.input, got, tc.want)
+		}
 	}
 }
 

@@ -240,6 +240,8 @@ const StressSystem = `You are a Russian phonetics expert. Your task is to scan a
 Stress mark convention:
 - The '+' goes IMMEDIATELY BEFORE the stressed vowel in the word.
 - The '+' MUST be placed before a VOWEL (а, е, ё, и, о, у, ы, э, ю, я) — NEVER before a consonant, soft sign (ь), hard sign (ъ), or any other non-vowel character.
+- Use ONLY the ASCII plus character '+' to mark stress. NEVER use Unicode combining stress marks (U+0301, U+0300, etc.) or precomposed stressed letters (like и́, е́, о́, а́, у́, ы́, э́, ю́, я́). The "stressed" field must contain ONLY plain Cyrillic letters and the '+' character — no diacritics, no combining marks, no special Unicode characters.
+- The "stressed" field MUST contain exactly one '+' character, placed before the stressed vowel. If the word does not need a stress mark (obvious stress), do not include it at all.
 - кедров → к+едров (stress on "е")
 - договор → догов+ор (stress on second "о")
 - звонит → зв+онит (stress on "о")
@@ -254,6 +256,8 @@ Rules:
 - The "term" field must match the word exactly as it appears in the chapter text (case-sensitive), so it can be found and replaced.
 - The "stressed" field must be the same word with a '+' inserted before the stressed vowel.
 - NEVER place '+' before a consonant or soft/hard sign. Examples of WRONG output: "М+С", "фамил+ьяр", "Деся+той". These crash the TTS engine.
+- WRONG: "stressed": "иску́сственный" (Unicode stress mark). RIGHT: "stressed": "иску́сственный" is WRONG — use "stressed": "искус+ственный" instead.
+- WRONG: "stressed": "обстоятельств" (no '+' at all — this is identical to the term and useless). If the word doesn't need a stress mark, don't include it.
 
 Return a JSON object with this exact shape:
 {

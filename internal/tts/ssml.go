@@ -157,6 +157,19 @@ func isCyrillicVowel(r rune) bool {
 	return false
 }
 
+// HasValidStressMark reports whether s contains at least one '+' that is
+// immediately before a Cyrillic vowel. This is used to validate AI-produced
+// stress entries before merging them into the vocabulary.
+func HasValidStressMark(s string) bool {
+	runes := []rune(s)
+	for i, r := range runes {
+		if r == '+' && i+1 < len(runes) && isCyrillicVowel(runes[i+1]) {
+			return true
+		}
+	}
+	return false
+}
+
 // escapeXML escapes the five special XML characters, replaces Latin letters
 // with their Cyrillic visual equivalents (Silero's Russian SSML parser crashes
 // on Latin characters), and preserves stress marks (+) as-is.

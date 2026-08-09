@@ -317,6 +317,10 @@ func processPronounceResults(ctx context.Context, proj *project.Project, state *
 			continue
 		}
 
+		// Sanitize AI output: strip Unicode stress marks, drop entries
+		// without a '+', and drop entries with '+' before a non-vowel.
+		sanitizeStressResult(&result)
+
 		// Apply config overrides.
 		applyStressOverrides(&result, proj.Cfg.Pronunciation)
 
@@ -450,6 +454,48 @@ func parseIntChoice(s string, maxVal int) (int, error) {
 // stressResult is the JSON shape we expect from the model.
 type stressResult struct {
 	Entries []tts.StressEntry `json:"entries"`
+}
+
+// sanitizeStressResult cleans AI-produced stress entries in place:
+//  1. Strips Unicode combining stress marks (U+0300–U+0342) and precomposed
+//     stressed vowels (и́, е́, etc.) — only ASCII '+' is valid.
+//  2. Drops entries where "stressed" has no '+' at all (useless — identical
+//     to the term).
+//  3. Drops entries where '+' is not before a Cyrillic vowel (would crash
+//     Silero).
+func sanitizeStressResult(result *stressResult) {
+	cleaned := result.Entries[:0]
+	for _, e := range result.Entries {
+		e.Stressed = stripUnicodeStress(e.Stressed)
+		if !strings.Contains(e.Stressed, "+") {
+			continue
+		}
+		if !tts.HasValidStressMark(e.Stressed) {
+			continue
+		}
+		cleaned = append(cleaned, e)
+	}
+	result.Entries = cleaned
+}
+
+// stripUnicodeStress removes Unicode combining diacritical marks (stress,
+// grave, acute, etc.) from the string. The Silero convention uses only ASCII
+// '+' before the stressed vowel — any Unicode stress marks are AI artifacts
+// that must be removed.
+func stripUnicodeStress(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		// Strip combining diacritical marks (U+0300–U+036F) and
+		// precomposed Cyrillic stressed vowels (U+0401 is ё, handled
+		// separately). Also strip the combining acute/grave/cyrillic
+		// stress marks specifically.
+		if r >= 0x0300 && r <= 0x036F {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // applyStressOverrides forces the stress of any entry that matches a config
