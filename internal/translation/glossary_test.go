@@ -326,11 +326,11 @@ func TestPromptBlockForChapter(t *testing.T) {
 			{Source: "Guild", Target: "Гильдия", Type: "organization", Chapters: []int{1, 5, 10}},
 			{Source: "Quinn", Target: "Куинн", Type: "character", Chapters: []int{1, 2, 3}},
 			{Source: "Dalki", Target: "Далки", Type: "term", Chapters: []int{5, 6}},
-			{Source: "Legacy", Target: "Наследие", Type: "term"}, // no chapter tags — legacy
+			{Source: "Untagged", Target: "Безметочный", Type: "term"}, // no chapter tags — excluded
 		},
 	}
 
-	// Chapter 1: Guild + Quinn + Legacy (legacy always included).
+	// Chapter 1: Guild + Quinn (terms tagged with chapter 1).
 	block := g.PromptBlockForChapter(1)
 	if !contains(block, "Guild") {
 		t.Error("chapter 1 missing Guild")
@@ -338,14 +338,14 @@ func TestPromptBlockForChapter(t *testing.T) {
 	if !contains(block, "Quinn") {
 		t.Error("chapter 1 missing Quinn")
 	}
-	if !contains(block, "Legacy") {
-		t.Error("chapter 1 missing Legacy (no chapter tags = always included)")
-	}
 	if contains(block, "Dalki") {
 		t.Error("chapter 1 should NOT include Dalki")
 	}
+	if contains(block, "Untagged") {
+		t.Error("chapter 1 should NOT include Untagged (no chapter tags)")
+	}
 
-	// Chapter 5: Guild + Dalki + Legacy.
+	// Chapter 5: Guild + Dalki.
 	block5 := g.PromptBlockForChapter(5)
 	if !contains(block5, "Guild") {
 		t.Error("chapter 5 missing Guild")
@@ -353,23 +353,26 @@ func TestPromptBlockForChapter(t *testing.T) {
 	if !contains(block5, "Dalki") {
 		t.Error("chapter 5 missing Dalki")
 	}
-	if !contains(block5, "Legacy") {
-		t.Error("chapter 5 missing Legacy")
-	}
 	if contains(block5, "Quinn") {
 		t.Error("chapter 5 should NOT include Quinn")
 	}
-
-	// Chapter 100: only Legacy (no chapter-specific terms).
-	block100 := g.PromptBlockForChapter(100)
-	if !contains(block100, "Legacy") {
-		t.Error("chapter 100 missing Legacy")
+	if contains(block5, "Untagged") {
+		t.Error("chapter 5 should NOT include Untagged")
 	}
+
+	// Chapter 100: no terms (no chapter-specific matches).
+	block100 := g.PromptBlockForChapter(100)
 	if contains(block100, "Guild") {
 		t.Error("chapter 100 should NOT include Guild")
 	}
 	if contains(block100, "Quinn") {
 		t.Error("chapter 100 should NOT include Quinn")
+	}
+	if contains(block100, "Untagged") {
+		t.Error("chapter 100 should NOT include Untagged")
+	}
+	if block100 != "" {
+		t.Errorf("chapter 100 should produce empty block, got %q", block100)
 	}
 }
 

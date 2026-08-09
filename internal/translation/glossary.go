@@ -127,12 +127,13 @@ func (g *Glossary) PromptBlock() string {
 
 // PromptBlockForChapter returns the glossary filtered to only terms relevant
 // to the given chapter ID. A term is relevant if its Chapters field contains
-// the chapter ID, or if its Chapters field is empty (legacy/global entries
-// with no chapter tracking). Terms are grouped by type.
+// the chapter ID. Terms with empty Chapters are excluded — they were not
+// tagged to any chapter and would only add noise/token cost. Terms are
+// grouped by type.
 func (g *Glossary) PromptBlockForChapter(chapterID int) string {
 	var filtered []GlossaryTerm
 	for _, t := range g.Terms {
-		if len(t.Chapters) == 0 || containsInt(t.Chapters, chapterID) {
+		if containsInt(t.Chapters, chapterID) {
 			filtered = append(filtered, t)
 		}
 	}
