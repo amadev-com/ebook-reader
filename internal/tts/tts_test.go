@@ -488,6 +488,18 @@ func TestGenerateSSML_LatinToCyrillic(t *testing.T) {
 			want:  "ВР-игры",
 			bad:   "VR-игры",
 		},
+		{
+			name:  "Latin S in МВS",
+			input: "МВS триста девяносто один.",
+			want:  "МВС",
+			bad:   "МВS",
+		},
+		{
+			name:  "Latin D for class D",
+			input: "Он был в классе D.",
+			want:  "классе Д.",
+			bad:   "классе D.",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -497,6 +509,63 @@ func TestGenerateSSML_LatinToCyrillic(t *testing.T) {
 			}
 			if contains(result, tc.bad) {
 				t.Errorf("Latin %q should be replaced: %s", tc.bad, result)
+			}
+		})
+	}
+}
+
+func TestSanitizeStressMarks(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "valid stress preserved",
+			input: "к+едров д+ом",
+			want:  "к+едров д+ом",
+		},
+		{
+			name:  "stress before consonant stripped",
+			input: "М+С школа",
+			want:  "МС школа",
+		},
+		{
+			name:  "stress before soft sign stripped",
+			input: "фамил+ьяром",
+			want:  "фамильяром",
+		},
+		{
+			name:  "stress before consonant in word stripped",
+			input: "Деся+той",
+			want:  "Десятой",
+		},
+		{
+			name:  "stress at end of text stripped",
+			input: "текст+",
+			want:  "текст",
+		},
+		{
+			name:  "mixed valid and invalid",
+			input: "к+едров М+С д+ом фамил+ьяр",
+			want:  "к+едров МС д+ом фамильяр",
+		},
+		{
+			name:  "no stress marks unchanged",
+			input: "просто текст",
+			want:  "просто текст",
+		},
+		{
+			name:  "uppercase vowel stress preserved",
+			input: "К+едров",
+			want:  "К+едров",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizeStressMarks(tc.input)
+			if got != tc.want {
+				t.Errorf("sanitizeStressMarks(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
 	}

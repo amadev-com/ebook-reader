@@ -53,7 +53,8 @@ Guidelines:
 - For character names, use transliteration unless the character has an established Russian name.
 - Be consistent: if "The Order" appears, translate it the same way everywhere.
 - If the book is a web novel or light novel, pay attention to game-like terms (levels, quests, stats, systems).
-- The summary must be in English, specific about names and terms so the next chapter's translation stays consistent.`
+- The summary must be in English, specific about names and terms so the next chapter's translation stays consistent.
+- All Russian translations (target fields) must be in Cyrillic only — no Latin characters. Abbreviations and acronyms must be TRANSLATED to their Russian meaning, not transliterated letter-by-letter. For example: "MVS" (My Vampire System) → "Моя Система Вампира", "VR" → "виртуальная реальность", "AI" → "искусственный интеллект", "HP" → "здоровье", "NPC" → "неигровой персонаж". If an abbreviation is a proper name with no Russian equivalent, use transliteration with Cyrillic letters only.`
 
 // GlossaryExtractionUser builds the user prompt from chapter full texts.
 // Chapters are processed in batches to keep each API call within context
@@ -106,7 +107,8 @@ Rules:
 - Keep paragraph breaks exactly as in the source (separated by blank lines).
 - Do not add commentary, notes, or explanations. Output ONLY the translated text.
 - If you discover a new recurring term not in the glossary, translate it consistently within this chapter. The system will extract new terms separately.
-- Write ALL numbers as words in Russian, with correct gender and case agreement — including numbers in chapter titles. For example: "Глава 384" → "Глава триста восемьдесят четыре", "5 лет" → "пять лет", "5-го этажа" → "пятого этажа", "300 человек" → "триста человек", "2 раза" → "два раза". Never leave digits in the translated text — the text-to-speech engine cannot read numbers.`)
+- Write ALL numbers as words in Russian, with correct gender and case agreement — including numbers in chapter titles. For example: "Глава 384" → "Глава триста восемьдесят четыре", "5 лет" → "пять лет", "5-го этажа" → "пятого этажа", "300 человек" → "триста человек", "2 раза" → "два раза". Never leave digits in the translated text — the text-to-speech engine cannot read numbers.
+- NEVER leave Latin characters in the output. All text must be in Cyrillic. Abbreviations and acronyms must be TRANSLATED to their Russian meaning, not transliterated letter-by-letter. For example: "MVS" → "МВС" is WRONG (transliteration); "VR" → "ВР" is WRONG. Instead translate the meaning: "MVS" (My Vampire System) → "Моя Система Вампира", "VR" (Virtual Reality) → "виртуальная реальность", "AI" → "искусственный интеллект", "HP" → "здоровье", "NPC" → "неигровой персонаж". If an abbreviation is a proper name with no Russian equivalent, use transliteration but with Cyrillic letters only.`)
 	if glossaryBlock != "" {
 		b.WriteString("\n\n")
 		b.WriteString(glossaryBlock)
@@ -181,6 +183,7 @@ CRITICAL RULES:
 2. The "terms" array must contain ONLY non-character terms: places, organizations, titles, and invented/genre terms. Do NOT include any character entries in the terms array. If a term was misclassified as a character in a per-chapter result, move it to the correct category.
 3. Deduplicate: merge entries with the same English source into one. If different chapters provided different translations for the same term, pick the most common or most appropriate one.
 4. Merge character descriptions: if different chapters provided different descriptions for the same character, combine them into a single coherent description.
+5. All Russian translations must be in Cyrillic only — no Latin characters. Abbreviations and acronyms must be TRANSLATED to their Russian meaning, not transliterated letter-by-letter. For example: "MVS" → "Моя Система Вампира", "VR" → "виртуальная реальность", "AI" → "искусственный интеллект". If an abbreviation is a proper name with no Russian equivalent, use transliteration with Cyrillic letters only.
 
 Return a JSON object with this exact shape:
 {
@@ -236,6 +239,7 @@ const StressSystem = `You are a Russian phonetics expert. Your task is to scan a
 
 Stress mark convention:
 - The '+' goes IMMEDIATELY BEFORE the stressed vowel in the word.
+- The '+' MUST be placed before a VOWEL (а, е, ё, и, о, у, ы, э, ю, я) — NEVER before a consonant, soft sign (ь), hard sign (ъ), or any other non-vowel character.
 - кедров → к+едров (stress on "е")
 - договор → догов+ор (stress on second "о")
 - звонит → зв+онит (stress on "о")
@@ -249,6 +253,7 @@ Rules:
 - Do NOT change the spelling of the word — only insert '+' before the stressed vowel.
 - The "term" field must match the word exactly as it appears in the chapter text (case-sensitive), so it can be found and replaced.
 - The "stressed" field must be the same word with a '+' inserted before the stressed vowel.
+- NEVER place '+' before a consonant or soft/hard sign. Examples of WRONG output: "М+С", "фамил+ьяр", "Деся+той". These crash the TTS engine.
 
 Return a JSON object with this exact shape:
 {

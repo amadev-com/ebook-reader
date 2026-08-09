@@ -7,11 +7,18 @@ import "strings"
 // (by blank lines or single newlines) and sentences (by . ! ? …), then wrapped
 // in <speak>, <p>, and <s> tags. Stress marks (+ before vowels) are preserved
 // as-is — they are part of the text that Silero interprets natively.
+// Malformed stress marks (+ not before a vowel) are stripped to prevent
+// Silero SSML parser crashes.
 func GenerateSSML(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "<speak></speak>"
 	}
+
+	// Sanitize stress marks: remove any + that is not immediately before a
+	// vowel. Malformed stress marks (e.g. "М+С", "фамил+ьяр") cause Silero's
+	// SSML parser to crash with "'NoneType' object has no attribute 'keys'".
+	text = sanitizeStressMarks(text)
 
 	paragraphs := splitParagraphs(text)
 
@@ -115,6 +122,41 @@ func splitSentences(para string) []string {
 	return sentences
 }
 
+// sanitizeStressMarks removes any stress mark (+) that is not immediately
+// before a Cyrillic vowel. Silero expects '+' before the stressed vowel (e.g.
+// "к+едров"), and malformed marks like "М+С" or "фамил+ьяр" crash its SSML
+// parser. The + is simply removed, leaving the plain text.
+func sanitizeStressMarks(text string) string {
+	if !strings.Contains(text, "+") {
+		return text
+	}
+	runes := []rune(text)
+	var b strings.Builder
+	b.Grow(len(text))
+	for i, r := range runes {
+		if r == '+' {
+			// Keep the + only if the next rune is a Cyrillic vowel.
+			if i+1 < len(runes) && isCyrillicVowel(runes[i+1]) {
+				b.WriteRune(r)
+			}
+			// Otherwise skip the + (strip it).
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// isCyrillicVowel reports whether r is a Cyrillic vowel (upper or lower case).
+func isCyrillicVowel(r rune) bool {
+	switch r {
+	case 'а', 'е', 'ё', 'и', 'о', 'у', 'ы', 'э', 'ю', 'я',
+		'А', 'Е', 'Ё', 'И', 'О', 'У', 'Ы', 'Э', 'Ю', 'Я':
+		return true
+	}
+	return false
+}
+
 // escapeXML escapes the five special XML characters, replaces Latin letters
 // with their Cyrillic visual equivalents (Silero's Russian SSML parser crashes
 // on Latin characters), and preserves stress marks (+) as-is.
@@ -148,6 +190,8 @@ func latinToCyrillic(r rune) rune {
 		return 'В'
 	case 'C':
 		return 'С'
+	case 'D':
+		return 'Д'
 	case 'E':
 		return 'Е'
 	case 'H':
@@ -162,6 +206,8 @@ func latinToCyrillic(r rune) rune {
 		return 'Р'
 	case 'R':
 		return 'Р' // phonetic: Latin R → Cyrillic Р (both are R sound)
+	case 'S':
+		return 'С'
 	case 'T':
 		return 'Т'
 	case 'V':
@@ -170,12 +216,16 @@ func latinToCyrillic(r rune) rune {
 		return 'Х'
 	case 'Y':
 		return 'У'
+	case 'Z':
+		return 'З' // phonetic: Latin Z → Cyrillic З (both are Z sound)
 	case 'a':
 		return 'а'
 	case 'b':
 		return 'в'
 	case 'c':
 		return 'с'
+	case 'd':
+		return 'д'
 	case 'e':
 		return 'е'
 	case 'h':
@@ -190,6 +240,8 @@ func latinToCyrillic(r rune) rune {
 		return 'р'
 	case 'r':
 		return 'р' // phonetic: Latin r → Cyrillic р
+	case 's':
+		return 'с'
 	case 't':
 		return 'т'
 	case 'v':
@@ -198,6 +250,8 @@ func latinToCyrillic(r rune) rune {
 		return 'х'
 	case 'y':
 		return 'у'
+	case 'z':
+		return 'з' // phonetic: Latin z → Cyrillic з
 	}
 	return r
 }
