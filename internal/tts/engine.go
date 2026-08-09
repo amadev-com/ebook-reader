@@ -64,6 +64,12 @@ type EngineConfig struct {
 	// ServerURL is the HTTP endpoint for remote TTS engines (e.g.
 	// "http://localhost:5555"). Used by the silero-http engine.
 	ServerURL string
+
+	// Parallel is the number of concurrent API requests to send when
+	// synthesizing a single chapter (chunk-level parallelism). Default 0
+	// or 1 means sequential. Higher values can speed up synthesis when the
+	// TTS server has spare capacity.
+	Parallel int
 }
 
 var (

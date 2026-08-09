@@ -164,6 +164,7 @@ func buildEngineConfig(proj *project.Project) tts.EngineConfig {
 		Pitch:      cfg.Pitch,
 		SampleRate: cfg.SampleRate,
 		ServerURL:  cfg.ServerURL,
+		Parallel:   cfg.Parallel,
 	}
 }
 

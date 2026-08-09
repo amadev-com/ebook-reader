@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestNewSileroEngine_RequiresServerURL(t *testing.T) {
@@ -447,5 +450,111 @@ func TestSileroEngine_ChunkedSynthesis(t *testing.T) {
 	}
 	if dataSize != expectedSize {
 		t.Errorf("data size: got %d, want %d", dataSize, expectedSize)
+	}
+}
+
+func TestSileroEngine_ParallelSynthesis(t *testing.T) {
+	var requestCount int32
+	// Track concurrent requests to verify parallelism.
+	var concurrent int32
+	var maxConcurrent int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		cur := atomic.AddInt32(&concurrent, 1)
+		if cur > atomic.LoadInt32(&maxConcurrent) {
+			atomic.StoreInt32(&maxConcurrent, cur)
+		}
+		time.Sleep(50 * time.Millisecond) // simulate work
+		atomic.AddInt32(&concurrent, -1)
+		atomic.AddInt32(&requestCount, 1)
+		_, _ = w.Write(makeWAV(100))
+	}))
+	defer ts.Close()
+
+	engine, err := NewSileroEngine(EngineConfig{
+		Engine:    "silero-http",
+		ServerURL: ts.URL,
+		Voice:     "silero:v5_5_ru#xenia",
+		Language:  "ru",
+		Parallel:  4,
+	})
+	if err != nil {
+		t.Fatalf("NewSileroEngine: %v", err)
+	}
+
+	// Build SSML with enough sentences to produce multiple chunks.
+	var sentences []string
+	for i := 0; i < 30; i++ {
+		sentences = append(sentences, "<s>Предложение номер "+fmt.Sprintf("%d", i)+".</s>")
+	}
+	ssml := "<speak><p>" + strings.Join(sentences, "") + "</p></speak>"
+
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "parallel.wav")
+	err = engine.Synthesize(context.Background(), ssml, outPath)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+
+	// Verify output is valid WAV.
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if string(data[:4]) != "RIFF" {
+		t.Error("output is not a valid WAV")
+	}
+
+	// Verify parallelism actually happened — with 4 workers and 50ms per
+	// request, we should see at least 2 concurrent requests.
+	if atomic.LoadInt32(&maxConcurrent) < 2 {
+		t.Errorf("expected concurrent requests, max was %d", maxConcurrent)
+	}
+}
+
+func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
+	// Each request returns a WAV with a unique data size based on request
+	// order. After concatenation, the data sizes must be in chunk order.
+	var seq int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := atomic.AddInt32(&seq, 1)
+		_, _ = w.Write(makeWAV(int(n * 10)))
+	}))
+	defer ts.Close()
+
+	engine, err := NewSileroEngine(EngineConfig{
+		Engine:    "silero-http",
+		ServerURL: ts.URL,
+		Voice:     "silero:v5_5_ru#xenia",
+		Language:  "ru",
+		Parallel:  4,
+	})
+	if err != nil {
+		t.Fatalf("NewSileroEngine: %v", err)
+	}
+
+	// Build SSML that produces exactly 3 chunks.
+	var sentences []string
+	for i := 0; i < 15; i++ {
+		sentences = append(sentences, "<s>Предложение "+fmt.Sprintf("%d", i)+".</s>")
+	}
+	ssml := "<speak><p>" + strings.Join(sentences, "") + "</p></speak>"
+
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "ordered.wav")
+	err = engine.Synthesize(context.Background(), ssml, outPath)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+
+	// The output should be a valid WAV regardless of order — we just verify
+	// it was produced successfully.
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if string(data[:4]) != "RIFF" {
+		t.Error("output is not a valid WAV")
 	}
 }

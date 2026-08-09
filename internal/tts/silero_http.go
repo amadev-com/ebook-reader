@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,7 @@ type SileroEngine struct {
 	cfg       EngineConfig
 	client    *http.Client
 	serverURL string
+	parallel  int
 }
 
 // NewSileroEngine constructs a SileroEngine from the given config. The
@@ -48,9 +50,14 @@ func NewSileroEngine(cfg EngineConfig) (Engine, error) {
 		return nil, fmt.Errorf("tts.silero: voice is required (e.g. \"silero:v5_5_ru#xenia\")")
 	}
 	serverURL := strings.TrimRight(cfg.ServerURL, "/")
+	parallel := cfg.Parallel
+	if parallel < 1 {
+		parallel = 1
+	}
 	return &SileroEngine{
 		cfg:       cfg,
 		serverURL: serverURL,
+		parallel:  parallel,
 		client: &http.Client{
 			Timeout: 10 * time.Minute,
 		},
@@ -84,21 +91,12 @@ func (e *SileroEngine) Synthesize(ctx context.Context, text string, outPath stri
 
 	chunks := splitSSML(text, maxChunkLen)
 	slog.Info("tts.silero: synthesizing",
-		"total_len", len(text), "chunks", len(chunks), "max_chunk_len", maxChunkLen)
+		"total_len", len(text), "chunks", len(chunks), "max_chunk_len", maxChunkLen,
+		"parallel", e.parallel)
 
-	var wavData [][]byte
-	for i, chunk := range chunks {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		slog.Debug("tts.silero: synthesizing chunk",
-			"chunk", i+1, "of", len(chunks), "len", len(chunk))
-
-		wav, err := e.synthesizeOne(ctx, chunk)
-		if err != nil {
-			return fmt.Errorf("tts.silero: chunk %d/%d: %w", i+1, len(chunks), err)
-		}
-		wavData = append(wavData, wav)
+	wavData, err := e.synthesizeChunks(ctx, chunks)
+	if err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
@@ -116,6 +114,88 @@ func (e *SileroEngine) Synthesize(ctx context.Context, text string, outPath stri
 
 	slog.Debug("tts.silero: synthesis complete", "output", outPath, "bytes", len(combined))
 	return nil
+}
+
+// synthesizeChunks sends chunk requests to the server, optionally in parallel.
+// Results are collected in chunk order (the order they appear in the input
+// slice) so the concatenated audio preserves sentence order.
+func (e *SileroEngine) synthesizeChunks(ctx context.Context, chunks []string) ([][]byte, error) {
+	n := len(chunks)
+	if n == 0 {
+		return nil, nil
+	}
+
+	// Sequential path (default) — simple and predictable.
+	if e.parallel <= 1 {
+		wavData := make([][]byte, n)
+		for i, chunk := range chunks {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			slog.Debug("tts.silero: synthesizing chunk",
+				"chunk", i+1, "of", n, "len", len(chunk))
+			wav, err := e.synthesizeOne(ctx, chunk)
+			if err != nil {
+				return nil, fmt.Errorf("tts.silero: chunk %d/%d: %w", i+1, n, err)
+			}
+			wavData[i] = wav
+		}
+		return wavData, nil
+	}
+
+	// Parallel path — send up to e.parallel chunk requests concurrently.
+	wavData := make([][]byte, n)
+	errs := make([]error, n)
+
+	type chunkJob struct {
+		idx   int
+		chunk string
+	}
+
+	jobs := make(chan chunkJob, n)
+	for i, chunk := range chunks {
+		jobs <- chunkJob{idx: i, chunk: chunk}
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+	workers := e.parallel
+	if workers > n {
+		workers = n
+	}
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				if ctx.Err() != nil {
+					errs[job.idx] = ctx.Err()
+					return
+				}
+				slog.Debug("tts.silero: synthesizing chunk",
+					"chunk", job.idx+1, "of", n, "len", len(job.chunk))
+				wav, err := e.synthesizeOne(ctx, job.chunk)
+				if err != nil {
+					errs[job.idx] = fmt.Errorf("tts.silero: chunk %d/%d: %w", job.idx+1, n, err)
+					return
+				}
+				wavData[job.idx] = wav
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Check for errors — return the first one in chunk order.
+	for i, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+		if wavData[i] == nil {
+			return nil, fmt.Errorf("tts.silero: chunk %d/%d: no data", i+1, n)
+		}
+	}
+
+	return wavData, nil
 }
 
 // synthesizeOne sends a single SSML chunk to the server and returns the WAV

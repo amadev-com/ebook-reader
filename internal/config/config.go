@@ -117,6 +117,7 @@ type TTS struct {
 	ServerURL    string  `yaml:"server_url"`    // HTTP endpoint for remote TTS, e.g. "http://localhost:5555"
 	AudioFormat  string  `yaml:"audio_format"`  // output format: "mp3" (default) or "wav"
 	AudioBitrate string  `yaml:"audio_bitrate"` // MP3 bitrate, e.g. "128k", "192k" (default "128k")
+	Parallel     int     `yaml:"parallel"`      // number of concurrent API requests per chapter (default 1)
 }
 
 // Paths overrides default project subdirectory names.
