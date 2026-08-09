@@ -330,9 +330,13 @@ func processPronounceResults(ctx context.Context, proj *project.Project, state *
 	}
 
 	// Resolve conflicts interactively.
-	if len(allConflicts) > 0 {
-		slog.Info("found stress mark conflicts, resolving interactively", "conflicts", len(allConflicts))
-		if err := resolveStressConflicts(global, allConflicts); err != nil {
+	// Deduplicate conflicts by term — the same term may conflict in multiple
+	// chapters, producing repeated conflicts with the same variants.
+	deduped := deduplicateConflicts(allConflicts)
+	if len(deduped) > 0 {
+		slog.Info("found stress mark conflicts, resolving interactively",
+			"conflicts", len(deduped), "raw_conflicts", len(allConflicts))
+		if err := resolveStressConflicts(global, deduped); err != nil {
 			return fmt.Errorf("resolve conflicts: %w", err)
 		}
 	}
@@ -348,6 +352,42 @@ func processPronounceResults(ctx context.Context, proj *project.Project, state *
 	slog.Info("pronounce batch complete", "batch_id", state.BatchID, "processed", processed, "failed", failedCount)
 
 	return nil
+}
+
+// deduplicateConflicts merges conflicts for the same term into a single
+// conflict with all unique variants. This avoids asking the user to resolve
+// the same term multiple times when it conflicts across several chapters.
+func deduplicateConflicts(conflicts []tts.StressConflict) []tts.StressConflict {
+	seen := make(map[string]int) // lower(term) → index in result
+	var result []tts.StressConflict
+	for _, c := range conflicts {
+		key := strings.ToLower(c.Term)
+		if idx, ok := seen[key]; ok {
+			// Merge variants into existing conflict.
+			for _, v := range c.Variants {
+				if !containsVariant(result[idx].Variants, v) {
+					result[idx].Variants = append(result[idx].Variants, v)
+				}
+			}
+		} else {
+			seen[key] = len(result)
+			// Copy variants to avoid aliasing.
+			variants := make([]string, len(c.Variants))
+			copy(variants, c.Variants)
+			result = append(result, tts.StressConflict{Term: c.Term, Variants: variants})
+		}
+	}
+	return result
+}
+
+// containsVariant reports whether variants contains v (case-insensitive).
+func containsVariant(variants []string, v string) bool {
+	for _, vv := range variants {
+		if strings.EqualFold(vv, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveStressConflicts prompts the user to resolve each conflict one by one.

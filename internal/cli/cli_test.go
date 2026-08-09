@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"ebook-reader/internal/project"
+	"ebook-reader/internal/tts"
 )
 
 // buildTestEPUB creates a minimal valid EPUB in a temp file and returns its
@@ -386,5 +387,75 @@ func TestDeduplicateTitle(t *testing.T) {
 				t.Errorf("deduplicateTitle:\ninput: %q\ngot:   %q\nwant:  %q", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDeduplicateConflicts(t *testing.T) {
+	t.Parallel()
+	conflicts := []tts.StressConflict{
+		{Term: "вендиго", Variants: []string{"Венд+иго", "в+ендиго"}},
+		{Term: "Куинна", Variants: []string{"К+уинна", "Ку+инна"}},
+		{Term: "вендиго", Variants: []string{"Венд+иго", "в+ендиго"}},
+		{Term: "вендиго", Variants: []string{"Венд+иго", "в+ендиго"}},
+		{Term: "Куинна", Variants: []string{"К+уинна", "Ку+инна"}},
+		{Term: "Логан", Variants: []string{"Л+оган", "Лог+ан"}},
+	}
+
+	deduped := deduplicateConflicts(conflicts)
+	if len(deduped) != 3 {
+		t.Fatalf("deduped count = %d, want 3", len(deduped))
+	}
+
+	// Each term should appear exactly once with all unique variants.
+	for _, c := range deduped {
+		switch c.Term {
+		case "вендиго":
+			if len(c.Variants) != 2 {
+				t.Errorf("вендиго variants = %d, want 2", len(c.Variants))
+			}
+		case "Куинна":
+			if len(c.Variants) != 2 {
+				t.Errorf("Куинна variants = %d, want 2", len(c.Variants))
+			}
+		case "Логан":
+			if len(c.Variants) != 2 {
+				t.Errorf("Логан variants = %d, want 2", len(c.Variants))
+			}
+		default:
+			t.Errorf("unexpected term: %s", c.Term)
+		}
+	}
+}
+
+func TestDeduplicateConflicts_MergesNewVariants(t *testing.T) {
+	t.Parallel()
+	conflicts := []tts.StressConflict{
+		{Term: "Эрин", Variants: []string{"Э+рин"}},
+		{Term: "Эрин", Variants: []string{"+Эрин"}},
+		{Term: "Эрин", Variants: []string{"Э+рин", "+Эрин", "Эр+ин"}},
+	}
+
+	deduped := deduplicateConflicts(conflicts)
+	if len(deduped) != 1 {
+		t.Fatalf("deduped count = %d, want 1", len(deduped))
+	}
+	if len(deduped[0].Variants) != 3 {
+		t.Errorf("variants = %v, want 3 unique", deduped[0].Variants)
+	}
+}
+
+func TestDeduplicateConflicts_CaseInsensitive(t *testing.T) {
+	t.Parallel()
+	conflicts := []tts.StressConflict{
+		{Term: "Вендиго", Variants: []string{"Венд+иго"}},
+		{Term: "вендиго", Variants: []string{"в+ендиго"}},
+	}
+
+	deduped := deduplicateConflicts(conflicts)
+	if len(deduped) != 1 {
+		t.Fatalf("deduped count = %d, want 1 (case-insensitive)", len(deduped))
+	}
+	if len(deduped[0].Variants) != 2 {
+		t.Errorf("variants = %d, want 2", len(deduped[0].Variants))
 	}
 }
