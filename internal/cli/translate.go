@@ -141,11 +141,14 @@ func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, 
 
 	// Build batch requests: one per chapter.
 	model := proj.Cfg.OpenAI.TranslationModel
-	glossaryBlock := glossary.PromptBlock()
 	reqs := make([]translation.BatchRequest, len(toTranslate))
 	chapterIDs := make([]int, len(toTranslate))
 	for i, ch := range toTranslate {
 		// Build the system prompt: persona + glossary + previous summaries.
+		// Use per-chapter glossary filtering: only send terms that were
+		// encountered in this chapter (or legacy terms with no chapter tags).
+		glossaryBlock := glossary.PromptBlockForChapter(ch.ID)
+
 		prevContext := ""
 		if !skipMem {
 			prevContext, err = translation.PreviousSummaries(proj.MemoryDir(), ch.ID, 2)

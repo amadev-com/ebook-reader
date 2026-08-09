@@ -304,7 +304,8 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 
 	// Each result contains both glossary/characters AND a chapter summary
 	// in a single JSON response. Save summaries to memory/ as we go.
-	var perChapter []glossaryExtractionResult
+	var chapterResults []chapterResult
+	var perChapter []glossaryExtractionResult // for merge prompt serialization
 	var failedCount int
 	summariesSaved := 0
 	for _, res := range results {
@@ -326,6 +327,7 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 			failedCount++
 			continue
 		}
+		chapterResults = append(chapterResults, chapterResult{ChapterID: chID, Result: result})
 		perChapter = append(perChapter, result)
 
 		// Save the chapter summary to memory/.
@@ -348,7 +350,7 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 
 	// Save merge input to disk so the merge batch can be resumed with --continue.
 	mergeInput := analyzeMergeInput{
-		PerChapter:         perChapter,
+		ChapterResults:     chapterResults,
 		SummariesSaved:     summariesSaved,
 		ExistingGlossary:   existingGlossary,
 		ExistingCharacters: existingCharacters,
@@ -362,13 +364,13 @@ func processAnalyzeResults(ctx context.Context, proj *project.Project, state *tr
 }
 
 // analyzeMergeInput is the persisted state between the extraction batch and the
-// merge batch. It contains the per-chapter results and existing vocabulary
-// needed to build the merge prompt.
+// merge batch. It contains the per-chapter results (with chapter IDs for
+// tagging) and existing vocabulary needed to build the merge prompt.
 type analyzeMergeInput struct {
-	PerChapter         []glossaryExtractionResult `json:"per_chapter"`
-	SummariesSaved     int                        `json:"summaries_saved"`
-	ExistingGlossary   *translation.Glossary      `json:"existing_glossary,omitempty"`
-	ExistingCharacters *translation.Characters    `json:"existing_characters,omitempty"`
+	ChapterResults     []chapterResult         `json:"chapter_results"`
+	SummariesSaved     int                     `json:"summaries_saved"`
+	ExistingGlossary   *translation.Glossary   `json:"existing_glossary,omitempty"`
+	ExistingCharacters *translation.Characters `json:"existing_characters,omitempty"`
 }
 
 // saveAnalyzeMergeInput writes the merge input to ai/analyze_merge_input.json.
@@ -398,7 +400,12 @@ func deleteAnalyzeMergeInput(aiDir string) {
 // and submits it. The per-chapter results and existing vocabulary are serialized
 // into the merge prompt.
 func submitAnalyzeMergeBatch(ctx context.Context, proj *project.Project, input *analyzeMergeInput) error {
-	perChapterJSON, err := json.Marshal(input.PerChapter)
+	// Serialize just the results (without chapter IDs) for the merge prompt.
+	perChapter := make([]glossaryExtractionResult, len(input.ChapterResults))
+	for i, cr := range input.ChapterResults {
+		perChapter[i] = cr.Result
+	}
+	perChapterJSON, err := json.Marshal(perChapter)
 	if err != nil {
 		return fmt.Errorf("marshal per-chapter results: %w", err)
 	}
@@ -448,7 +455,7 @@ func submitAnalyzeMergeBatch(ctx context.Context, proj *project.Project, input *
 
 	slog.Info("merge batch submitted",
 		"batch_id", batchID,
-		"chapters", len(input.PerChapter),
+		"chapters", len(input.ChapterResults),
 		"existing_terms", len(input.ExistingGlossary.Terms),
 		"existing_characters", len(input.ExistingCharacters.Characters),
 		"model", model)
@@ -555,6 +562,16 @@ func processAnalyzeMergeResults(ctx context.Context, proj *project.Project, stat
 	// Apply config overrides.
 	applyGlossaryOverrides(&unified, proj.Cfg.Glossary)
 
+	// Tag terms and characters with chapter IDs from per-chapter results.
+	// The AI merge produces deduplicated entries but loses the chapter origin.
+	// We match by source/name back to the per-chapter results to fill the
+	// Chapters field, which is used by translate to send only relevant
+	// glossary entries per chapter (reducing token costs).
+	input, _ := loadAnalyzeMergeInput(proj.AIDir())
+	if input != nil {
+		tagChapters(&unified, input.ChapterResults, input.ExistingGlossary, input.ExistingCharacters)
+	}
+
 	// Save glossary (terms only — no characters).
 	glossary := &translation.Glossary{Terms: unified.Terms}
 	slog.Info("unified glossary", "terms", len(glossary.Terms), "characters", len(unified.Characters))
@@ -571,8 +588,7 @@ func processAnalyzeMergeResults(ctx context.Context, proj *project.Project, stat
 	}
 	slog.Info("saved characters", "path", filepath.Join(proj.AIDir(), "characters.json"))
 
-	// Load merge input to report summaries count.
-	input, _ := loadAnalyzeMergeInput(proj.AIDir())
+	// Report summaries count from merge input.
 	summaries := 0
 	if input != nil {
 		summaries = input.SummariesSaved
@@ -593,6 +609,98 @@ type glossaryExtractionResult struct {
 	Characters []translation.Character    `json:"characters"`
 	Terms      []translation.GlossaryTerm `json:"terms"`
 	Summary    string                     `json:"summary"`
+}
+
+// chapterResult pairs a glossary extraction result with its chapter ID.
+type chapterResult struct {
+	ChapterID int                      `json:"chapter_id"`
+	Result    glossaryExtractionResult `json:"result"`
+}
+
+// tagChapters fills the Chapters field on each unified term and character by
+// matching source/name back to the per-chapter results. It also preserves
+// existing chapter tags from the existing glossary/characters (for entries
+// that were already tagged in previous analyze runs).
+func tagChapters(unified *glossaryExtractionResult, chapterResults []chapterResult, existingGlossary *translation.Glossary, existingCharacters *translation.Characters) {
+	// Build source→[]chapterID maps from per-chapter results.
+	termChapters := make(map[string][]int)      // lower(source) → chapter IDs
+	characterChapters := make(map[string][]int) // lower(name) → chapter IDs
+	for _, cr := range chapterResults {
+		for _, t := range cr.Result.Terms {
+			if t.Source == "" {
+				continue
+			}
+			key := strings.ToLower(t.Source)
+			termChapters[key] = appendUniqueInt(termChapters[key], cr.ChapterID)
+		}
+		for _, c := range cr.Result.Characters {
+			if c.Name == "" {
+				continue
+			}
+			key := strings.ToLower(c.Name)
+			characterChapters[key] = appendUniqueInt(characterChapters[key], cr.ChapterID)
+		}
+	}
+
+	// Merge existing chapter tags from previous runs.
+	if existingGlossary != nil {
+		for _, t := range existingGlossary.Terms {
+			if t.Source == "" {
+				continue
+			}
+			key := strings.ToLower(t.Source)
+			termChapters[key] = appendUniqueIntSlice(termChapters[key], t.Chapters)
+		}
+	}
+	if existingCharacters != nil {
+		for _, c := range existingCharacters.Characters {
+			if c.Name == "" {
+				continue
+			}
+			key := strings.ToLower(c.Name)
+			characterChapters[key] = appendUniqueIntSlice(characterChapters[key], c.Chapters)
+		}
+	}
+
+	// Tag unified terms.
+	for i := range unified.Terms {
+		if unified.Terms[i].Source == "" {
+			continue
+		}
+		key := strings.ToLower(unified.Terms[i].Source)
+		if chapters, ok := termChapters[key]; ok {
+			unified.Terms[i].Chapters = chapters
+		}
+	}
+
+	// Tag unified characters.
+	for i := range unified.Characters {
+		if unified.Characters[i].Name == "" {
+			continue
+		}
+		key := strings.ToLower(unified.Characters[i].Name)
+		if chapters, ok := characterChapters[key]; ok {
+			unified.Characters[i].Chapters = chapters
+		}
+	}
+}
+
+// appendUniqueInt appends v to s if not already present. Returns the result.
+func appendUniqueInt(s []int, v int) []int {
+	for _, x := range s {
+		if x == v {
+			return s
+		}
+	}
+	return append(s, v)
+}
+
+// appendUniqueIntSlice appends all values from extra to s, skipping duplicates.
+func appendUniqueIntSlice(s, extra []int) []int {
+	for _, v := range extra {
+		s = appendUniqueInt(s, v)
+	}
+	return s
 }
 
 // loadAllChapters reads every chapter_NNN.json from the chapters directory,

@@ -22,6 +22,7 @@ type GlossaryTerm struct {
 	Target           string `json:"target"` // Russian translation
 	Type             string `json:"type"`   // character|place|organization|term|title
 	FirstSeenChapter int    `json:"first_seen_chapter,omitempty"`
+	Chapters         []int  `json:"chapters,omitempty"` // chapter IDs where this term was encountered
 }
 
 // LoadGlossary reads ai/glossary.json from the project's AI directory. If the
@@ -121,29 +122,48 @@ func (g *Glossary) Merge(newTerms []GlossaryTerm) int {
 // a translation prompt. Terms are grouped by type. Returns an empty string if
 // the glossary is empty.
 func (g *Glossary) PromptBlock() string {
-	if len(g.Terms) == 0 {
+	return g.promptBlockForTerms(g.Terms)
+}
+
+// PromptBlockForChapter returns the glossary filtered to only terms relevant
+// to the given chapter ID. A term is relevant if its Chapters field contains
+// the chapter ID, or if its Chapters field is empty (legacy/global entries
+// with no chapter tracking). Terms are grouped by type.
+func (g *Glossary) PromptBlockForChapter(chapterID int) string {
+	var filtered []GlossaryTerm
+	for _, t := range g.Terms {
+		if len(t.Chapters) == 0 || containsInt(t.Chapters, chapterID) {
+			filtered = append(filtered, t)
+		}
+	}
+	return g.promptBlockForTerms(filtered)
+}
+
+// promptBlockForTerms formats a subset of terms as a text block.
+func (g *Glossary) promptBlockForTerms(terms []GlossaryTerm) string {
+	if len(terms) == 0 {
 		return ""
 	}
 	// Group by type, preserving a stable type order.
 	typeOrder := []string{"character", "place", "organization", "title", "term"}
 	byType := make(map[string][]GlossaryTerm)
-	for _, t := range g.Terms {
+	for _, t := range terms {
 		byType[t.Type] = append(byType[t.Type], t)
 	}
 	var b strings.Builder
 	b.WriteString("=== Glossary (use these translations consistently) ===\n")
 	for _, ty := range typeOrder {
-		terms := byType[ty]
-		if len(terms) == 0 {
+		ts := byType[ty]
+		if len(ts) == 0 {
 			continue
 		}
 		fmt.Fprintf(&b, "\n[%s]\n", ty)
-		for _, t := range terms {
+		for _, t := range ts {
 			fmt.Fprintf(&b, "  %s = %s\n", t.Source, t.Target)
 		}
 	}
 	// Any types not in typeOrder.
-	for ty, terms := range byType {
+	for ty, ts := range byType {
 		known := false
 		for _, k := range typeOrder {
 			if k == ty {
@@ -155,11 +175,21 @@ func (g *Glossary) PromptBlock() string {
 			continue
 		}
 		fmt.Fprintf(&b, "\n[%s]\n", ty)
-		for _, t := range terms {
+		for _, t := range ts {
 			fmt.Fprintf(&b, "  %s = %s\n", t.Source, t.Target)
 		}
 	}
 	return b.String()
+}
+
+// containsInt reports whether s contains v.
+func containsInt(s []int, v int) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // Characters is the persistent character store (ai/characters.json). It is a
@@ -174,6 +204,7 @@ type Character struct {
 	Translation string `json:"translation"`
 	Role        string `json:"role,omitempty"` // protagonist, antagonist, supporting
 	Description string `json:"description,omitempty"`
+	Chapters    []int  `json:"chapters,omitempty"` // chapter IDs where this character was encountered
 }
 
 // LoadCharacters reads ai/characters.json. Returns an empty store if absent.
