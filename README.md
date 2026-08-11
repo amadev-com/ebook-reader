@@ -219,6 +219,14 @@ bookai status -p my-vampire-system
 
 Shows a directory tree and per-stage artifact counts.
 
+For a detailed per-chapter overview:
+
+```bash
+bookai chapters -p my-vampire-system
+```
+
+Shows a table with source size, glossary terms, characters, stress marks, translation length, SSML, and audio status for every chapter. Chapters under 500 bytes are marked with `(!)`.
+
 > **Tip:** If you `cd` into the project directory, you can omit `-p` from all commands:
 > ```bash
 > cd my-vampire-system

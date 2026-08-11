@@ -324,9 +324,10 @@ func processPronounceResults(ctx context.Context, proj *project.Project, state *
 		// Apply config overrides.
 		applyStressOverrides(&result, proj.Cfg.Pronunciation)
 
-		// Merge directly into global vocabulary (no per-chapter file).
+		// Merge directly into global vocabulary (no per-chapter file),
+		// tagging entries with the chapter ID for per-chapter tracking.
 		chapterStress := &tts.Stress{Entries: result.Entries}
-		conflicts := global.Merge(chapterStress)
+		conflicts := global.MergeChapter(chapterStress, chID)
 		allConflicts = append(allConflicts, conflicts...)
 
 		slog.Info("stress marks merged", "chapter", chID, "entries", len(result.Entries))

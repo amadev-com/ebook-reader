@@ -428,6 +428,101 @@ func TestStress_Merge_NotApprovedStillConflicts(t *testing.T) {
 	}
 }
 
+func TestStress_MergeChapter_TagsNewEntries(t *testing.T) {
+	global := &Stress{}
+	other := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров"},
+			{Term: "договор", Stressed: "догов+ор"},
+		},
+	}
+	global.MergeChapter(other, 5)
+
+	if len(global.Entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(global.Entries))
+	}
+	for _, e := range global.Entries {
+		if len(e.Chapters) != 1 || e.Chapters[0] != 5 {
+			t.Errorf("entry %q: expected Chapters=[5], got %v", e.Term, e.Chapters)
+		}
+	}
+}
+
+func TestStress_MergeChapter_TagsExistingEntries(t *testing.T) {
+	global := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров", Chapters: []int{1}},
+		},
+	}
+	other := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров"},
+		},
+	}
+	global.MergeChapter(other, 3)
+
+	if len(global.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(global.Entries))
+	}
+	e := global.Entries[0]
+	if len(e.Chapters) != 2 {
+		t.Fatalf("expected 2 chapter IDs, got %d", len(e.Chapters))
+	}
+	// Should contain both 1 and 3.
+	has1, has3 := false, false
+	for _, c := range e.Chapters {
+		if c == 1 {
+			has1 = true
+		}
+		if c == 3 {
+			has3 = true
+		}
+	}
+	if !has1 || !has3 {
+		t.Errorf("expected Chapters to contain 1 and 3, got %v", e.Chapters)
+	}
+}
+
+func TestStress_MergeChapter_NoDuplicateChapterID(t *testing.T) {
+	global := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров", Chapters: []int{5}},
+		},
+	}
+	other := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров"},
+		},
+	}
+	global.MergeChapter(other, 5)
+
+	if len(global.Entries[0].Chapters) != 1 {
+		t.Errorf("expected no duplicate chapter ID, got %v", global.Entries[0].Chapters)
+	}
+}
+
+func TestStress_CountForChapter(t *testing.T) {
+	s := &Stress{
+		Entries: []StressEntry{
+			{Term: "кедров", Stressed: "к+едров", Chapters: []int{1, 3}},
+			{Term: "договор", Stressed: "догов+ор", Chapters: []int{3}},
+			{Term: "мир", Stressed: "м+ир", Chapters: []int{1, 2}},
+		},
+	}
+	if s.CountForChapter(1) != 2 {
+		t.Errorf("chapter 1: expected 2, got %d", s.CountForChapter(1))
+	}
+	if s.CountForChapter(2) != 1 {
+		t.Errorf("chapter 2: expected 1, got %d", s.CountForChapter(2))
+	}
+	if s.CountForChapter(3) != 2 {
+		t.Errorf("chapter 3: expected 2, got %d", s.CountForChapter(3))
+	}
+	if s.CountForChapter(99) != 0 {
+		t.Errorf("chapter 99: expected 0, got %d", s.CountForChapter(99))
+	}
+}
+
 func TestHasValidStressMark(t *testing.T) {
 	tests := []struct {
 		input string

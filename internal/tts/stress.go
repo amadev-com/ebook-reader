@@ -31,6 +31,11 @@ type StressEntry struct {
 	// future runs — if a new chapter produces a different stressed form for
 	// the same term, the approved form is kept silently.
 	Approved bool `json:"approved,omitempty"`
+
+	// Chapters lists the chapter IDs where this term's stress was extracted
+	// or where it appears. Used by the chapters command to show per-chapter
+	// stress counts and by Apply to filter relevant entries.
+	Chapters []int `json:"chapters,omitempty"`
 }
 
 // StressConflict represents a term where different chapters produced
@@ -98,6 +103,40 @@ func (s *Stress) Apply(text string) string {
 		text = replaceWordIgnoreCase(text, e.Term, e.Stressed)
 	}
 	return text
+}
+
+// MergeChapter merges other into s, tagging all entries with the given
+// chapter ID. If a term already exists in s, the chapter ID is added to
+// its Chapters list (if not already present). Conflict handling is the
+// same as Merge — approved entries silently keep their form.
+func (s *Stress) MergeChapter(other *Stress, chapterID int) []StressConflict {
+	// Tag all entries from other with the chapter ID.
+	for i := range other.Entries {
+		other.Entries[i].Chapters = addChapterID(other.Entries[i].Chapters, chapterID)
+	}
+	conflicts := s.Merge(other)
+	// For existing entries that were matched (not newly added), ensure the
+	// chapter ID is recorded. Merge only adds new entries — it doesn't
+	// update Chapters on existing ones. We do a second pass.
+	for i := range other.Entries {
+		for j := range s.Entries {
+			if strings.EqualFold(s.Entries[j].Term, other.Entries[i].Term) {
+				s.Entries[j].Chapters = addChapterID(s.Entries[j].Chapters, chapterID)
+				break
+			}
+		}
+	}
+	return conflicts
+}
+
+// addChapterID appends chapterID to s if not already present.
+func addChapterID(s []int, chapterID int) []int {
+	for _, v := range s {
+		if v == chapterID {
+			return s
+		}
+	}
+	return append(s, chapterID)
 }
 
 // Merge merges other into s. If a term exists in both with the same stressed
@@ -197,4 +236,19 @@ func (s *Stress) ResolveConflict(term, stressed string) {
 			Approved: true,
 		})
 	}
+}
+
+// CountForChapter returns the number of entries tagged with the given
+// chapter ID.
+func (s *Stress) CountForChapter(chapterID int) int {
+	n := 0
+	for _, e := range s.Entries {
+		for _, c := range e.Chapters {
+			if c == chapterID {
+				n++
+				break
+			}
+		}
+	}
+	return n
 }
