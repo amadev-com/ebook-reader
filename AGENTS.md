@@ -29,14 +29,14 @@ EPUB import → chapter detection → JSON artifacts.
 
 Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.epub`):
 - `import`: 702 spine items extracted, OPF at zip root (`book.opf`) handled, NCX parsed correctly.
-- `analyze-chapters`: 700 chapters via TOC strategy, 3 sections skipped (Information, TOC, Notes). `--strip` flag (repeatable) removes promotional/boilerplate text from chapter source. Default strip patterns can be set in `config.yaml` under `chapters.strip`; CLI `--strip` flags are appended to config defaults.
+- `analyze-chapters`: 700 chapters via TOC strategy, 3 sections skipped (Information, TOC, Notes). `--strip` flag (repeatable) removes promotional/boilerplate text from chapter source. Default strip patterns can be set in `config.yaml` under `chapters.strip`; CLI `--strip` flags are appended to config defaults. Strip logic: the trigger pattern is searched in the last 400 chars of each chapter; if found, the `***` separator before the trigger (within the tail only) is located and everything from there to the end is removed. The backward search is limited to the tail to avoid matching scene-break `***` separators in the chapter body. `RawSize` (title + source length before stripping) is stored in `chapter_NNN.json` when strip is applied.
 - Idempotent: reruns skip existing artifacts unless `--force` / `--chapter` / `--range`.
 - `--strategy toc|heading|per-item` forces a single detection strategy.
 
 ## Utility commands
 
 - `bookai status`: quick directory tree with per-stage artifact counts (source, extracted, chapters, ai, translation, memory, tts, audio).
-- `bookai chapters`: per-chapter overview table showing source size (title + text bytes, with `(!)` for chapters under 500 bytes), glossary terms count, characters count, stress marks count, translation length, SSML status, audio status, and title. Summary line at the bottom shows totals. Uses the `Chapters` field on glossary terms, characters, and stress entries to count per-chapter items.
+- `bookai chapters`: per-chapter overview table showing raw size (before strip), current size (after strip, with `(!)` for chapters under 1500 bytes), diff (raw - current, with `!` if > 300), glossary terms count, characters count, stress marks count, translation length, SSML status, audio status, and title. Summary line at the bottom shows totals. Uses the `Chapters` field on glossary terms, characters, and stress entries to count per-chapter items. `RawSize` is stored in `chapter_NNN.json` during `analyze-chapters` when strip filters are applied.
 
 ## Milestone 2 — Translation core (COMPLETE — Batch API)
 

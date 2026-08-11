@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ebook-reader/internal/project"
@@ -457,5 +458,49 @@ func TestDeduplicateConflicts_CaseInsensitive(t *testing.T) {
 	}
 	if len(deduped[0].Variants) != 2 {
 		t.Errorf("variants = %d, want 2", len(deduped[0].Variants))
+	}
+}
+
+func TestStripTrailer_SceneBreakNotMistakenForTrailer(t *testing.T) {
+	t.Parallel()
+	// Chapter with a scene-break "***" in the middle and a trailer "******"
+	// at the end. The strip should only cut the trailer, not the scene break.
+	body := strings.Repeat("A", 3000) // chapter body
+	text := body + "\n\n*****\n\n" + strings.Repeat("B", 500) + "\n\n******\n\nFor MVS artwork and updates"
+
+	result := stripTrailer(text, "***")
+	// Should keep the body + scene break + B content, only removing the trailer.
+	if len(result) <= 3000 {
+		t.Errorf("result too short: %d, scene break was mistaken for trailer", len(result))
+	}
+	if strings.Contains(result, "For MVS artwork") {
+		t.Errorf("trailer text should have been removed")
+	}
+	if !strings.Contains(result, "*****") {
+		t.Errorf("scene break should have been preserved")
+	}
+}
+
+func TestStripTrailer_NoSceneBreak_CutsAtTrigger(t *testing.T) {
+	t.Parallel()
+	body := strings.Repeat("A", 3000)
+	text := body + "\n\n******\n\nFor MVS artwork and updates"
+
+	result := stripTrailer(text, "***")
+	if strings.Contains(result, "For MVS artwork") {
+		t.Errorf("trailer should have been removed")
+	}
+	if len(result) < 3000 {
+		t.Errorf("body should be preserved, got len=%d", len(result))
+	}
+}
+
+func TestStripTrailer_TriggerNotInTail(t *testing.T) {
+	t.Parallel()
+	// Trigger not in last 400 chars — no stripping.
+	text := strings.Repeat("A", 5000) + "\n\n******\n\n" + strings.Repeat("B", 500)
+	result := stripTrailer(text, "PROMO")
+	if result != text {
+		t.Errorf("text should be unchanged when trigger not in tail")
 	}
 }

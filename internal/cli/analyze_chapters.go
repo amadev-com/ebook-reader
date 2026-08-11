@@ -93,6 +93,7 @@ func runAnalyzeChapters(_ context.Context, proj *project.Project, force bool, ch
 			}
 			cleaned = strings.TrimSpace(cleaned)
 			if cleaned != orig {
+				res.Chapters[i].RawSize = len(res.Chapters[i].Title) + len(orig)
 				res.Chapters[i].Source = cleaned
 				stripped++
 			}
@@ -236,9 +237,13 @@ func chapterPath(chaptersDir string, id int) string {
 
 // stripTrailer checks if the trigger string appears in the last 400 chars of
 // text. If it does, it finds the last "***" separator (3+ consecutive stars)
-// that appears before the trigger and removes everything from that separator
-// to the end of the text. If no "***" separator is found before the trigger,
-// the text is truncated at the trigger position instead.
+// that appears before the trigger WITHIN the tail and removes everything from
+// that separator to the end of the text. If no "***" separator is found before
+// the trigger, the text is truncated at the trigger position instead.
+//
+// The backward search for "***" is limited to the tail (last 400 chars) so
+// that scene-break separators ("***") in the middle of the chapter body are
+// not mistaken for the trailer separator.
 func stripTrailer(text, trigger string) string {
 	if trigger == "" || len(text) == 0 {
 		return text
@@ -260,9 +265,10 @@ func stripTrailer(text, trigger string) string {
 	triggerAbs := tailStart + triggerIdx
 
 	// Search backwards from the trigger for a "***" separator (3+ stars).
-	// We look in the text up to the trigger position.
+	// Only search within the tail (last 400 chars) to avoid matching
+	// scene-break separators in the middle of the chapter body.
 	cutFrom := triggerAbs
-	for i := triggerAbs - 1; i >= 2; i-- {
+	for i := triggerAbs - 1; i >= tailStart+2; i-- {
 		if text[i] == '*' && text[i-1] == '*' && text[i-2] == '*' {
 			// Found a 3+ star separator. Walk back to include all leading
 			// stars and any whitespace before them.

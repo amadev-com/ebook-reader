@@ -30,6 +30,7 @@ type Chapter struct {
 	ID                int      `json:"id"`
 	Title             string   `json:"title"`
 	Source            string   `json:"source"`                    // full English text, paragraphs joined by \n\n
+	RawSize           int      `json:"raw_size,omitempty"`        // source length before strip filters (0 = not stripped)
 	SectionIDs        []string `json:"section_ids"`               // spine item ids contributing text
 	TOCEntryIndex     int      `json:"toc_entry_index,omitempty"` // 0-based index into toc, -1 if none
 	DetectionStrategy Strategy `json:"detection_strategy"`

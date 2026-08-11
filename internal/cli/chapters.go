@@ -15,7 +15,11 @@ import (
 // shortChapterThreshold is the minimum chapter size (title + source text
 // length in bytes) below which a chapter is marked as suspiciously short
 // with a (!) suffix in the chapters table.
-const shortChapterThreshold = 500
+const shortChapterThreshold = 1500
+
+// largeDiffThreshold is the minimum raw-vs-current size difference (in bytes)
+// that gets a (!) marker in the diff column, indicating significant stripping.
+const largeDiffThreshold = 300
 
 // newChaptersCmd implements `bookai chapters`: a per-chapter overview table
 // showing source size, glossary terms, characters, stress marks, translation
@@ -62,14 +66,15 @@ func runChapters(proj *project.Project) error {
 	audioExt := audioExtension(audioFormat)
 
 	// Print header.
-	fmt.Printf("%-4s  %-8s  %-6s  %-6s  %-7s  %-9s  %-5s  %-5s  %s\n",
-		"ID", "Size", "Terms", "Chars", "Stress", "Trans", "SSML", "Audio", "Title")
-	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("%-4s  %-8s  %-8s  %-7s  %-6s  %-6s  %-7s  %-9s  %-5s  %-5s  %s\n",
+		"ID", "Raw", "Size", "Diff", "Terms", "Chars", "Stress", "Trans", "SSML", "Audio", "Title")
+	fmt.Println(strings.Repeat("-", 95))
 
 	shortCount := 0
 	translatedCount := 0
 	ssmlCount := 0
 	audioCount := 0
+	strippedCount := 0
 
 	for _, ch := range chs {
 		id := ch.ID
@@ -78,6 +83,23 @@ func runChapters(proj *project.Project) error {
 		if size < shortChapterThreshold {
 			shortMark = " (!)"
 			shortCount++
+		}
+
+		// Raw size (before strip). If RawSize is 0, no stripping was done.
+		rawStr := "-"
+		diffStr := "-"
+		if ch.RawSize > 0 {
+			rawStr = fmt.Sprintf("%d", ch.RawSize)
+			diff := ch.RawSize - size
+			diffMark := ""
+			if diff > largeDiffThreshold {
+				diffMark = "!"
+				strippedCount++
+			}
+			if diff < 0 {
+				diffMark = "" // size grew somehow, no marker
+			}
+			diffStr = fmt.Sprintf("%d%s", diff, diffMark)
 		}
 
 		// Count glossary terms for this chapter.
@@ -134,14 +156,15 @@ func runChapters(proj *project.Project) error {
 		// Truncate title for display.
 		title := truncate(ch.Title, 40)
 
-		fmt.Printf("%-4d  %-8s  %-6d  %-6d  %-7d  %-9s  %-5s  %-5s  %s\n",
-			id, fmt.Sprintf("%d%s", size, shortMark), terms, charCount, stressCount,
+		fmt.Printf("%-4d  %-8s  %-8s  %-7s  %-6d  %-6d  %-7d  %-9s  %-5s  %-5s  %s\n",
+			id, rawStr, fmt.Sprintf("%d%s", size, shortMark), diffStr,
+			terms, charCount, stressCount,
 			transLen, ssmlMark, audioMark, title)
 	}
 
-	fmt.Println(strings.Repeat("-", 80))
-	fmt.Printf("total: %d chapters, %d short(!), %d translated, %d ssml, %d audio\n",
-		len(chs), shortCount, translatedCount, ssmlCount, audioCount)
+	fmt.Println(strings.Repeat("-", 95))
+	fmt.Printf("total: %d chapters, %d short(!), %d stripped(!), %d translated, %d ssml, %d audio\n",
+		len(chs), shortCount, strippedCount, translatedCount, ssmlCount, audioCount)
 
 	return nil
 }

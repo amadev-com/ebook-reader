@@ -225,7 +225,7 @@ For a detailed per-chapter overview:
 bookai chapters -p my-vampire-system
 ```
 
-Shows a table with source size, glossary terms, characters, stress marks, translation length, SSML, and audio status for every chapter. Chapters under 500 bytes are marked with `(!)`.
+Shows a table with raw size (before strip), current size (after strip), diff, glossary terms, characters, stress marks, translation length, SSML, and audio status for every chapter. Chapters under 1500 bytes are marked with `(!)`. Diffs over 300 bytes are marked with `!`.
 
 > **Tip:** If you `cd` into the project directory, you can omit `-p` from all commands:
 > ```bash
