@@ -14,14 +14,20 @@ import (
 )
 
 // newSSMLCmd implements `bookai ssml`: converts each chapter's translation
-// into an SSML file with stress marks from the global ai/stress.json and
-// SSML tags (<speak>, <p>, <s>) for Silero TTS. The output files are written
-// to tts/chapter_NNN.ssml and are the input to the `bookai tts` command.
+// into an SSML file with stress marks and SSML tags (<speak>, <p>, <s>) for
+// Silero TTS. The output files are written to tts/chapter_NNN.ssml and are
+// the input to the `bookai tts` command.
+//
+// By default, stress marks come from the global ai/stress.json (built by
+// `bookai pronounce`). With --auto-stress, the silero-stress model on the
+// TTS server is used instead — no stress.json needed. Config pronunciation
+// overrides are always applied on top.
 func newSSMLCmd() *cobra.Command {
 	var (
-		force   bool
-		chapter int
-		chRange string
+		force      bool
+		chapter    int
+		chRange    string
+		autoStress bool
 	)
 	cmd := &cobra.Command{
 		Use:   "ssml",
@@ -35,16 +41,17 @@ func newSSMLCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runSSML(ctx, proj, force, chapter, chRange)
+			return runSSML(ctx, proj, force, chapter, chRange, autoStress)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "regenerate SSML for chapters whose .ssml file already exists")
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "process a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "process a range of chapter ids, e.g. 5-12")
+	cmd.Flags().BoolVar(&autoStress, "auto-stress", false, "use silero-stress model on TTS server instead of ai/stress.json (config overrides still apply)")
 	return cmd
 }
 
-func runSSML(_ context.Context, proj *project.Project, force bool, chapter int, chRange string) error {
+func runSSML(ctx context.Context, proj *project.Project, force bool, chapter int, chRange string, autoStress bool) error {
 	chs, err := loadAllChapters(proj)
 	if err != nil {
 		return err
@@ -64,12 +71,35 @@ func runSSML(_ context.Context, proj *project.Project, force bool, chapter int, 
 		return err
 	}
 
-	// Load the global stress vocabulary.
-	stress, err := tts.LoadStress(proj.AIDir())
-	if err != nil {
-		return fmt.Errorf("load stress vocabulary: %w", err)
+	// Build the override stress store from config pronunciation overrides.
+	// These are always applied (on top of either stress.json or auto-stress).
+	var overrides *tts.Stress
+	if len(proj.Cfg.Pronunciation) > 0 {
+		ovs := make([]tts.StressOverride, len(proj.Cfg.Pronunciation))
+		for i, p := range proj.Cfg.Pronunciation {
+			ovs[i] = tts.StressOverride{Term: p.Term, Phonemes: p.Phonemes}
+		}
+		overrides = tts.NewStressFromOverrides(ovs)
+		slog.Info("loaded config pronunciation overrides", "entries", len(overrides.Entries))
 	}
-	slog.Info("loaded stress vocabulary", "entries", len(stress.Entries))
+
+	// Stress source: either auto-stress (silero-stress model on TTS server)
+	// or the global ai/stress.json vocabulary.
+	var stressClient *tts.StressClient
+	var stress *tts.Stress
+	if autoStress {
+		if proj.Cfg.TTS.ServerURL == "" {
+			return fmt.Errorf("--auto-stress requires tts.server_url to be set in config")
+		}
+		stressClient = tts.NewStressClient(proj.Cfg.TTS.ServerURL)
+		slog.Info("using auto-stress (silero-stress model on TTS server)", "server_url", proj.Cfg.TTS.ServerURL)
+	} else {
+		stress, err = tts.LoadStress(proj.AIDir())
+		if err != nil {
+			return fmt.Errorf("load stress vocabulary: %w", err)
+		}
+		slog.Info("loaded stress vocabulary", "entries", len(stress.Entries))
+	}
 
 	generated := 0
 	skipped := 0
@@ -97,8 +127,27 @@ func runSSML(_ context.Context, proj *project.Project, force bool, chapter int, 
 			return fmt.Errorf("read translation for chapter %d: %w", ch.ID, err)
 		}
 
-		// Apply stress marks (term → stressed form with + before vowel).
-		processed := stress.Apply(string(text))
+		var processed string
+		if autoStress {
+			// Send text to the silero-stress model on the TTS server.
+			stressed, err := stressClient.StressText(ctx, string(text))
+			if err != nil {
+				return fmt.Errorf("auto-stress chapter %d: %w", ch.ID, err)
+			}
+			processed = stressed
+			// Apply config overrides on top of the model output.
+			if overrides != nil {
+				processed = overrides.Apply(processed)
+			}
+		} else {
+			// Apply stress marks from stress.json (term → stressed form).
+			processed = stress.Apply(string(text))
+			// Apply config overrides on top.
+			if overrides != nil {
+				processed = overrides.Apply(processed)
+			}
+		}
+
 		// Generate SSML (wrap in <speak>/<p>/<s> tags).
 		ssmlText := tts.GenerateSSML(processed)
 
@@ -112,7 +161,7 @@ func runSSML(_ context.Context, proj *project.Project, force bool, chapter int, 
 			slog.Warn("failed to update chapter status", "chapter", ch.ID, "error", err)
 		}
 
-		slog.Info("SSML generated", "chapter", ch.ID, "stress_entries", len(stress.Entries))
+		slog.Info("SSML generated", "chapter", ch.ID, "auto_stress", autoStress)
 		generated++
 	}
 

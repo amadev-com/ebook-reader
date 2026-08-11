@@ -45,6 +45,7 @@ docker cp <container_id>:/data/silero/. ./models/
 ## API Endpoints
 
 - `POST /api/tts` — Synthesize speech (accepts JSON body with `text`, `voice`, `ssml`, `sample_rate`, `speed`, `pitch`)
+- `POST /api/stress` — Apply automatic stress placement (silero-stress model). Accepts `{"sentences": ["...", ...]}`, returns `{"results": ["...", ...]}` with `+` marks before stressed vowels. Used by `bookai ssml --auto-stress`.
 - `GET /api/voices` — List available voices (filter by `language`)
 - `GET /api/models` — List available models (filter by `language`)
 - `GET /health` — Health check
@@ -105,6 +106,20 @@ Silero supports the following SSML tags:
 Silero supports stress marks: a `+` before the stressed vowel.
 
 Example: `к+едров` = stress on "е"
+
+### Automatic Stress Placement
+
+The server includes a `/api/stress` endpoint powered by [silero-stress](https://github.com/snakers4/silero-stress) — a pre-trained model that covers ~4M Russian words with 100% accuracy and handles ~2K homographs with F1=0.85. The model is ~50MB and loads lazily on first request.
+
+The `entrypoint.sh` script installs `silero-stress` on first container start. The endpoint is mounted via `biblio_stress_app.py` (wrapper that imports the TTS app and adds the stress router from `stress_endpoint.py`).
+
+Usage from bookai:
+
+```bash
+bookai ssml --auto-stress    # use silero-stress instead of ai/stress.json
+```
+
+This eliminates the need for the `bookai pronounce` step (which uses the OpenAI Batch API). Config `pronunciation` overrides are still applied on top of the model output.
 
 ## bookai Configuration
 

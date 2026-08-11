@@ -252,3 +252,29 @@ func (s *Stress) CountForChapter(chapterID int) int {
 	}
 	return n
 }
+
+// NewStressFromOverrides builds a Stress store from pronunciation config
+// overrides. Each override becomes a StressEntry. This is used by the
+// --auto-stress flow to apply user-specified corrections on top of the
+// silero-stress model output.
+func NewStressFromOverrides(overrides []StressOverride) *Stress {
+	s := &Stress{}
+	for _, ov := range overrides {
+		if ov.Term == "" || ov.Phonemes == "" {
+			continue
+		}
+		s.Entries = append(s.Entries, StressEntry{
+			Term:     ov.Term,
+			Stressed: ov.Phonemes,
+		})
+	}
+	return s
+}
+
+// StressOverride is a user-specified stress correction (mirrors
+// config.PronunciationOverride). Defined here to avoid a circular
+// dependency on the config package.
+type StressOverride struct {
+	Term     string
+	Phonemes string
+}

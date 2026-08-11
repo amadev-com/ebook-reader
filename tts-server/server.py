@@ -42,7 +42,7 @@ port = int(os.environ.get("SILERO_PORT", str(settings.port)))
 
 if __name__ == "__main__":
     uvicorn.run(
-        "biblio_tts_server_silero.app:app",
+        "biblio_stress_app:app",
         host=host,
         port=port,
         workers=workers,

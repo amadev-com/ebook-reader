@@ -40,12 +40,18 @@ services:
     volumes:
       # Mount our custom entry point that enables multi-worker mode
       - ./server.py:/app/server.py:ro
+      # Mount the stress endpoint module (silero-stress integration)
+      - ./stress_endpoint.py:/app/stress_endpoint.py:ro
+      # Mount the wrapper app that combines TTS + stress endpoints
+      - ./biblio_stress_app.py:/app/biblio_stress_app.py:ro
+      # Mount entrypoint that installs silero-stress if needed
+      - ./entrypoint.sh:/app/entrypoint.sh:ro
       # Mount pre-downloaded model cache so workers don't download in parallel
       # on first start. The models/ dir contains the Silero .pt files and
       # latest_silero_models.yml. To populate it, run the server once without
       # this mount, then: docker cp bookai-silero:/data/silero/. ./models/
       - ./models:/data/silero:ro
-    command: ["python", "/app/server.py"]
+    entrypoint: ["/bin/sh", "/app/entrypoint.sh"]
     # For GPU support, uncomment:
     # deploy:
     #   resources:

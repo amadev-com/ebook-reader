@@ -203,6 +203,12 @@ bookai ssml -p my-vampire-system
 
 Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (SSML with stress marks applied). Stress marks from the global `ai/stress.json` are applied to the text, then the text is wrapped in SSML tags (`<speak>`, `<p>`, `<s>`) for Silero TTS. This is local processing — no AI or network needed. Flags: `--force`, `--chapter N`, `--range M-N`.
 
+**Auto-stress mode:** With `--auto-stress`, the silero-stress model on the TTS server is used instead of `ai/stress.json` — no `pronounce` step needed. The text is split into sentences and sent to the TTS server's `POST /api/stress` endpoint, which applies stress placement with homograph disambiguation. Config `pronunciation` overrides are always applied on top. Requires `tts.server_url` in config and the TTS server to be running.
+
+```bash
+bookai ssml -p my-vampire-system --auto-stress    # use silero-stress model
+```
+
 ### Step 8 — Synthesize audio
 
 ```bash
