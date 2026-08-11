@@ -87,13 +87,15 @@ func runAnalyzeChapters(_ context.Context, proj *project.Project, force bool, ch
 		stripped := 0
 		for i := range res.Chapters {
 			orig := res.Chapters[i].Source
+			// Record raw size for all chapters so the chapters command can
+			// show it even when the chapter wasn't modified by stripping.
+			res.Chapters[i].RawSize = len(res.Chapters[i].Title) + len(orig)
 			cleaned := orig
 			for _, s := range strip {
 				cleaned = stripTrailer(cleaned, s)
 			}
 			cleaned = strings.TrimSpace(cleaned)
 			if cleaned != orig {
-				res.Chapters[i].RawSize = len(res.Chapters[i].Title) + len(orig)
 				res.Chapters[i].Source = cleaned
 				stripped++
 			}
