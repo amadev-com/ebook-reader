@@ -412,15 +412,15 @@ func submitAnalyzeMergeBatch(ctx context.Context, proj *project.Project, input *
 
 	var existingGlossaryJSON, existingCharactersJSON string
 	if input.ExistingGlossary != nil && len(input.ExistingGlossary.Terms) > 0 {
-		data, err := json.Marshal(input.ExistingGlossary.Terms)
-		if err == nil {
-			existingGlossaryJSON = string(data)
+		existingGlossaryJSON, err = input.ExistingGlossary.MarshalForPrompt()
+		if err != nil {
+			return fmt.Errorf("marshal existing glossary: %w", err)
 		}
 	}
 	if input.ExistingCharacters != nil && len(input.ExistingCharacters.Characters) > 0 {
-		data, err := json.Marshal(input.ExistingCharacters.Characters)
-		if err == nil {
-			existingCharactersJSON = string(data)
+		existingCharactersJSON, err = input.ExistingCharacters.MarshalForPrompt()
+		if err != nil {
+			return fmt.Errorf("marshal existing characters: %w", err)
 		}
 	}
 
@@ -453,11 +453,19 @@ func submitAnalyzeMergeBatch(ctx context.Context, proj *project.Project, input *
 		return err
 	}
 
+	exTerms := 0
+	if input.ExistingGlossary != nil {
+		exTerms = len(input.ExistingGlossary.Terms)
+	}
+	exChars := 0
+	if input.ExistingCharacters != nil {
+		exChars = len(input.ExistingCharacters.Characters)
+	}
 	slog.Info("merge batch submitted",
 		"batch_id", batchID,
 		"chapters", len(input.ChapterResults),
-		"existing_terms", len(input.ExistingGlossary.Terms),
-		"existing_characters", len(input.ExistingCharacters.Characters),
+		"existing_terms", exTerms,
+		"existing_characters", exChars,
 		"model", model)
 
 	mergeState := &translation.BatchState{

@@ -1,6 +1,7 @@
 package translation
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -52,6 +53,34 @@ func (g *Glossary) Sort() {
 	sort.SliceStable(g.Terms, func(i, j int) bool {
 		return strings.ToLower(g.Terms[i].Source) < strings.ToLower(g.Terms[j].Source)
 	})
+}
+
+// glossaryTermForPrompt is a projection of GlossaryTerm that omits internal
+// bookkeeping fields (Chapters, FirstSeenChapter) when serializing for AI
+// prompts. This saves tokens — the model only needs source/target/type.
+type glossaryTermForPrompt struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Type   string `json:"type"`
+}
+
+// MarshalForPrompt serializes the glossary terms as JSON without internal
+// bookkeeping fields (Chapters, FirstSeenChapter). Used for AI merge prompts
+// where those fields are meaningless and waste tokens.
+func (g *Glossary) MarshalForPrompt() (string, error) {
+	projected := make([]glossaryTermForPrompt, len(g.Terms))
+	for i, t := range g.Terms {
+		projected[i] = glossaryTermForPrompt{
+			Source: t.Source,
+			Target: t.Target,
+			Type:   t.Type,
+		}
+	}
+	data, err := json.Marshal(projected)
+	if err != nil {
+		return "", fmt.Errorf("marshal glossary for prompt: %w", err)
+	}
+	return string(data), nil
 }
 
 // Find looks up a term by its source text (case-insensitive). Returns the
@@ -227,6 +256,35 @@ func (c *Characters) Save(aiDir string) error {
 		return strings.ToLower(c.Characters[i].Name) < strings.ToLower(c.Characters[j].Name)
 	})
 	return project.SaveJSON(aiDir+"/characters.json", c)
+}
+
+// characterForPrompt is a projection of Character that omits the internal
+// Chapters field when serializing for AI prompts.
+type characterForPrompt struct {
+	Name        string `json:"name"`
+	Translation string `json:"translation"`
+	Role        string `json:"role,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// MarshalForPrompt serializes the characters as JSON without the internal
+// Chapters field. Used for AI merge prompts where chapter tracking is
+// meaningless and wastes tokens.
+func (c *Characters) MarshalForPrompt() (string, error) {
+	projected := make([]characterForPrompt, len(c.Characters))
+	for i, ch := range c.Characters {
+		projected[i] = characterForPrompt{
+			Name:        ch.Name,
+			Translation: ch.Translation,
+			Role:        ch.Role,
+			Description: ch.Description,
+		}
+	}
+	data, err := json.Marshal(projected)
+	if err != nil {
+		return "", fmt.Errorf("marshal characters for prompt: %w", err)
+	}
+	return string(data), nil
 }
 
 // Find looks up a character by name (case-insensitive). Returns the character
