@@ -194,8 +194,6 @@ func synthesizeAudio(
 	}
 	if err := convertAudio(ctx, wavPath, outPath, audioFormat, proj.Cfg.TTS.AudioBitrate); err != nil {
 		_ = os.Remove(wavPath)
-		// Remove a partially-written output so later runs don't skip it.
-		_ = os.Remove(outPath)
 		return fmt.Errorf("convert chapter %d to %s: %w", chID, audioFormat, err)
 	}
 	_ = os.Remove(wavPath)
