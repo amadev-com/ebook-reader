@@ -14,11 +14,12 @@ linters:
     - unused
     - misspell
     - revive
+  exclusions:
+    rules:
+      # Test helpers commonly take a *testing.T and discard it.
+      - path: _test\.go
+        linters: [errcheck]
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    # Test helpers commonly take a *testing.T and discard it.
-    - path: _test\.go
-      linters: [errcheck]
