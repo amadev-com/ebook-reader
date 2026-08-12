@@ -195,6 +195,8 @@ func synthesizeAudio(
 	}
 	if err := convertAudio(ctx, wavPath, outPath, audioFormat, proj.Cfg.TTS.AudioBitrate); err != nil {
 		_ = os.Remove(wavPath)
+		// Remove a partially-written output so later runs don't skip it.
+		_ = os.Remove(outPath)
 		return fmt.Errorf("convert chapter %d to %s: %w", chID, audioFormat, err)
 	}
 	_ = os.Remove(wavPath)
@@ -242,8 +244,12 @@ func tempWAVPath(audioDir string, chapterID int) string {
 }
 
 // convertAudio converts a WAV file to the target format (e.g. MP3) using
-// ffmpeg. The output is mono, at the given bitrate for lossy formats.
+// ffmpeg. The output is mono, at the given bitrate for lossy formats. The
+// conversion writes to a temporary file in the same directory and renames
+// atomically on success, so a cancelled or failed conversion never leaves a
+// partially-written output file that would cause later runs to skip the chapter.
 func convertAudio(ctx context.Context, input, output, format, bitrate string) error {
+	tmpOut := output + ".tmp"
 	args := []string{"-y", "-i", input}
 
 	switch strings.ToLower(format) {
@@ -264,12 +270,17 @@ func convertAudio(ctx context.Context, input, output, format, bitrate string) er
 		args = append(args, "-ac", "1")
 	}
 
-	args = append(args, output)
+	args = append(args, tmpOut)
 
 	// #nosec G204 -- ffmpeg is a known binary, args are controlled.
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(tmpOut)
 		return fmt.Errorf("ffmpeg: %w (output: %s)", err, strings.TrimSpace(string(out)))
+	}
+	if err := os.Rename(tmpOut, output); err != nil {
+		_ = os.Remove(tmpOut)
+		return fmt.Errorf("rename temp output to %s: %w", output, err)
 	}
 	return nil
 }
