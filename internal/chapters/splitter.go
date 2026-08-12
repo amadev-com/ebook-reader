@@ -243,7 +243,7 @@ func chapterFromAnchor(entry epub.TOCEntry, items []SpineItem, tocIdx int) *Chap
 	blocks := items[0].Blocks
 	start := -1
 	for i, b := range blocks {
-		if b.Kind == string(StrategyHeading) && b.Anchor == entry.SrcAnchor {
+		if b.Kind == epub.BlockKindHeading && b.Anchor == entry.SrcAnchor {
 			start = i
 			break
 		}
@@ -257,7 +257,7 @@ func chapterFromAnchor(entry epub.TOCEntry, items []SpineItem, tocIdx int) *Chap
 	// Find the next heading with a different anchor (chapter boundary).
 	end := len(blocks)
 	for i := start + 1; i < len(blocks); i++ {
-		if blocks[i].Kind == string(StrategyHeading) && blocks[i].Anchor != "" &&
+		if blocks[i].Kind == epub.BlockKindHeading && blocks[i].Anchor != "" &&
 			blocks[i].Anchor != entry.SrcAnchor {
 			end = i
 			break
@@ -345,7 +345,7 @@ type headingPending struct {
 func processHeadingBlocks(si SpineItem, cur **headingPending, flush func()) bool {
 	hasKeptHeading := false
 	for _, b := range si.Blocks {
-		if b.Kind == string(StrategyHeading) && (b.Level == 1 || b.Level == 2) && IsKeep(b.Text) {
+		if b.Kind == epub.BlockKindHeading && (b.Level == 1 || b.Level == 2) && IsKeep(b.Text) {
 			flush()
 			*cur = &headingPending{title: b.Text, ids: []string{si.ID}, tocIdx: -1}
 			hasKeptHeading = true
@@ -421,7 +421,7 @@ func blocksToText(blocks []epub.Block) string {
 	var parts []string
 	for _, b := range blocks {
 		switch b.Kind {
-		case string(StrategyHeading), "paragraph", "list_item", "pre", "blockquote":
+		case epub.BlockKindHeading, "paragraph", "list_item", "pre", "blockquote":
 			if b.Text != "" {
 				parts = append(parts, b.Text)
 			}
@@ -453,7 +453,7 @@ func snippetForTOC(in SplitInput, entry epub.TOCEntry) string {
 
 func firstHeadingText(blocks []epub.Block) string {
 	for _, b := range blocks {
-		if b.Kind == string(StrategyHeading) {
+		if b.Kind == epub.BlockKindHeading {
 			return b.Text
 		}
 	}

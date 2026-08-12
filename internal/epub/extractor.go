@@ -13,6 +13,9 @@ import (
 // EPUB3 manifest "nav" property and as a SourceKind value in TOC entries.
 const navElement = "nav"
 
+// BlockKindHeading is the Block.Kind value for h1-h6 headings.
+const BlockKindHeading = "heading"
+
 // Block is a semantic unit of a spine item's body: a heading, paragraph, list
 // item, blockquote, etc. Headings carry their Level (1-6) and an Anchor (the
 // id attribute of the heading or its nearest ancestor with an id) so TOC
@@ -122,7 +125,7 @@ func handleHeadingBlock(n *html.Node, currentAnchor string, out *[]Block) {
 		anchor = currentAnchor
 	}
 	*out = append(*out, Block{
-		Kind:   "heading",
+		Kind:   BlockKindHeading,
 		Level:  level,
 		Anchor: anchor,
 		Text:   collapseWS(textOf(n)),

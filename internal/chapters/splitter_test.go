@@ -12,7 +12,7 @@ func makeSpineItem(id, href string, blocks ...epub.Block) SpineItem {
 }
 
 func h(level int, text, anchor string) epub.Block {
-	return epub.Block{Kind: string(StrategyHeading), Level: level, Anchor: anchor, Text: text}
+	return epub.Block{Kind: epub.BlockKindHeading, Level: level, Anchor: anchor, Text: text}
 }
 
 func p(text string) epub.Block {
