@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -71,7 +72,13 @@ func countFiles(dir, ext string) (int, bool) {
 	n := 0
 	walkErr := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return err
+			// Log the unreadable entry but continue traversing the rest
+			// of the tree so the count is best-effort, not aborted.
+			slog.Warn("status: skipping unreadable entry", "path", path, "error", err)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if d.IsDir() {
 			return nil
@@ -81,8 +88,8 @@ func countFiles(dir, ext string) (int, bool) {
 		}
 		return nil
 	})
-	if walkErr != nil {
-		slog.Warn("status: partial file count, directory walk failed", "dir", dir, "error", walkErr)
+	if walkErr != nil && !errors.Is(walkErr, filepath.SkipDir) {
+		slog.Warn("status: directory walk failed", "dir", dir, "error", walkErr)
 	}
 	return n, true
 }
