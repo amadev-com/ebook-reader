@@ -596,7 +596,10 @@ func processAnalyzeMergeResults(
 	// glossary entries per chapter (reducing token costs).
 	input, err := loadAnalyzeMergeInput(proj.AIDir())
 	if err != nil && !errors.Is(err, errMergeInputNotFound) {
-		return fmt.Errorf("load merge input: %w", err)
+		// Log but don't fail — the merge result is complete and paid for.
+		// Skipping chapter tagging is better than discarding the glossary.
+		slog.Warn("failed to load merge input, skipping chapter tagging", "error", err)
+		input = nil
 	}
 	if input != nil {
 		tagChapters(&unified, input.ChapterResults, input.ExistingGlossary, input.ExistingCharacters)
