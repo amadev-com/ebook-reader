@@ -501,8 +501,14 @@ func TestSileroEngine_ParallelSynthesis(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		cur := concurrent.Add(1)
-		if cur > atomic.LoadInt32(&maxConcurrent) {
-			atomic.StoreInt32(&maxConcurrent, cur)
+		for {
+			old := atomic.LoadInt32(&maxConcurrent)
+			if cur <= old {
+				break
+			}
+			if atomic.CompareAndSwapInt32(&maxConcurrent, old, cur) {
+				break
+			}
 		}
 		time.Sleep(50 * time.Millisecond) // simulate work
 		concurrent.Add(-1)
