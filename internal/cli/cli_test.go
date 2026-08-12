@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"ebook-reader/internal/project"
+	"ebook-reader/internal/translation"
 	"ebook-reader/internal/tts"
 )
 
@@ -495,5 +496,28 @@ func TestStripTrailer_TriggerNotInTail(t *testing.T) {
 	result := stripTrailer(text, "PROMO")
 	if result != text {
 		t.Errorf("text should be unchanged when trigger not in tail")
+	}
+}
+
+func TestSaveBatchState_UnwritableDir(t *testing.T) {
+	t.Parallel()
+	// Verify that SaveBatchState returns an error when the ai directory
+	// is unwritable. pollBatchUntilTerminal now checks this error and
+	// propagates it instead of discarding it.
+	dir := t.TempDir()
+	aiDir := filepath.Join(dir, "ai")
+	if err := os.Mkdir(aiDir, 0o500); err != nil { // read+execute, no write
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(aiDir, 0o700) })
+
+	state := &translation.BatchState{
+		Type:    translation.BatchTypeAnalyze,
+		BatchID: "batch_test",
+		Status:  "in_progress",
+	}
+	err := translation.SaveBatchState(aiDir, state)
+	if err == nil {
+		t.Fatal("expected error from SaveBatchState with unwritable dir, got nil")
 	}
 }

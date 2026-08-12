@@ -45,7 +45,9 @@ func pollBatchUntilTerminal(
 		state.Total = info.Total
 		state.Completed = info.Completed
 		state.Failed = info.Failed
-		_ = translation.SaveBatchState(proj.AIDir(), state)
+		if err = translation.SaveBatchState(proj.AIDir(), state); err != nil {
+			return nil, fmt.Errorf("save %s state: %w", label, err)
+		}
 
 		slog.Default().InfoContext(ctx, label+" status",
 			"batch_id", state.BatchID, "status", info.Status,
