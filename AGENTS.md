@@ -79,7 +79,7 @@ Validated on a real 700-chapter EPUB (`books/9kafe.com-my-vampire-system-c1-700.
 - Config: `tts.engine` ("noop" default, "silero-http" for real TTS), `tts.language`, `tts.server_url`, `tts.voice`, `tts.speed`, `tts.pitch`, `tts.sample_rate`, `tts.audio_format` ("mp3" default, "wav"), `tts.audio_bitrate` ("128k" default), `tts.parallel` (concurrent chunk requests, default 1).
 - Flags: `--force`, `--chapter N`, `--range M-N`.
 - TTS server: `tts-server/` directory with `docker-compose.yml` using prebuilt `vpoluyaktov/bibliohub-tts-server-silero:dev-latest` image + custom `server.py` entry point that runs multiple uvicorn workers for parallel request processing. Each worker has its own model copy and `torch.set_num_threads(1)` to avoid CPU oversubscription. `SILERO_WORKERS` env var controls worker count (default 4). The server also exposes `POST /api/stress` (silero-stress model) for automatic stress placement — used by `bookai ssml --auto-stress`. The stress endpoint is mounted via `biblio_stress_app.py` wrapper, `stress_endpoint.py` router, and `entrypoint.sh` installs `silero-stress` on first start. See `tts-server/README.md`.
-- To add a real engine: create `internal/tts/<engine>.go`, implement `Engine`, call `Register("name", factory)` in `init()`. No changes needed to CLI or pipeline code.
+- To add a real engine: create `internal/tts/<engine>.go`, implement `Engine`, add a `Register("name", factory)` call inside `RegisterEngines()` in `internal/tts/engine.go`. No changes needed to CLI or pipeline code. The registry self-initializes via `sync.Once` so callers outside the bookai binary (tests, future entry points) never observe an empty registry.
 
 ## Conventions
 
