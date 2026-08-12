@@ -25,6 +25,8 @@ Pipeline commands (default project: `books/my-vampire-system-0001-0700`):
 TTS server (Docker):
 - `task tts-up`, `task tts-down`, `task tts-logs`
 
+CI (`.github/workflows/lint.yml`): runs golangci-lint, go vet, and go test on every PR and push to main. golangci-lint version is pinned in the workflow to match `GOLANGCI_LINT_VERSION` in the Taskfile. Uses actions/checkout@v7, actions/setup-go@v7, golangci/golangci-lint-action@v9.
+
 ## Architecture
 
 File-based batch pipeline. The filesystem is the database. Every stage reads the previous stage's files and writes its own. Stages are idempotent (skip existing outputs unless `--force`).
