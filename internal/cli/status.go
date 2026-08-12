@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -68,7 +69,7 @@ func countFiles(dir, ext string) (int, bool) {
 		return 0, false
 	}
 	n := 0
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -80,6 +81,9 @@ func countFiles(dir, ext string) (int, bool) {
 		}
 		return nil
 	})
+	if walkErr != nil {
+		slog.Warn("status: partial file count, directory walk failed", "dir", dir, "error", walkErr)
+	}
 	return n, true
 }
 
