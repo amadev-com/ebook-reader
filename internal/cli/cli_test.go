@@ -281,9 +281,8 @@ func TestSlugify(t *testing.T) {
 	}
 }
 
-func TestImportCreatesProjectDir(t *testing.T) {
-	t.Parallel()
-	// Uses global flagProject and os.Chdir.
+func TestImportCreatesProjectDir(t *testing.T) { //nolint:paralleltest // mutates global flagProject and os.Chdir
+	// Uses global flagProject and os.Chdir — not safe to parallelize.
 	epubPath := buildTestEPUB(t)
 	parentDir := t.TempDir()
 
@@ -320,9 +319,8 @@ func TestImportCreatesProjectDir(t *testing.T) {
 	}
 }
 
-func TestImportWithExplicitProjectFlag(t *testing.T) {
-	t.Parallel()
-	// Uses global flagProject.
+func TestImportWithExplicitProjectFlag(t *testing.T) { //nolint:paralleltest // mutates global flagProject
+	// Uses global flagProject — not safe to parallelize.
 	epubPath := buildTestEPUB(t)
 	projDir := t.TempDir()
 
