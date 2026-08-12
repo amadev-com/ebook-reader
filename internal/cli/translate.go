@@ -405,11 +405,10 @@ func deduplicateTitle(text string) string {
 
 	if secondLine == firstLine {
 		// Duplicate detected: keep the first line + blank line + rest after second line.
-		afterSecond := rest
-		if ok0 {
-			afterSecond = after0
+		if !ok0 {
+			return firstLine
 		}
-		return firstLine + "\n\n" + strings.TrimLeft(afterSecond, "\n\r \t")
+		return firstLine + "\n\n" + strings.TrimLeft(after0, "\n\r \t")
 	}
 	return text
 }
