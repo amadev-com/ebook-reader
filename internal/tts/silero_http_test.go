@@ -1,6 +1,7 @@
 package tts //nolint:testpackage // needs access to unexported silero internals
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -69,6 +70,26 @@ func makeWAV(dataSize int) []byte {
 	binary.LittleEndian.PutUint16(wav[34:36], 16) // bits per sample
 	copy(wav[36:40], []byte("data"))
 	binary.LittleEndian.PutUint32(wav[40:44], uint32(dataSize))
+	return wav
+}
+
+// makeWAVWithPCM creates a minimal valid WAV file with the given PCM data.
+func makeWAVWithPCM(pcm []byte) []byte {
+	wav := make([]byte, 44+len(pcm))
+	copy(wav[0:4], []byte(wavRIFF))
+	binary.LittleEndian.PutUint32(wav[4:8], uint32(36+len(pcm)))
+	copy(wav[8:12], []byte(wavWAVE))
+	copy(wav[12:16], []byte("fmt "))
+	binary.LittleEndian.PutUint32(wav[16:20], 16)
+	binary.LittleEndian.PutUint16(wav[20:22], 1) // PCM
+	binary.LittleEndian.PutUint16(wav[22:24], 1) // mono
+	binary.LittleEndian.PutUint32(wav[24:28], 48000)
+	binary.LittleEndian.PutUint32(wav[28:32], 48000)
+	binary.LittleEndian.PutUint16(wav[32:34], 2)  // block align
+	binary.LittleEndian.PutUint16(wav[34:36], 16) // bits per sample
+	copy(wav[36:40], []byte("data"))
+	binary.LittleEndian.PutUint32(wav[40:44], uint32(len(pcm)))
+	copy(wav[44:], pcm)
 	return wav
 }
 
@@ -532,13 +553,26 @@ func TestSileroEngine_ParallelSynthesis(t *testing.T) {
 
 func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
 	t.Parallel()
-	// Each request returns a WAV with a unique data size based on request
-	// order. After concatenation, the data sizes must be in chunk order.
-	var seq atomic.Int32
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		n := seq.Add(1)
-		_, _ = w.Write(makeWAV(int(n * 10)))
+	// Each request returns a WAV whose PCM data contains a 4-byte marker
+	// derived from the request text. Responses are delayed so that earlier
+	// chunks complete after later ones, forcing out-of-order completion.
+	// After concatenation, the PCM markers must appear in original chunk order.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body sileroRequestBody
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Derive a marker from the text: first 4 bytes of the text as PCM.
+		marker := []byte(body.Text)
+		if len(marker) < 4 {
+			marker = append(marker, make([]byte, 4-len(marker))...)
+		}
+		marker = marker[:4]
+		// Delay based on text length so earlier chunks (shorter text from
+		// splitSSML ordering) finish after later chunks.
+		time.Sleep(time.Duration(50+len(body.Text)) * time.Millisecond)
+		_, _ = w.Write(makeWAVWithPCM(marker))
 	}))
 	defer ts.Close()
 
@@ -553,12 +587,29 @@ func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
 		t.Fatalf("NewSileroEngine: %v", err)
 	}
 
-	// Build SSML that produces exactly 3 chunks.
+	// Build SSML that produces multiple chunks with distinct text.
+	// Each sentence is ~30 bytes; 60 sentences → ~1800 bytes → 3+ chunks at
+	// maxChunkLen=900.
 	var sentences []string
-	for i := range 15 {
-		sentences = append(sentences, "<s>Предложение "+strconv.Itoa(i)+".</s>")
+	for i := range 60 {
+		sentences = append(sentences, "<s>Предложение номер "+strconv.Itoa(i)+".</s>")
 	}
 	ssml := "<speak><p>" + strings.Join(sentences, "") + "</p></speak>"
+
+	// Determine the expected chunk order by splitting the SSML the same way
+	// the engine does.
+	chunks := splitSSML(ssml)
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+	var expectedMarkers [][]byte
+	for _, chunk := range chunks {
+		marker := []byte(chunk)
+		if len(marker) < 4 {
+			marker = append(marker, make([]byte, 4-len(marker))...)
+		}
+		expectedMarkers = append(expectedMarkers, marker[:4])
+	}
 
 	tmpDir := t.TempDir()
 	outPath := filepath.Join(tmpDir, "ordered.wav")
@@ -566,13 +617,27 @@ func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
 		t.Fatalf("Synthesize: %v", err)
 	}
 
-	// The output should be a valid WAV regardless of order — we just verify
-	// it was produced successfully.
+	// Verify output is a valid WAV.
 	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
 	if string(data[:4]) != wavRIFF {
-		t.Error("output is not a valid WAV")
+		t.Fatal("output is not a valid WAV")
+	}
+
+	// Extract PCM data and verify markers appear in chunk order.
+	_, dataOffset, err := parseWAVHeader(data)
+	if err != nil {
+		t.Fatalf("parseWAVHeader: %v", err)
+	}
+	pcm := data[dataOffset:]
+	offset := 0
+	for i, marker := range expectedMarkers {
+		idx := bytes.Index(pcm[offset:], marker)
+		if idx < 0 {
+			t.Fatalf("chunk %d marker %q not found in PCM at offset %d", i, marker, offset)
+		}
+		offset += idx + len(marker)
 	}
 }
