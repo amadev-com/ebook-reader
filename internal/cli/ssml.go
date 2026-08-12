@@ -169,14 +169,14 @@ func processSSMLChapter(
 	stressClient *tts.StressClient,
 	stress *tts.Stress,
 ) (int, int, error) {
+	if !writeAll && !ids[ch.ID] {
+		return 0, 0, nil
+	}
+
 	translationPath := translationPath(proj.TranslationDir(), ch.ID, targetLang)
 	if !project.Exists(translationPath) {
 		slog.Default().DebugContext(ctx, "skip chapter without translation", "chapter", ch.ID)
 		return 0, 1, nil
-	}
-
-	if !writeAll && !ids[ch.ID] {
-		return 0, 0, nil
 	}
 
 	ssmlPath := ssmlFilePath(proj.TTSDir(), ch.ID)
