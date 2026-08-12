@@ -24,9 +24,11 @@ import (
 // translation for words with non-obvious stress and generates stress marks
 // (Silero convention: '+' before the stressed vowel) via the OpenAI Batch
 // API. Each chapter is an independent batch item — the model sees the full
-// chapter text and returns a list of {term, stressed} pairs. Per-chapter
-// results are saved to ai/stress_NNN.json, then merged into a single global
-// ai/stress.json vocabulary.
+// chapter text and returns a list of {term, stressed} pairs. Results are
+// merged directly into the global ai/stress.json vocabulary, with each
+// entry tagged by chapter ID for per-chapter tracking. Chapters that
+// already have stress entries in the global vocabulary are skipped unless
+// --force or --reset is used.
 //
 // The command supports a --continue flag to resume polling an interrupted
 // batch. Batch state is persisted locally in ai/batch_pronounce.json.
