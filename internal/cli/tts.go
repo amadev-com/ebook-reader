@@ -130,14 +130,14 @@ func synthesizeChapter(
 	engine tts.Engine,
 	audioFormat, audioExt string,
 ) (int, int, error) {
+	if !writeAll && !ids[ch.ID] {
+		return 0, 0, nil
+	}
+
 	ssmlPath := ssmlFilePath(proj.TTSDir(), ch.ID)
 	if !project.Exists(ssmlPath) {
 		slog.Default().DebugContext(ctx, "skip chapter without SSML", "chapter", ch.ID)
 		return 0, 1, nil
-	}
-
-	if !writeAll && !ids[ch.ID] {
-		return 0, 0, nil
 	}
 
 	outPath := audioPath(proj.AudioDir(), ch.ID, audioExt)
