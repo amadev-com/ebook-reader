@@ -2,11 +2,28 @@
 
 ## Build / test / lint
 
-- Build: `go build ./...`
-- Tests: `go test ./...`
-- Vet: `go vet ./...`
-- Lint: `golangci-lint run` (v2.12.2, built with Go 1.26 — works)
-- Smoke test the binary: `go build -o /tmp/bookai ./cmd/bookai && /tmp/bookai --help`
+A `Taskfile.yml` is provided with all common commands. Run `task --list` to see all tasks.
+
+- Build: `task build` (or `go build ./...`)
+- Install: `task install` (or `go install ./...`)
+- Tests: `task test` (or `go test ./...`)
+- Vet: `task vet` (or `go vet ./...`)
+- Lint: `task lint` — runs `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run` (version pinned in Taskfile `GOLANGCI_LINT_VERSION` var)
+- Lint + auto-fix: `task lint-fix` — same as `task lint` but with `--fix`
+- Check all: `task check` — runs vet + lint + test
+- Smoke test: `task smoke` — builds and runs `--help`
+
+Pipeline commands (default project: `books/my-vampire-system-0001-0700`):
+- `task status`, `task chapters`, `task verify-glossary` — inspection
+- `task analyze`, `task analyze-continue` — glossary/characters extraction
+- `task translate`, `task translate-continue` — translation
+- `task pronounce`, `task pronounce-continue` — stress marks
+- `task ssml`, `task ssml-auto` — SSML generation (auto-stress uses silero-stress model)
+- `task tts` — audio synthesis
+- Extra args: `task analyze -- --range 1-50` (passed via `{{.CLI_ARGS}}`)
+
+TTS server (Docker):
+- `task tts-up`, `task tts-down`, `task tts-logs`
 
 ## Architecture
 

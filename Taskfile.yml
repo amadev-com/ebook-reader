@@ -1,0 +1,132 @@
+version: '3'
+
+vars:
+  BINARY: bookai
+  PROJECT: books/my-vampire-system-0001-0700
+  GOLANGCI_LINT_VERSION: v2.12.2
+
+tasks:
+  build:
+    desc: Build the bookai binary
+    cmds:
+      - go build -o ./{{.BINARY}} ./cmd/bookai
+
+  install:
+    desc: Install bookai to GOPATH/bin
+    cmds:
+      - go install ./...
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: Run golangci-lint (version pinned via GOLANGCI_LINT_VERSION)
+    cmds:
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run
+
+  lint-fix:
+    desc: Run golangci-lint with --fix to auto-fix issues
+    cmds:
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run --fix
+
+  check:
+    desc: Run vet + lint + test
+    cmds:
+      - task: vet
+      - task: lint
+      - task: test
+
+  smoke:
+    desc: Build and run --help to verify the binary works
+    cmds:
+      - go build -o /tmp/{{.BINARY}} ./cmd/bookai
+      - /tmp/{{.BINARY}} --help
+
+  # --- TTS server ---
+
+  tts-up:
+    desc: Start the Silero TTS Docker server
+    dir: tts-server
+    cmds:
+      - docker compose up -d
+
+  tts-down:
+    desc: Stop the Silero TTS Docker server
+    dir: tts-server
+    cmds:
+      - docker compose down
+
+  tts-logs:
+    desc: Tail TTS server logs
+    dir: tts-server
+    cmds:
+      - docker compose logs -f
+
+  # --- Pipeline (bookai) ---
+
+  status:
+    desc: Show project status
+    cmds:
+      - bookai status --project {{.PROJECT}}
+
+  chapters:
+    desc: Show per-chapter overview table
+    cmds:
+      - bookai chapters --project {{.PROJECT}}
+
+  analyze:
+    desc: Extract glossary + characters via Batch API
+    cmds:
+      - bookai analyze --project {{.PROJECT}} {{.CLI_ARGS}}
+
+  analyze-continue:
+    desc: Resume interrupted analyze batch
+    cmds:
+      - bookai analyze --project {{.PROJECT}} --continue
+
+  translate:
+    desc: Translate chapters via Batch API
+    cmds:
+      - bookai translate --project {{.PROJECT}} {{.CLI_ARGS}}
+
+  translate-continue:
+    desc: Resume interrupted translate batch
+    cmds:
+      - bookai translate --project {{.PROJECT}} --continue
+
+  verify-glossary:
+    desc: Scan translations for untranslated terms
+    cmds:
+      - bookai verify-glossary --project {{.PROJECT}}
+
+  pronounce:
+    desc: Generate stress marks via Batch API
+    cmds:
+      - bookai pronounce --project {{.PROJECT}} {{.CLI_ARGS}}
+
+  pronounce-continue:
+    desc: Resume interrupted pronounce batch
+    cmds:
+      - bookai pronounce --project {{.PROJECT}} --continue
+
+  ssml:
+    desc: Generate SSML from translations
+    cmds:
+      - bookai ssml --project {{.PROJECT}} {{.CLI_ARGS}}
+
+  ssml-auto:
+    desc: Generate SSML with auto-stress (silero-stress model)
+    cmds:
+      - bookai ssml --project {{.PROJECT}} --auto-stress {{.CLI_ARGS}}
+
+  tts:
+    desc: Synthesize audio from SSML
+    cmds:
+      - bookai tts --project {{.PROJECT}} {{.CLI_ARGS}}

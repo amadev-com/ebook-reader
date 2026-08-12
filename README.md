@@ -43,6 +43,12 @@ audio/       (chapter_NNN.mp3)
 go build -o bookai ./cmd/bookai
 ```
 
+Or install to `$GOPATH/bin`:
+
+```bash
+go install ./...
+```
+
 ### 2. Set up the OpenAI API key
 
 Translation and glossary extraction use OpenAI's API:
@@ -71,6 +77,55 @@ curl -s http://localhost:5555/api/voices?language=ru | python3 -m json.tool
 See [`tts-server/README.md`](tts-server/README.md) for full details.
 
 > **No GPU?** Set `tts.engine: noop` in `config.yaml` to generate placeholder sine-tone WAVs for pipeline testing without a TTS server.
+
+## Taskfile shortcuts
+
+A `Taskfile.yml` is provided with all common commands. [Install task](https://taskfile.dev/installation/) if you don't have it, then run `task --list` to see all available tasks.
+
+**Development:**
+
+| Task | Description |
+|------|-------------|
+| `task build` | Build the bookai binary |
+| `task install` | Install to `$GOPATH/bin` |
+| `task test` | Run all tests |
+| `task vet` | Run `go vet` |
+| `task lint` | Run golangci-lint (version pinned via `GOLANGCI_LINT_VERSION` var) |
+| `task lint-fix` | Run golangci-lint with `--fix` |
+| `task check` | Run vet + lint + test |
+| `task smoke` | Build and run `--help` to verify the binary |
+
+**TTS server (Docker):**
+
+| Task | Description |
+|------|-------------|
+| `task tts-up` | Start the Silero TTS server |
+| `task tts-down` | Stop the TTS server |
+| `task tts-logs` | Tail server logs |
+
+**Pipeline** (default project: `books/my-vampire-system-0001-0700`):
+
+| Task | Description |
+|------|-------------|
+| `task status` | Show project status |
+| `task chapters` | Per-chapter overview table |
+| `task analyze` | Extract glossary + characters (Batch API) |
+| `task analyze-continue` | Resume interrupted analyze batch |
+| `task translate` | Translate chapters (Batch API) |
+| `task translate-continue` | Resume interrupted translate batch |
+| `task verify-glossary` | Scan for untranslated terms |
+| `task pronounce` | Generate stress marks (Batch API) |
+| `task pronounce-continue` | Resume interrupted pronounce batch |
+| `task ssml` | Generate SSML from translations |
+| `task ssml-auto` | Generate SSML with silero-stress auto-stress |
+| `task tts` | Synthesize audio from SSML |
+
+Pass extra args to pipeline tasks with `--`:
+
+```bash
+task analyze -- --range 1-50
+task translate -- --chapter 42
+```
 
 ## Processing a book: step by step
 
