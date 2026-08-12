@@ -26,9 +26,9 @@ import (
 // API. Each chapter is an independent batch item — the model sees the full
 // chapter text and returns a list of {term, stressed} pairs. Results are
 // merged directly into the global ai/stress.json vocabulary, with each
-// entry tagged by chapter ID for per-chapter tracking. Chapters that
-// already have stress entries in the global vocabulary are skipped unless
-// --force or --reset is used.
+// entry tagged by chapter ID for per-chapter tracking and the chapter ID
+// recorded in processed_chapters. Chapters already recorded there are
+// skipped unless --force or --reset is used.
 //
 // The command supports a --continue flag to resume polling an interrupted
 // batch. Batch state is persisted locally in ai/batch_pronounce.json.
@@ -179,8 +179,8 @@ func runPronounce(
 	return pollPronounceBatch(ctx, proj, state, pollInt, reset)
 }
 
-// filterPronounceChapters selects chapters that have translations and don't
-// already have stress marks in the global vocabulary (unless force is set).
+// filterPronounceChapters selects chapters that have translations and have
+// not already been processed into the global vocabulary (unless force is set).
 // Returns the chapters to process and the number skipped.
 func filterPronounceChapters(
 	chs []chapters.Chapter,
@@ -190,8 +190,8 @@ func filterPronounceChapters(
 	targetLang string,
 	force bool,
 ) ([]chapters.Chapter, int) {
-	// Load the global stress vocabulary to check which chapters already have
-	// stress marks. This prevents completed chapters from being resubmitted.
+	// Load the global stress vocabulary to check which chapters were already
+	// processed. This prevents completed chapters from being resubmitted.
 	var stress *tts.Stress
 	if !force {
 		stress, _ = tts.LoadStress(proj.AIDir())
@@ -208,7 +208,7 @@ func filterPronounceChapters(
 			skipped++
 			continue
 		}
-		if stress != nil && stress.CountForChapter(ch.ID) > 0 {
+		if stress != nil && stress.IsChapterProcessed(ch.ID) {
 			skipped++
 			continue
 		}

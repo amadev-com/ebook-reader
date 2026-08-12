@@ -15,6 +15,11 @@ import (
 // apply stress marks to chapter text before wrapping it in SSML tags.
 type Stress struct {
 	Entries []StressEntry `json:"entries"`
+
+	// ProcessedChapters lists the chapter IDs whose stress marks have been
+	// generated, including chapters that produced no entries at all. It is
+	// the completion marker used to skip already-processed chapters.
+	ProcessedChapters []int `json:"processed_chapters,omitempty"`
 }
 
 // StressEntry is one term with its stressed form for Silero TTS.
@@ -129,6 +134,7 @@ func (s *Stress) Apply(text string) string {
 // its Chapters list (if not already present). Conflict handling is the
 // same as Merge — approved entries silently keep their form.
 func (s *Stress) MergeChapter(other *Stress, chapterID int) []StressConflict {
+	s.ProcessedChapters = addChapterID(s.ProcessedChapters, chapterID)
 	// Tag all entries from other with the chapter ID.
 	for i := range other.Entries {
 		other.Entries[i].Chapters = addChapterID(other.Entries[i].Chapters, chapterID)
@@ -146,6 +152,13 @@ func (s *Stress) MergeChapter(other *Stress, chapterID int) []StressConflict {
 		}
 	}
 	return conflicts
+}
+
+// IsChapterProcessed reports whether the chapter's stress marks have already
+// been generated. Chapters recorded before ProcessedChapters existed are
+// recognized by having at least one entry tagged with their ID.
+func (s *Stress) IsChapterProcessed(chapterID int) bool {
+	return slices.Contains(s.ProcessedChapters, chapterID) || s.CountForChapter(chapterID) > 0
 }
 
 // addChapterID appends chapterID to s if not already present.
