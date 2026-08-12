@@ -100,7 +100,7 @@ func (e *SileroEngine) Synthesize(ctx context.Context, text string, outPath stri
 	}
 
 	chunks := splitSSML(text)
-	slog.Info("tts.silero: synthesizing",
+	slog.Default().InfoContext(ctx, "tts.silero: synthesizing",
 		"total_len", len(text), "chunks", len(chunks), "max_chunk_len", maxChunkLen,
 		"parallel", e.parallel)
 
@@ -122,7 +122,7 @@ func (e *SileroEngine) Synthesize(ctx context.Context, text string, outPath stri
 		return fmt.Errorf("tts.silero: write output: %w", err)
 	}
 
-	slog.Debug("tts.silero: synthesis complete", "output", outPath, "bytes", len(combined))
+	slog.Default().DebugContext(ctx, "tts.silero: synthesis complete", "output", outPath, "bytes", len(combined))
 	return nil
 }
 
@@ -149,7 +149,7 @@ func (e *SileroEngine) synthesizeChunks(ctx context.Context, chunks []string) ([
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			slog.Debug("tts.silero: synthesizing chunk",
+			slog.Default().DebugContext(ctx, "tts.silero: synthesizing chunk",
 				"chunk", i+1, "of", n, "len", len(chunk))
 			wav, err := e.synthesizeOne(ctx, chunk)
 			if err != nil {
@@ -197,7 +197,7 @@ func (e *SileroEngine) synthesizeChunkWorker(
 			errs[job.idx] = ctx.Err()
 			return
 		}
-		slog.Debug("tts.silero: synthesizing chunk",
+		slog.Default().DebugContext(ctx, "tts.silero: synthesizing chunk",
 			"chunk", job.idx+1, "of", n, "len", len(job.chunk))
 		wav, err := e.synthesizeOne(ctx, job.chunk)
 		if err != nil {

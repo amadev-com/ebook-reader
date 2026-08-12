@@ -1,4 +1,4 @@
-package epub
+package epub //nolint:testpackage // needs access to unexported parseContainer, splitAnchor, collapseWS
 
 import (
 	"archive/zip"

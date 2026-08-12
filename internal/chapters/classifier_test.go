@@ -1,4 +1,4 @@
-package chapters
+package chapters //nolint:testpackage // needs access to unexported rule/decision constants
 
 import "testing"
 

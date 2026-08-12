@@ -91,11 +91,13 @@ func runTranslate(
 	// Check for an existing pending batch.
 	if state, _ := translation.LoadBatchState(proj.AIDir(), translation.BatchTypeTranslate); state != nil {
 		if !translation.IsTerminalStatus(state.Status) {
-			slog.Info("found pending translate batch, resuming polling (use --force to start a new one)",
-				"batch_id", state.BatchID, "status", state.Status)
+			slog.Default().
+				InfoContext(ctx, "found pending translate batch, resuming polling (use --force to start a new one)",
+					"batch_id", state.BatchID, "status", state.Status)
 			return pollTranslateBatch(ctx, proj, state, pollInt)
 		}
-		slog.Info("cleaning up completed batch state from previous run", "batch_id", state.BatchID)
+		slog.Default().
+			InfoContext(ctx, "cleaning up completed batch state from previous run", "batch_id", state.BatchID)
 		_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypeTranslate)
 	}
 
@@ -119,10 +121,10 @@ func runTranslate(
 	targetLang := proj.Cfg.Languages.Target
 	toTranslate, skipped := filterTranslateChapters(chs, proj, ids, writeAll, targetLang, force)
 	if len(toTranslate) == 0 {
-		slog.Info("no chapters to translate", "skipped", skipped)
+		slog.Default().InfoContext(ctx, "no chapters to translate", "skipped", skipped)
 		return nil
 	}
-	slog.Info("chapters to translate", "count", len(toTranslate), "skipped", skipped)
+	slog.Default().InfoContext(ctx, "chapters to translate", "count", len(toTranslate), "skipped", skipped)
 
 	// Load the glossary + characters and merge them for translation context.
 	glossary, err := translation.LoadGlossary(proj.AIDir())
@@ -131,12 +133,13 @@ func runTranslate(
 	}
 	characters, err := translation.LoadCharacters(proj.AIDir())
 	if err != nil {
-		slog.Warn("failed to load characters, continuing with glossary only", "error", err)
+		slog.Default().WarnContext(ctx, "failed to load characters, continuing with glossary only", "error", err)
 		characters = &translation.Characters{}
 	}
 	glossary = glossary.WithCharacters(characters)
 	if len(glossary.Terms) == 0 {
-		slog.Warn("no glossary found — translations may be inconsistent. Run `bookai analyze` first.")
+		slog.Default().
+			WarnContext(ctx, "no glossary found — translations may be inconsistent. Run `bookai analyze` first.")
 	}
 
 	// Build batch requests: one per chapter.
@@ -168,7 +171,8 @@ func submitTranslateBatch(
 	if err != nil {
 		return nil, fmt.Errorf("build batch JSONL: %w", err)
 	}
-	slog.Info("built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
+	slog.Default().
+		InfoContext(ctx, "built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
 
 	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
 	if err != nil {
@@ -182,7 +186,7 @@ func submitTranslateBatch(
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
+	slog.Default().InfoContext(ctx, "batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
 
 	state := &translation.BatchState{
 		BatchID:     batchID,
@@ -275,7 +279,7 @@ func resumeTranslateBatch(ctx context.Context, proj *project.Project, pollInt in
 		}
 		return fmt.Errorf("load batch state: %w", err)
 	}
-	slog.Info("resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
+	slog.Default().InfoContext(ctx, "resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
 	return pollTranslateBatch(ctx, proj, state, pollInt)
 }
 
@@ -302,7 +306,8 @@ func processTranslateResults(
 	state *translation.BatchState,
 	batchClient *translation.BatchClient,
 ) error {
-	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
+	slog.Default().
+		InfoContext(ctx, "downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
 
 	results, err := batchClient.DownloadResults(ctx, state.OutputFileID)
 	if err != nil {
@@ -317,11 +322,11 @@ func processTranslateResults(
 	for _, res := range results {
 		chID := translation.SplitCustomID(res.CustomID, translation.BatchTypeTranslate)
 		if chID == 0 {
-			slog.Warn("unrecognized custom_id in batch output", "custom_id", res.CustomID)
+			slog.Default().WarnContext(ctx, "unrecognized custom_id in batch output", "custom_id", res.CustomID)
 			continue
 		}
 		if res.Error != "" {
-			slog.Warn("translation failed in batch", "chapter", chID, "error", res.Error)
+			slog.Default().WarnContext(ctx, "translation failed in batch", "chapter", chID, "error", res.Error)
 			failedCount++
 			continue
 		}
@@ -337,20 +342,25 @@ func processTranslateResults(
 		chPath := filepath.Join(proj.ChaptersDir(), fmt.Sprintf("chapter_%03d.json", chID))
 		var ch chapters.Chapter
 		if err = project.LoadJSON(chPath, &ch); err != nil {
-			slog.Warn("failed to load chapter for status update", "chapter", chID, "error", err)
+			slog.Default().WarnContext(ctx, "failed to load chapter for status update", "chapter", chID, "error", err)
 		} else {
 			ch.Status = "translated"
 			if err = project.SaveJSON(chPath, ch); err != nil {
-				slog.Warn("failed to update chapter status", "chapter", chID, "error", err)
+				slog.Default().WarnContext(ctx, "failed to update chapter status", "chapter", chID, "error", err)
 			}
 		}
 		translated++
-		slog.Info("translation written", "chapter", chID, "path", translationPath)
+		slog.Default().InfoContext(ctx, "translation written", "chapter", chID, "path", translationPath)
 	}
 
 	// Clean up batch state.
 	_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypeTranslate)
-	slog.Info("translate batch complete", "batch_id", state.BatchID, "translated", translated, "failed", failedCount)
+	slog.Default().InfoContext(
+		ctx, "translate batch complete",
+		"batch_id", state.BatchID,
+		"translated", translated,
+		"failed", failedCount,
+	)
 
 	return nil
 }

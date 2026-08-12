@@ -123,10 +123,11 @@ func Split(in SplitInput) (*SplitResult, error) {
 					"used per-item fallback (no TOC or chapter headings detected); chapter boundaries may be poor. Review _skipped.json and chapters/ manually.",
 				)
 			}
-			slog.Info("chapter detection succeeded", "strategy", s, "chapters", res.Index.ChapterCount)
+			slog.Default().Info("chapter detection succeeded", "strategy", s, "chapters", res.Index.ChapterCount)
 			return res, nil
 		}
-		slog.Info("strategy yielded too few chapters, trying next", "strategy", s, "chapters", res.Index.ChapterCount)
+		slog.Default().
+			Info("strategy yielded too few chapters, trying next", "strategy", s, "chapters", res.Index.ChapterCount)
 	}
 	last.Index.Warnings = append(last.Index.Warnings,
 		"no strategy found 2+ chapters; using per-item fallback. Review _skipped.json and chapters/ manually.")
@@ -216,7 +217,7 @@ func buildChapterFromTOC(in SplitInput, tocIdx int, entry epub.TOCEntry) *Chapte
 		}
 	}
 	if len(items) == 0 {
-		slog.Warn("TOC entry has no matching spine item", "title", entry.Title, "src", entry.SrcFile)
+		slog.Default().Warn("TOC entry has no matching spine item", "title", entry.Title, "src", entry.SrcFile)
 		return nil
 	}
 
@@ -249,7 +250,7 @@ func chapterFromAnchor(entry epub.TOCEntry, items []SpineItem, tocIdx int) *Chap
 	}
 	if start < 0 {
 		// Anchor not found; fall back to all blocks of the item.
-		slog.Warn("TOC anchor not found in blocks, using whole item",
+		slog.Default().Warn("TOC anchor not found in blocks, using whole item",
 			"title", entry.Title, "anchor", entry.SrcAnchor)
 		return chapterFromBlocks(entry.Title, items, tocIdx, StrategyTOC)
 	}

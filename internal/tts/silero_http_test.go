@@ -1,4 +1,4 @@
-package tts
+package tts //nolint:testpackage // needs access to unexported silero internals
 
 import (
 	"context"

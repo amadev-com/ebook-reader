@@ -116,7 +116,7 @@ func runSSML(
 		skipped += s
 	}
 
-	slog.Info("ssml run complete", "generated", generated, "skipped", skipped)
+	slog.Default().InfoContext(ctx, "ssml run complete", "generated", generated, "skipped", skipped)
 	return nil
 }
 
@@ -131,7 +131,7 @@ func buildStressOverrides(pronOverrides []config.PronunciationOverride) *tts.Str
 		ovs[i] = tts.StressOverride{Term: p.Term, Phonemes: p.Phonemes}
 	}
 	overrides := tts.NewStressFromOverrides(ovs)
-	slog.Info("loaded config pronunciation overrides", "entries", len(overrides.Entries))
+	slog.Default().Info("loaded config pronunciation overrides", "entries", len(overrides.Entries))
 	return overrides
 }
 
@@ -143,14 +143,15 @@ func setupStressSource(proj *project.Project, autoStress bool) (*tts.StressClien
 			return nil, nil, fmt.Errorf("--auto-stress requires tts.server_url to be set in config")
 		}
 		stressClient := tts.NewStressClient(proj.Cfg.TTS.ServerURL)
-		slog.Info("using auto-stress (silero-stress model on TTS server)", "server_url", proj.Cfg.TTS.ServerURL)
+		slog.Default().
+			Info("using auto-stress (silero-stress model on TTS server)", "server_url", proj.Cfg.TTS.ServerURL)
 		return stressClient, nil, nil
 	}
 	stress, err := tts.LoadStress(proj.AIDir())
 	if err != nil {
 		return nil, nil, fmt.Errorf("load stress vocabulary: %w", err)
 	}
-	slog.Info("loaded stress vocabulary", "entries", len(stress.Entries))
+	slog.Default().Info("loaded stress vocabulary", "entries", len(stress.Entries))
 	return nil, stress, nil
 }
 
@@ -170,7 +171,7 @@ func processSSMLChapter(
 ) (int, int, error) {
 	translationPath := translationPath(proj.TranslationDir(), ch.ID, targetLang)
 	if !project.Exists(translationPath) {
-		slog.Debug("skip chapter without translation", "chapter", ch.ID)
+		slog.Default().DebugContext(ctx, "skip chapter without translation", "chapter", ch.ID)
 		return 0, 1, nil
 	}
 
@@ -180,7 +181,7 @@ func processSSMLChapter(
 
 	ssmlPath := ssmlFilePath(proj.TTSDir(), ch.ID)
 	if project.Exists(ssmlPath) && !force {
-		slog.Debug("skip existing SSML", "chapter", ch.ID)
+		slog.Default().DebugContext(ctx, "skip existing SSML", "chapter", ch.ID)
 		return 0, 1, nil
 	}
 
@@ -208,10 +209,10 @@ func processSSMLChapter(
 		ch,
 	)
 	if err != nil {
-		slog.Warn("failed to update chapter status", "chapter", ch.ID, "error", err)
+		slog.Default().WarnContext(ctx, "failed to update chapter status", "chapter", ch.ID, "error", err)
 	}
 
-	slog.Info("SSML generated", "chapter", ch.ID, "auto_stress", autoStress)
+	slog.Default().InfoContext(ctx, "SSML generated", "chapter", ch.ID, "auto_stress", autoStress)
 	return 1, 0, nil
 }
 

@@ -1,19 +1,20 @@
-package translation
+package translation_test
 
 import (
 	"strings"
 	"testing"
 
 	"ebook-reader/internal/config"
+	"ebook-reader/internal/translation"
 )
 
 func TestGlossaryExtractionUser(t *testing.T) {
 	t.Parallel()
-	chapters := []ChapterText{
+	chapters := []translation.ChapterText{
 		{Title: "Chapter 1: Beginnings", Text: "It was the best of times..."},
 		{Title: "Chapter 2: Endings", Text: "The end is near..."},
 	}
-	prompt := GlossaryExtractionUser(chapters, "", "")
+	prompt := translation.GlossaryExtractionUser(chapters, "", "")
 	if !strings.Contains(prompt, "Chapter 1: Beginnings") {
 		t.Errorf("prompt missing chapter 1 title: %s", prompt)
 	}
@@ -25,7 +26,7 @@ func TestGlossaryExtractionUser(t *testing.T) {
 	}
 
 	// With existing glossary.
-	prompt = GlossaryExtractionUser(chapters, `{"characters":[{"name":"Quinn"}],"terms":[]}`, "")
+	prompt = translation.GlossaryExtractionUser(chapters, `{"characters":[{"name":"Quinn"}],"terms":[]}`, "")
 	if !strings.Contains(prompt, "Glossary extracted from previous chapters") {
 		t.Errorf("prompt missing existing glossary section")
 	}
@@ -34,7 +35,7 @@ func TestGlossaryExtractionUser(t *testing.T) {
 	}
 
 	// With locked terms.
-	prompt = GlossaryExtractionUser(chapters, "", "Quinn = Куинн\nThe Order = Орден")
+	prompt = translation.GlossaryExtractionUser(chapters, "", "Quinn = Куинн\nThe Order = Орден")
 	if !strings.Contains(prompt, "LOCKED TRANSLATIONS") {
 		t.Errorf("prompt missing locked translations section")
 	}
@@ -45,7 +46,7 @@ func TestGlossaryExtractionUser(t *testing.T) {
 
 func TestSystem(t *testing.T) {
 	t.Parallel()
-	sys := System("", "")
+	sys := translation.System("", "")
 	if !strings.Contains(sys, "professional literary translator") {
 		t.Errorf("system prompt missing persona")
 	}
@@ -57,13 +58,13 @@ func TestSystem(t *testing.T) {
 	}
 
 	// With glossary block.
-	sys = System("[character]\n  Quinn = Куинн\n", "")
+	sys = translation.System("[character]\n  Quinn = Куинн\n", "")
 	if !strings.Contains(sys, "Quinn = Куинн") {
 		t.Errorf("system prompt missing glossary block")
 	}
 
 	// With previous context.
-	sys = System("", "=== Previous chapter context ===\n[Chapter 1 summary]\n...")
+	sys = translation.System("", "=== Previous chapter context ===\n[Chapter 1 summary]\n...")
 	if !strings.Contains(sys, "Previous chapter context") {
 		t.Errorf("system prompt missing previous context")
 	}
@@ -71,8 +72,8 @@ func TestSystem(t *testing.T) {
 
 func TestUser(t *testing.T) {
 	t.Parallel()
-	ch := ChapterInfo{ID: 5, Title: "The Awakening"}
-	prompt := User(ch, "The source text here.")
+	ch := translation.ChapterInfo{ID: 5, Title: "The Awakening"}
+	prompt := translation.User(ch, "The source text here.")
 	if !strings.Contains(prompt, "chapter 5") {
 		t.Errorf("user prompt missing chapter id")
 	}
@@ -87,8 +88,8 @@ func TestUser(t *testing.T) {
 
 func TestSummaryUser(t *testing.T) {
 	t.Parallel()
-	ch := ChapterInfo{ID: 3, Title: "Chapter 3"}
-	prompt := SummaryUser(ch, "The chapter text.")
+	ch := translation.ChapterInfo{ID: 3, Title: "Chapter 3"}
+	prompt := translation.SummaryUser(ch, "The chapter text.")
 	if !strings.Contains(prompt, "Summarize") {
 		t.Errorf("summary prompt missing instruction")
 	}
@@ -99,8 +100,8 @@ func TestSummaryUser(t *testing.T) {
 
 func TestNewTermsUser(t *testing.T) {
 	t.Parallel()
-	ch := ChapterInfo{ID: 7, Title: "Chapter 7"}
-	prompt := NewTermsUser(ch, "English source", "Russian translation")
+	ch := translation.ChapterInfo{ID: 7, Title: "Chapter 7"}
+	prompt := translation.NewTermsUser(ch, "English source", "Russian translation")
 	if !strings.Contains(prompt, "English source") {
 		t.Errorf("new terms prompt missing source")
 	}
@@ -114,44 +115,44 @@ func TestNewTermsUser(t *testing.T) {
 
 func TestGlossaryExtractionSystem(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(GlossaryExtractionSystem, "characters") {
+	if !strings.Contains(translation.GlossaryExtractionSystem, "characters") {
 		t.Error("system prompt missing characters")
 	}
-	if !strings.Contains(GlossaryExtractionSystem, "JSON") {
+	if !strings.Contains(translation.GlossaryExtractionSystem, "JSON") {
 		t.Error("system prompt missing JSON instruction")
 	}
 }
 
 func TestSummarySystem(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(SummarySystem, "Summarize") {
+	if !strings.Contains(translation.SummarySystem, "Summarize") {
 		t.Error("summary system prompt missing instruction")
 	}
-	if !strings.Contains(SummarySystem, "English") {
+	if !strings.Contains(translation.SummarySystem, "English") {
 		t.Error("summary system prompt should specify English output")
 	}
 }
 
 func TestNewTermsSystem(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(NewTermsSystem, "JSON") {
+	if !strings.Contains(translation.NewTermsSystem, "JSON") {
 		t.Error("new terms system prompt missing JSON instruction")
 	}
 }
 
 func TestStressSystem(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(StressSystem, "Silero") {
+	if !strings.Contains(translation.StressSystem, "Silero") {
 		t.Error("stress system prompt missing Silero")
 	}
-	if !strings.Contains(StressSystem, "JSON") {
+	if !strings.Contains(translation.StressSystem, "JSON") {
 		t.Error("stress system prompt missing JSON instruction")
 	}
 }
 
 func TestStressUser(t *testing.T) {
 	t.Parallel()
-	prompt := StressUser("Привет мир. Это тест.", nil)
+	prompt := translation.StressUser("Привет мир. Это тест.", nil)
 	if !strings.Contains(prompt, "Привет мир") {
 		t.Errorf("prompt missing chapter text: %s", prompt)
 	}
@@ -165,7 +166,7 @@ func TestStressUser_WithOverrides(t *testing.T) {
 	overrides := []config.PronunciationOverride{
 		{Term: "кедров", Phonemes: "к+едров"},
 	}
-	prompt := StressUser("кедров много.", overrides)
+	prompt := translation.StressUser("кедров много.", overrides)
 	if !strings.Contains(prompt, "кедров → к+едров") {
 		t.Errorf("prompt missing override: %s", prompt)
 	}
@@ -173,7 +174,7 @@ func TestStressUser_WithOverrides(t *testing.T) {
 
 func TestGlossaryMergeUser_NoExisting(t *testing.T) {
 	t.Parallel()
-	prompt := GlossaryMergeUser(`[{"terms":[]}]`, "", "", "")
+	prompt := translation.GlossaryMergeUser(`[{"terms":[]}]`, "", "", "")
 	if !strings.Contains(prompt, "Per-chapter extraction results") {
 		t.Errorf("prompt missing per-chapter results header")
 	}
@@ -184,7 +185,7 @@ func TestGlossaryMergeUser_NoExisting(t *testing.T) {
 
 func TestGlossaryMergeUser_WithExisting(t *testing.T) {
 	t.Parallel()
-	prompt := GlossaryMergeUser(`[{"terms":[]}]`, "",
+	prompt := translation.GlossaryMergeUser(`[{"terms":[]}]`, "",
 		`[{"source":"Guild","target":"Гильдия","type":"organization"}]`,
 		`[{"name":"Quinn","translation":"Куинн","role":"protagonist"}]`)
 	if !strings.Contains(prompt, "EXISTING VOCABULARY") {
@@ -200,7 +201,7 @@ func TestGlossaryMergeUser_WithExisting(t *testing.T) {
 
 func TestGlossaryMergeUser_WithLockedTerms(t *testing.T) {
 	t.Parallel()
-	prompt := GlossaryMergeUser(`[{"terms":[]}]`, "  Guild = Гильдия\n", "", "")
+	prompt := translation.GlossaryMergeUser(`[{"terms":[]}]`, "  Guild = Гильдия\n", "", "")
 	if !strings.Contains(prompt, "LOCKED TRANSLATIONS") {
 		t.Errorf("prompt missing locked translations section")
 	}

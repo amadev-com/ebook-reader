@@ -56,7 +56,7 @@ func walkBody(n *html.Node, currentAnchor string, out *[]Block) {
 	if n.Type == html.TextNode {
 		text := collapseWS(n.Data)
 		if text != "" && len(text) > 2 {
-			slog.Debug("epub: stray text outside block element", "text", text)
+			slog.Default().Debug("epub: stray text outside block element", "text", text)
 		}
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {

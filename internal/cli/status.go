@@ -74,7 +74,7 @@ func countFiles(dir, ext string) (int, bool) {
 		if err != nil {
 			// Log the unreadable entry but continue traversing the rest
 			// of the tree so the count is best-effort, not aborted.
-			slog.Warn("status: skipping unreadable entry", "path", path, "error", err)
+			slog.Default().Warn("status: skipping unreadable entry", "path", path, "error", err)
 			if d != nil && d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -89,7 +89,7 @@ func countFiles(dir, ext string) (int, bool) {
 		return nil
 	})
 	if walkErr != nil && !errors.Is(walkErr, filepath.SkipDir) {
-		slog.Warn("status: directory walk failed", "dir", dir, "error", walkErr)
+		slog.Default().Warn("status: directory walk failed", "dir", dir, "error", walkErr)
 	}
 	return n, true
 }

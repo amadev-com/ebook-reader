@@ -1,18 +1,20 @@
-package translation
+package translation_test
 
 import (
 	"strings"
 	"testing"
+
+	"ebook-reader/internal/translation"
 )
 
 func TestSaveAndLoadSummary(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	summary := "Quinn discovers the book and gains a system."
-	if err := SaveSummary(dir, 1, summary); err != nil {
+	if err := translation.SaveSummary(dir, 1, summary); err != nil {
 		t.Fatalf("SaveSummary: %v", err)
 	}
-	loaded, err := LoadSummary(dir, 1)
+	loaded, err := translation.LoadSummary(dir, 1)
 	if err != nil {
 		t.Fatalf("LoadSummary: %v", err)
 	}
@@ -24,7 +26,7 @@ func TestSaveAndLoadSummary(t *testing.T) {
 func TestLoadSummaryMissing(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	s, err := LoadSummary(dir, 99)
+	s, err := translation.LoadSummary(dir, 99)
 	if err != nil {
 		t.Fatalf("LoadSummary missing: %v", err)
 	}
@@ -38,13 +40,13 @@ func TestPreviousSummaries(t *testing.T) {
 	dir := t.TempDir()
 	// Save summaries for chapters 1-3.
 	for i, s := range []string{"summary 1", "summary 2", "summary 3"} {
-		if err := SaveSummary(dir, i+1, s); err != nil {
+		if err := translation.SaveSummary(dir, i+1, s); err != nil {
 			t.Fatalf("SaveSummary %d: %v", i+1, err)
 		}
 	}
 
 	// Chapter 4 with count 2 should get summaries for chapters 2 and 3.
-	prev, err := PreviousSummaries(dir, 4, 2)
+	prev, err := translation.PreviousSummaries(dir, 4, 2)
 	if err != nil {
 		t.Fatalf("PreviousSummaries: %v", err)
 	}
@@ -63,7 +65,7 @@ func TestPreviousSummariesChapter1(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	// Chapter 1 has no previous summaries.
-	prev, err := PreviousSummaries(dir, 1, 2)
+	prev, err := translation.PreviousSummaries(dir, 1, 2)
 	if err != nil {
 		t.Fatalf("PreviousSummaries: %v", err)
 	}
@@ -76,7 +78,7 @@ func TestPreviousSummariesNoSummaries(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	// No summaries saved at all.
-	prev, err := PreviousSummaries(dir, 5, 2)
+	prev, err := translation.PreviousSummaries(dir, 5, 2)
 	if err != nil {
 		t.Fatalf("PreviousSummaries: %v", err)
 	}
@@ -88,8 +90,8 @@ func TestPreviousSummariesNoSummaries(t *testing.T) {
 func TestPreviousSummariesCountZero(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	_ = SaveSummary(dir, 1, "summary 1")
-	prev, err := PreviousSummaries(dir, 2, 0)
+	_ = translation.SaveSummary(dir, 1, "summary 1")
+	prev, err := translation.PreviousSummaries(dir, 2, 0)
 	if err != nil {
 		t.Fatalf("PreviousSummaries: %v", err)
 	}

@@ -30,7 +30,8 @@ func pollBatchUntilTerminal(
 	var info translation.BatchStatusInfo
 	for {
 		if ctx.Err() != nil {
-			slog.Info("interrupted by signal", "batch_id", state.BatchID, "last_status", state.Status)
+			slog.Default().
+				InfoContext(ctx, "interrupted by signal", "batch_id", state.BatchID, "last_status", state.Status)
 			return nil, ctx.Err()
 		}
 
@@ -46,7 +47,7 @@ func pollBatchUntilTerminal(
 		state.Failed = info.Failed
 		_ = translation.SaveBatchState(proj.AIDir(), state)
 
-		slog.Info(label+" status",
+		slog.Default().InfoContext(ctx, label+" status",
 			"batch_id", state.BatchID, "status", info.Status,
 			"completed", info.Completed, "failed", info.Failed, "total", info.Total)
 
@@ -54,10 +55,10 @@ func pollBatchUntilTerminal(
 			break
 		}
 
-		slog.Info("waiting for "+label, "poll_seconds", pollInt)
+		slog.Default().InfoContext(ctx, "waiting for "+label, "poll_seconds", pollInt)
 		select {
 		case <-ctx.Done():
-			slog.Info("interrupted during poll wait", "batch_id", state.BatchID)
+			slog.Default().InfoContext(ctx, "interrupted during poll wait", "batch_id", state.BatchID)
 			return nil, ctx.Err()
 		case <-time.After(time.Duration(pollInt) * time.Second):
 		}

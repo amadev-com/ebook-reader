@@ -1,4 +1,4 @@
-package translation
+package translation //nolint:testpackage // needs access to unexported type constants
 
 import (
 	"path/filepath"

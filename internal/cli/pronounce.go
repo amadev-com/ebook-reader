@@ -89,11 +89,13 @@ func runPronounce(
 	// Check for an existing pending batch.
 	if state, _ := translation.LoadBatchState(proj.AIDir(), translation.BatchTypePronounce); state != nil {
 		if !translation.IsTerminalStatus(state.Status) {
-			slog.Info("found pending pronounce batch, resuming polling (use --force to start a new one)",
-				"batch_id", state.BatchID, "status", state.Status)
+			slog.Default().
+				InfoContext(ctx, "found pending pronounce batch, resuming polling (use --force to start a new one)",
+					"batch_id", state.BatchID, "status", state.Status)
 			return pollPronounceBatch(ctx, proj, state, pollInt, reset)
 		}
-		slog.Info("cleaning up completed batch state from previous run", "batch_id", state.BatchID)
+		slog.Default().
+			InfoContext(ctx, "cleaning up completed batch state from previous run", "batch_id", state.BatchID)
 		_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypePronounce)
 	}
 
@@ -117,10 +119,10 @@ func runPronounce(
 	targetLang := proj.Cfg.Languages.Target
 	toProcess, skipped := filterPronounceChapters(chs, proj, ids, writeAll, targetLang, force)
 	if len(toProcess) == 0 {
-		slog.Info("no chapters to process", "skipped", skipped)
+		slog.Default().InfoContext(ctx, "no chapters to process", "skipped", skipped)
 		return nil
 	}
-	slog.Info("chapters to process", "count", len(toProcess), "skipped", skipped)
+	slog.Default().InfoContext(ctx, "chapters to process", "count", len(toProcess), "skipped", skipped)
 
 	// Build batch requests: one per chapter.
 	model := proj.Cfg.OpenAI.HelperModel
@@ -135,7 +137,8 @@ func runPronounce(
 	if err != nil {
 		return fmt.Errorf("build batch JSONL: %w", err)
 	}
-	slog.Info("built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
+	slog.Default().
+		InfoContext(ctx, "built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
 
 	// Create the batch client and submit.
 	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
@@ -150,7 +153,7 @@ func runPronounce(
 	if err != nil {
 		return err
 	}
-	slog.Info("batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
+	slog.Default().InfoContext(ctx, "batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
 
 	// Save batch state.
 	state := &translation.BatchState{
@@ -243,7 +246,7 @@ func resumePronounceBatch(ctx context.Context, proj *project.Project, reset bool
 		}
 		return fmt.Errorf("load batch state: %w", err)
 	}
-	slog.Info("resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
+	slog.Default().InfoContext(ctx, "resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
 	return pollPronounceBatch(ctx, proj, state, pollInt, reset)
 }
 
@@ -278,7 +281,8 @@ func processPronounceResults(
 	batchClient *translation.BatchClient,
 	reset bool,
 ) error {
-	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
+	slog.Default().
+		InfoContext(ctx, "downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
 
 	results, err := batchClient.DownloadResults(ctx, state.OutputFileID)
 	if err != nil {
@@ -288,7 +292,7 @@ func processPronounceResults(
 	// Load existing global stress or start fresh.
 	var global *tts.Stress
 	if reset {
-		slog.Info("resetting global stress vocabulary (--reset)")
+		slog.Default().InfoContext(ctx, "resetting global stress vocabulary (--reset)")
 		global = &tts.Stress{}
 	} else {
 		var existing *tts.Stress
@@ -296,7 +300,8 @@ func processPronounceResults(
 			return fmt.Errorf("load existing stress: %w", err)
 		}
 		global = existing
-		slog.Info("merging with existing stress vocabulary", "existing_entries", len(global.Entries))
+		slog.Default().
+			InfoContext(ctx, "merging with existing stress vocabulary", "existing_entries", len(global.Entries))
 	}
 
 	processed := 0
@@ -306,11 +311,11 @@ func processPronounceResults(
 	for _, res := range results {
 		chID := translation.SplitCustomID(res.CustomID, translation.BatchTypePronounce)
 		if chID == 0 {
-			slog.Warn("unrecognized custom_id in batch output", "custom_id", res.CustomID)
+			slog.Default().WarnContext(ctx, "unrecognized custom_id in batch output", "custom_id", res.CustomID)
 			continue
 		}
 		if res.Error != "" {
-			slog.Warn("stress generation failed in batch", "chapter", chID, "error", res.Error)
+			slog.Default().WarnContext(ctx, "stress generation failed in batch", "chapter", chID, "error", res.Error)
 			failedCount++
 			continue
 		}
@@ -318,7 +323,7 @@ func processPronounceResults(
 		// Parse the JSON response.
 		var result stressResult
 		if err = json.Unmarshal([]byte(res.Content), &result); err != nil {
-			slog.Warn(
+			slog.Default().WarnContext(ctx,
 				"failed to parse stress JSON",
 				"chapter",
 				chID,
@@ -344,7 +349,7 @@ func processPronounceResults(
 		conflicts := global.MergeChapter(chapterStress, chID)
 		allConflicts = append(allConflicts, conflicts...)
 
-		slog.Info("stress marks merged", "chapter", chID, "entries", len(result.Entries))
+		slog.Default().InfoContext(ctx, "stress marks merged", "chapter", chID, "entries", len(result.Entries))
 		processed++
 	}
 
@@ -353,7 +358,7 @@ func processPronounceResults(
 	// chapters, producing repeated conflicts with the same variants.
 	deduped := deduplicateConflicts(allConflicts)
 	if len(deduped) > 0 {
-		slog.Info("found stress mark conflicts, resolving interactively",
+		slog.Default().InfoContext(ctx, "found stress mark conflicts, resolving interactively",
 			"conflicts", len(deduped), "raw_conflicts", len(allConflicts))
 		if err = resolveStressConflicts(global, deduped); err != nil {
 			return fmt.Errorf("resolve conflicts: %w", err)
@@ -364,11 +369,16 @@ func processPronounceResults(
 	if err = global.Save(proj.AIDir()); err != nil {
 		return fmt.Errorf("save global stress: %w", err)
 	}
-	slog.Info("global stress vocabulary saved", "entries", len(global.Entries))
+	slog.Default().InfoContext(ctx, "global stress vocabulary saved", "entries", len(global.Entries))
 
 	// Clean up batch state.
 	_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypePronounce)
-	slog.Info("pronounce batch complete", "batch_id", state.BatchID, "processed", processed, "failed", failedCount)
+	slog.Default().InfoContext(
+		ctx, "pronounce batch complete",
+		"batch_id", state.BatchID,
+		"processed", processed,
+		"failed", failedCount,
+	)
 
 	return nil
 }
@@ -449,7 +459,7 @@ func resolveStressConflicts(global *tts.Stress, conflicts []tts.StressConflict) 
 		}
 	}
 
-	slog.Info("conflicts resolved", "resolved", resolved, "skipped", skipped)
+	slog.Default().Info("conflicts resolved", "resolved", resolved, "skipped", skipped)
 	return nil
 }
 
@@ -547,6 +557,6 @@ func applyStressOverrides(result *stressResult, overrides []config.Pronunciation
 		}
 	}
 	if overridden > 0 {
-		slog.Info("applied stress overrides", "overridden", overridden, "config_entries", len(overrides))
+		slog.Default().Info("applied stress overrides", "overridden", overridden, "config_entries", len(overrides))
 	}
 }

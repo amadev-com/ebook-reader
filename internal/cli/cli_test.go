@@ -1,4 +1,4 @@
-package cli
+package cli //nolint:testpackage // needs access to unexported CLI internals
 
 import (
 	"archive/zip"
@@ -287,14 +287,7 @@ func TestImportCreatesProjectDir(t *testing.T) { //nolint:paralleltest // mutate
 	parentDir := t.TempDir()
 
 	// Change to parent dir so the project is created there.
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	defer func() { _ = os.Chdir(oldWd) }()
-	if err = os.Chdir(parentDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
+	t.Chdir(parentDir)
 
 	// Reset the global flagProject to default for this test.
 	flagProject = "."
@@ -305,7 +298,7 @@ func TestImportCreatesProjectDir(t *testing.T) { //nolint:paralleltest // mutate
 	cmd.SetArgs([]string{epubPath, "My Test Book"})
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
-	if err = cmd.Execute(); err != nil {
+	if err := cmd.Execute(); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 

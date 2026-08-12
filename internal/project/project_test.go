@@ -1,15 +1,17 @@
-package project
+package project_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"ebook-reader/internal/project"
 )
 
 func TestNewCreatesProject(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	proj, err := New(dir)
+	proj, err := project.New(dir)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -24,7 +26,7 @@ func TestNewCreatesProject(t *testing.T) {
 func TestEnsureDirsCreatesAllStageDirs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	proj, err := New(dir)
+	proj, err := project.New(dir)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -58,7 +60,7 @@ func TestEnsureDirsCreatesAllStageDirs(t *testing.T) {
 func TestEnsureDirsIdempotent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	proj, err := New(dir)
+	proj, err := project.New(dir)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -79,11 +81,11 @@ func TestSaveAndLoadJSON(t *testing.T) {
 		Count int    `json:"count"`
 	}
 	in := payload{Name: "alpha", Count: 42}
-	if err := SaveJSON(path, in); err != nil {
+	if err := project.SaveJSON(path, in); err != nil {
 		t.Fatalf("SaveJSON: %v", err)
 	}
 	var out payload
-	if err := LoadJSON(path, &out); err != nil {
+	if err := project.LoadJSON(path, &out); err != nil {
 		t.Fatalf("LoadJSON: %v", err)
 	}
 	if out != in {
@@ -95,13 +97,13 @@ func TestExists(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "f.txt")
-	if Exists(p) {
+	if project.Exists(p) {
 		t.Fatal("Exists reported true for missing file")
 	}
 	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if !Exists(p) {
+	if !project.Exists(p) {
 		t.Fatal("Exists reported false for existing file")
 	}
 }

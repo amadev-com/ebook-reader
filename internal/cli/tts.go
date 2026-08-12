@@ -69,24 +69,24 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 
 	// Build the engine config from project config.
 	engineCfg := buildEngineConfig(proj)
-	slog.Info("initializing TTS engine", "engine", engineCfg.Engine)
+	slog.Default().InfoContext(ctx, "initializing TTS engine", "engine", engineCfg.Engine)
 	engine, err := tts.NewEngine(engineCfg)
 	if err != nil {
 		return err
 	}
-	slog.Info("TTS engine ready", "name", engine.Name())
+	slog.Default().InfoContext(ctx, "TTS engine ready", "name", engine.Name())
 
 	// Determine output format and extension.
 	audioFormat := resolveAudioFormat(proj.Cfg.TTS.AudioFormat)
 	audioExt := audioExtension(audioFormat)
-	slog.Info("audio output", "format", audioFormat, "extension", audioExt)
+	slog.Default().InfoContext(ctx, "audio output", "format", audioFormat, "extension", audioExt)
 
 	synthesized := 0
 	skipped := 0
 	var s, sk int
 	for _, ch := range chs {
 		if ctx.Err() != nil {
-			slog.Info("interrupted by signal", "completed", synthesized)
+			slog.Default().InfoContext(ctx, "interrupted by signal", "completed", synthesized)
 			return ctx.Err()
 		}
 
@@ -107,7 +107,7 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 		skipped += sk
 	}
 
-	slog.Info("TTS run complete", "synthesized", synthesized, "skipped", skipped)
+	slog.Default().InfoContext(ctx, "TTS run complete", "synthesized", synthesized, "skipped", skipped)
 	return nil
 }
 
@@ -132,7 +132,7 @@ func synthesizeChapter(
 ) (int, int, error) {
 	ssmlPath := ssmlFilePath(proj.TTSDir(), ch.ID)
 	if !project.Exists(ssmlPath) {
-		slog.Debug("skip chapter without SSML", "chapter", ch.ID)
+		slog.Default().DebugContext(ctx, "skip chapter without SSML", "chapter", ch.ID)
 		return 0, 1, nil
 	}
 
@@ -142,7 +142,7 @@ func synthesizeChapter(
 
 	outPath := audioPath(proj.AudioDir(), ch.ID, audioExt)
 	if project.Exists(outPath) && !force {
-		slog.Debug("skip existing audio", "chapter", ch.ID)
+		slog.Default().DebugContext(ctx, "skip existing audio", "chapter", ch.ID)
 		return 0, 1, nil
 	}
 
@@ -151,7 +151,7 @@ func synthesizeChapter(
 		return 0, 0, fmt.Errorf("read SSML for chapter %d: %w", ch.ID, err)
 	}
 
-	slog.Info("synthesizing chapter", "id", ch.ID, "title", ch.Title)
+	slog.Default().InfoContext(ctx, "synthesizing chapter", "id", ch.ID, "title", ch.Title)
 
 	if err = synthesizeAudio(ctx, engine, string(ssmlContent), outPath, audioFormat, proj, ch.ID); err != nil {
 		return 0, 0, err
@@ -164,10 +164,10 @@ func synthesizeChapter(
 		ch,
 	)
 	if err != nil {
-		slog.Warn("failed to update chapter status", "chapter", ch.ID, "error", err)
+		slog.Default().WarnContext(ctx, "failed to update chapter status", "chapter", ch.ID, "error", err)
 	}
 
-	slog.Info("audio synthesized", "chapter", ch.ID, "file", outPath)
+	slog.Default().InfoContext(ctx, "audio synthesized", "chapter", ch.ID, "file", outPath)
 	return 1, 0, nil
 }
 

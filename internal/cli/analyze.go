@@ -96,12 +96,12 @@ func runAnalyze(
 		existingGlossary, _ = translation.LoadGlossary(proj.AIDir())
 		existingCharacters, _ = translation.LoadCharacters(proj.AIDir())
 		if len(existingGlossary.Terms) > 0 || len(existingCharacters.Characters) > 0 {
-			slog.Info("merging with existing vocabulary",
+			slog.Default().InfoContext(ctx, "merging with existing vocabulary",
 				"existing_terms", len(existingGlossary.Terms),
 				"existing_characters", len(existingCharacters.Characters))
 		}
 	} else {
-		slog.Info("starting fresh (--force, ignoring existing glossary/characters)")
+		slog.Default().InfoContext(ctx, "starting fresh (--force, ignoring existing glossary/characters)")
 	}
 
 	// Check for an existing pending batch.
@@ -111,11 +111,13 @@ func runAnalyze(
 	}
 	if state != nil {
 		if !translation.IsTerminalStatus(state.Status) {
-			slog.Info("found pending analyze batch, resuming polling (use --force to start a new one)",
-				"batch_id", state.BatchID, "status", state.Status)
+			slog.Default().
+				InfoContext(ctx, "found pending analyze batch, resuming polling (use --force to start a new one)",
+					"batch_id", state.BatchID, "status", state.Status)
 			return pollAnalyzeBatch(ctx, proj, state, pollInt, existingGlossary, existingCharacters)
 		}
-		slog.Info("cleaning up completed batch state from previous run", "batch_id", state.BatchID)
+		slog.Default().
+			InfoContext(ctx, "cleaning up completed batch state from previous run", "batch_id", state.BatchID)
 		_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypeAnalyze)
 	}
 
@@ -132,7 +134,7 @@ func runAnalyze(
 	if chs, err = filterChapters(chs, chapter, chRange); err != nil {
 		return err
 	}
-	slog.Info("loaded chapters for analysis", "count", len(chs))
+	slog.Default().InfoContext(ctx, "loaded chapters for analysis", "count", len(chs))
 
 	// Build locked-translations string from config overrides.
 	lockedTerms := buildLockedTerms(proj.Cfg.Glossary)
@@ -148,7 +150,7 @@ func runAnalyze(
 	if err != nil {
 		return fmt.Errorf("build batch JSONL: %w", err)
 	}
-	slog.Info(
+	slog.Default().InfoContext(ctx,
 		"built batch input",
 		"requests",
 		len(reqs),
@@ -217,7 +219,7 @@ func submitAnalyzeBatch(
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
+	slog.Default().InfoContext(ctx, "batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
 
 	state := &translation.BatchState{
 		BatchID:     batchID,
@@ -265,10 +267,15 @@ func resumeAnalyzeBatch(ctx context.Context, proj *project.Project, pollInt int)
 	}
 	if mergeState != nil {
 		if !translation.IsTerminalStatus(mergeState.Status) {
-			slog.Info("resuming merge batch polling", "batch_id", mergeState.BatchID, "status", mergeState.Status)
+			slog.Default().InfoContext(
+				ctx, "resuming merge batch polling",
+				"batch_id", mergeState.BatchID,
+				"status", mergeState.Status,
+			)
 			return pollAnalyzeMergeBatch(ctx, proj, mergeState)
 		}
-		slog.Info("merge batch already completed, processing results", "batch_id", mergeState.BatchID)
+		slog.Default().
+			InfoContext(ctx, "merge batch already completed, processing results", "batch_id", mergeState.BatchID)
 		var batchClient *translation.BatchClient
 		batchClient, err = translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
 		if err != nil {
@@ -288,15 +295,13 @@ func resumeAnalyzeBatch(ctx context.Context, proj *project.Project, pollInt int)
 		return fmt.Errorf("load batch state: %w", err)
 	}
 	if translation.IsTerminalStatus(state.Status) {
-		slog.Info(
-			"batch already reached terminal status, processing results",
-			"batch_id",
-			state.BatchID,
-			"status",
-			state.Status,
+		slog.Default().InfoContext(
+			ctx, "batch already reached terminal status, processing results",
+			"batch_id", state.BatchID,
+			"status", state.Status,
 		)
 	}
-	slog.Info("resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
+	slog.Default().InfoContext(ctx, "resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
 
 	// Load existing glossary/characters for the merge phase.
 	existingGlossary, _ := translation.LoadGlossary(proj.AIDir())
@@ -341,7 +346,8 @@ func processAnalyzeResults(
 	existingGlossary *translation.Glossary,
 	existingCharacters *translation.Characters,
 ) error {
-	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
+	slog.Default().
+		InfoContext(ctx, "downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
 
 	results, err := batchClient.DownloadResults(ctx, state.OutputFileID)
 	if err != nil {
@@ -356,19 +362,19 @@ func processAnalyzeResults(
 	summariesSaved := 0
 	for _, res := range results {
 		if res.Error != "" {
-			slog.Warn("request failed in batch", "custom_id", res.CustomID, "error", res.Error)
+			slog.Default().WarnContext(ctx, "request failed in batch", "custom_id", res.CustomID, "error", res.Error)
 			failedCount++
 			continue
 		}
 		chID := translation.SplitCustomID(res.CustomID, translation.BatchTypeAnalyze)
 		if chID == 0 {
-			slog.Warn("unrecognized custom_id in batch output", "custom_id", res.CustomID)
+			slog.Default().WarnContext(ctx, "unrecognized custom_id in batch output", "custom_id", res.CustomID)
 			continue
 		}
 
 		var result glossaryExtractionResult
 		if err = json.Unmarshal([]byte(res.Content), &result); err != nil {
-			slog.Warn("failed to parse glossary JSON from batch result",
+			slog.Default().WarnContext(ctx, "failed to parse glossary JSON from batch result",
 				"custom_id", res.CustomID, "error", err, "content", truncate(res.Content, truncateLength))
 			failedCount++
 			continue
@@ -379,20 +385,17 @@ func processAnalyzeResults(
 		// Save the chapter summary to memory/.
 		if result.Summary != "" {
 			if err = translation.SaveSummary(proj.MemoryDir(), chID, result.Summary); err != nil {
-				slog.Warn("failed to save summary", "chapter", chID, "error", err)
+				slog.Default().WarnContext(ctx, "failed to save summary", "chapter", chID, "error", err)
 			} else {
 				summariesSaved++
 			}
 		}
 	}
-	slog.Info(
-		"batch results parsed",
-		"glossary_results",
-		len(perChapter),
-		"summaries_saved",
-		summariesSaved,
-		"failed",
-		failedCount,
+	slog.Default().InfoContext(
+		ctx, "batch results parsed",
+		"glossary_results", len(perChapter),
+		"summaries_saved", summariesSaved,
+		"failed", failedCount,
 	)
 
 	if len(perChapter) == 0 {
@@ -520,12 +523,14 @@ func submitAnalyzeMergeBatch(ctx context.Context, proj *project.Project, input *
 	if input.ExistingCharacters != nil {
 		exChars = len(input.ExistingCharacters.Characters)
 	}
-	slog.Info("merge batch submitted",
+	slog.Default().InfoContext(
+		ctx, "merge batch submitted",
 		"batch_id", batchID,
 		"chapters", len(input.ChapterResults),
 		"existing_terms", exTerms,
 		"existing_characters", exChars,
-		"model", model)
+		"model", model,
+	)
 
 	mergeState := &translation.BatchState{
 		BatchID:     batchID,
@@ -565,7 +570,11 @@ func processAnalyzeMergeResults(
 	state *translation.BatchState,
 	batchClient *translation.BatchClient,
 ) error {
-	slog.Info("downloading merge batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
+	slog.Default().InfoContext(
+		ctx, "downloading merge batch results",
+		"batch_id", state.BatchID,
+		"output_file_id", state.OutputFileID,
+	)
 
 	results, err := batchClient.DownloadResults(ctx, state.OutputFileID)
 	if err != nil {
@@ -598,7 +607,7 @@ func processAnalyzeMergeResults(
 	if err != nil && !errors.Is(err, errMergeInputNotFound) {
 		// Log but don't fail — the merge result is complete and paid for.
 		// Skipping chapter tagging is better than discarding the glossary.
-		slog.Warn("failed to load merge input, skipping chapter tagging", "error", err)
+		slog.Default().WarnContext(ctx, "failed to load merge input, skipping chapter tagging", "error", err)
 		input = nil
 	}
 	if input != nil {
@@ -607,19 +616,20 @@ func processAnalyzeMergeResults(
 
 	// Save glossary (terms only — no characters).
 	glossary := &translation.Glossary{Terms: unified.Terms}
-	slog.Info("unified glossary", "terms", len(glossary.Terms), "characters", len(unified.Characters))
+	slog.Default().
+		InfoContext(ctx, "unified glossary", "terms", len(glossary.Terms), "characters", len(unified.Characters))
 
 	if err = glossary.Save(proj.AIDir()); err != nil {
 		return err
 	}
-	slog.Info("saved glossary", "path", filepath.Join(proj.AIDir(), "glossary.json"))
+	slog.Default().InfoContext(ctx, "saved glossary", "path", filepath.Join(proj.AIDir(), "glossary.json"))
 
 	// Save characters.
 	characters := &translation.Characters{Characters: unified.Characters}
 	if err = characters.Save(proj.AIDir()); err != nil {
 		return err
 	}
-	slog.Info("saved characters", "path", filepath.Join(proj.AIDir(), "characters.json"))
+	slog.Default().InfoContext(ctx, "saved characters", "path", filepath.Join(proj.AIDir(), "characters.json"))
 
 	// Report summaries count from merge input.
 	summaries := 0
@@ -630,7 +640,7 @@ func processAnalyzeMergeResults(
 	// Clean up.
 	_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypeAnalyzeMerge)
 	deleteAnalyzeMergeInput(proj.AIDir())
-	slog.Info(
+	slog.Default().InfoContext(ctx,
 		"analyze complete",
 		"glossary_terms",
 		len(glossary.Terms),

@@ -1,4 +1,4 @@
-package tts
+package tts //nolint:testpackage // needs access to unexported engine constants and helpers
 
 import (
 	"context"

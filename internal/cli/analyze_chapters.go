@@ -69,7 +69,7 @@ func newAnalyzeChaptersCmd() *cobra.Command {
 }
 
 func runAnalyzeChapters(
-	_ context.Context,
+	ctx context.Context,
 	proj *project.Project,
 	force bool,
 	chapter int,
@@ -87,14 +87,15 @@ func runAnalyzeChapters(
 	if err != nil {
 		return err
 	}
-	slog.Info("loaded extracted artifacts", "spine_items", len(in.Spine), "toc_entries", len(in.TOC))
+	slog.Default().
+		InfoContext(ctx, "loaded extracted artifacts", "spine_items", len(in.Spine), "toc_entries", len(in.TOC))
 
 	// Run the splitter. If --strategy is set, force that single strategy.
 	res, err := splitChapters(in, strategy)
 	if err != nil {
 		return err
 	}
-	slog.Info("chapter detection complete",
+	slog.Default().InfoContext(ctx, "chapter detection complete",
 		"strategy", res.Index.Strategy, "chapters", res.Index.ChapterCount, "skipped", len(res.Skipped))
 
 	// Apply --strip filters: each strip string is a "trigger" — if it appears
@@ -120,7 +121,7 @@ func runAnalyzeChapters(
 	if err != nil {
 		return err
 	}
-	slog.Info("wrote chapters", "count", written)
+	slog.Default().InfoContext(ctx, "wrote chapters", "count", written)
 
 	// Always (re)write _skipped.json and _index.json so they reflect the
 	// latest analysis run.
@@ -156,7 +157,7 @@ func applyStripFilters(chs []chapters.Chapter, strip []string) {
 			stripped++
 		}
 	}
-	slog.Info("applied strip filters", "patterns", len(strip), "chapters_modified", stripped)
+	slog.Default().Info("applied strip filters", "patterns", len(strip), "chapters_modified", stripped)
 }
 
 // writeChapters saves the selected chapters to chaptersDir, skipping those
@@ -169,7 +170,7 @@ func writeChapters(chs []chapters.Chapter, chaptersDir string, ids map[int]bool,
 		}
 		path := chapterPath(chaptersDir, ch.ID)
 		if project.Exists(path) && !force {
-			slog.Debug("skip existing chapter", "id", ch.ID)
+			slog.Default().Debug("skip existing chapter", "id", ch.ID)
 			continue
 		}
 		if err := project.SaveJSON(path, ch); err != nil {
@@ -203,7 +204,7 @@ func loadSplitInput(extractedDir string) (chapters.SplitInput, error) {
 	for i, entry := range spine {
 		blockPath := filepath.Join(extractedDir, "blocks", fmt.Sprintf("item%03d.json", i))
 		if !project.Exists(blockPath) {
-			slog.Warn("missing blocks file for spine item", "index", i, "id", entry.ID)
+			slog.Default().Warn("missing blocks file for spine item", "index", i, "id", entry.ID)
 			items = append(items, chapters.SpineItem{Index: i, ID: entry.ID, Href: entry.Href})
 			continue
 		}

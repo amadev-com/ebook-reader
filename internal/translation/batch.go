@@ -133,7 +133,7 @@ func BuildResponseParams(
 
 // batchInputLine is one line in the JSONL input file for the Batch API. Each
 // line represents a single request to the /v1/responses endpoint. The body is
-// a marshaled responses.ResponseNewParams (via json.RawMessage so the SDK's own
+// a marshaled responses.ResponseNewParams (via [json.RawMessage] so the SDK's own
 // MarshalJSON is used).
 type batchInputLine struct {
 	CustomID string          `json:"custom_id"`
@@ -255,7 +255,7 @@ func (bc *BatchClient) DownloadResults(ctx context.Context, outputFileID string)
 }
 
 // batchOutputLine is one line from the batch output JSONL file. The response
-// body is a json.RawMessage that gets unmarshaled into responses.Response (the
+// body is a [json.RawMessage] that gets unmarshaled into responses.Response (the
 // SDK type) to extract output text via Response.OutputText().
 type batchOutputLine struct {
 	CustomID string `json:"custom_id"`

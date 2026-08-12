@@ -1,4 +1,4 @@
-package config
+package config //nolint:testpackage // needs access to unexported defaultModel constant
 
 import (
 	"os"
