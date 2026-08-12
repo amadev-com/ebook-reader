@@ -10,7 +10,7 @@ func TestGlossarySaveAndLoad(t *testing.T) {
 	dir := t.TempDir()
 	g := &Glossary{
 		Terms: []GlossaryTerm{
-			{Source: "The Order", Target: "Орден", Type: "organization", FirstSeenChapter: 1},
+			{Source: "The Order", Target: "Орден", Type: typeOrganization, FirstSeenChapter: 1},
 			{Source: "Dark Lord", Target: "Темный Лорд", Type: "title"},
 		},
 	}
@@ -48,7 +48,7 @@ func TestGlossaryFind(t *testing.T) {
 	t.Parallel()
 	g := &Glossary{
 		Terms: []GlossaryTerm{
-			{Source: "The Order", Target: "Орден", Type: "organization"},
+			{Source: "The Order", Target: "Орден", Type: typeOrganization},
 		},
 	}
 	// Case-insensitive find.
@@ -69,14 +69,14 @@ func TestGlossaryMerge(t *testing.T) {
 	t.Parallel()
 	g := &Glossary{
 		Terms: []GlossaryTerm{
-			{Source: "The Order", Target: "Орден", Type: "organization"},
+			{Source: "The Order", Target: "Орден", Type: typeOrganization},
 		},
 	}
 	added := g.Merge([]GlossaryTerm{
-		{Source: "The Order", Target: "Порядок", Type: "organization"}, // duplicate, ignored
-		{Source: "Quinn", Target: "Куинн", Type: "character"},          // new
-		{Source: "", Target: "empty", Type: "term"},                    // empty source, skipped
-		{Source: "empty target", Target: "", Type: "term"},             // empty target, skipped
+		{Source: "The Order", Target: "Порядок", Type: typeOrganization}, // duplicate, ignored
+		{Source: "Quinn", Target: "Куинн", Type: typeCharacter},          // new
+		{Source: "", Target: "empty", Type: "term"},                      // empty source, skipped
+		{Source: "empty target", Target: "", Type: "term"},               // empty target, skipped
 	})
 	if added != 1 {
 		t.Errorf("Merge added = %d, want 1", added)
@@ -95,8 +95,8 @@ func TestGlossaryPromptBlock(t *testing.T) {
 	t.Parallel()
 	g := &Glossary{
 		Terms: []GlossaryTerm{
-			{Source: "Quinn", Target: "Куинн", Type: "character"},
-			{Source: "The Order", Target: "Орден", Type: "organization"},
+			{Source: "Quinn", Target: "Куинн", Type: typeCharacter},
+			{Source: "The Order", Target: "Орден", Type: typeOrganization},
 			{Source: "Dalki", Target: "Далки", Type: "term"},
 		},
 	}
@@ -182,10 +182,10 @@ func TestGlossaryWithCharacters(t *testing.T) {
 	t.Parallel()
 	g := &Glossary{
 		Terms: []GlossaryTerm{
-			{Source: "The Order", Target: "Орден", Type: "organization"},
+			{Source: "The Order", Target: "Орден", Type: typeOrganization},
 			{Source: "Dalki", Target: "Далки", Type: "term"},
 			// Stale character entry in glossary — should be dropped in favor of characters.json.
-			{Source: "Quinn", Target: "OLD", Type: "character"},
+			{Source: "Quinn", Target: "OLD", Type: typeCharacter},
 		},
 	}
 	chars := &Characters{
@@ -216,10 +216,10 @@ func TestGlossaryWithCharacters(t *testing.T) {
 	}
 
 	// Non-character terms preserved.
-	if _, ok := merged.Find("The Order"); !ok {
+	if _, ok = merged.Find("The Order"); !ok {
 		t.Error("The Order missing from merged")
 	}
-	if _, ok := merged.Find("Dalki"); !ok {
+	if _, ok = merged.Find("Dalki"); !ok {
 		t.Error("Dalki missing from merged")
 	}
 }
@@ -323,8 +323,8 @@ func TestPromptBlockForChapter(t *testing.T) {
 	t.Parallel()
 	g := &Glossary{
 		Terms: []GlossaryTerm{
-			{Source: "Guild", Target: "Гильдия", Type: "organization", Chapters: []int{1, 5, 10}},
-			{Source: "Quinn", Target: "Куинн", Type: "character", Chapters: []int{1, 2, 3}},
+			{Source: "Guild", Target: "Гильдия", Type: typeOrganization, Chapters: []int{1, 5, 10}},
+			{Source: "Quinn", Target: "Куинн", Type: typeCharacter, Chapters: []int{1, 2, 3}},
 			{Source: "Dalki", Target: "Далки", Type: "term", Chapters: []int{5, 6}},
 			{Source: "Untagged", Target: "Безметочный", Type: "term"}, // no chapter tags — excluded
 		},

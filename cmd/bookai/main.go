@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"ebook-reader/internal/cli"
+	"ebook-reader/internal/tts"
 )
 
 func main() {
@@ -12,6 +13,7 @@ func main() {
 }
 
 func run() int {
+	tts.RegisterEngines()
 	root := cli.NewRoot()
 	if err := root.Execute(); err != nil {
 		return cli.Fail(err)

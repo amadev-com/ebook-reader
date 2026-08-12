@@ -29,10 +29,10 @@ func LoadSummary(memoryDir string, chapterID int) (string, error) {
 // SaveSummary writes a chapter's summary to memory/chapter_NNN.summary.txt.
 func SaveSummary(memoryDir string, chapterID int, summary string) error {
 	path := summaryPath(memoryDir, chapterID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create memory dir: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(strings.TrimSpace(summary)+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(summary)+"\n"), 0o600); err != nil {
 		return fmt.Errorf("write summary for chapter %d: %w", chapterID, err)
 	}
 	return nil
@@ -46,10 +46,7 @@ func PreviousSummaries(memoryDir string, chapterID, count int) (string, error) {
 		return "", nil
 	}
 	var parts []string
-	start := chapterID - count
-	if start < 1 {
-		start = 1
-	}
+	start := max(chapterID-count, 1)
 	for i := start; i < chapterID; i++ {
 		s, err := LoadSummary(memoryDir, i)
 		if err != nil {

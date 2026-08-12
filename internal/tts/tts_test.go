@@ -8,20 +8,25 @@ import (
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	RegisterEngines()
+	os.Exit(m.Run())
+}
+
 func TestNoopEngine_Synthesize(t *testing.T) {
-	engine, err := NewNoopEngine(EngineConfig{Engine: "noop"})
+	t.Parallel()
+	engine, err := NewNoopEngine(EngineConfig{Engine: engineNoop})
 	if err != nil {
 		t.Fatalf("NewNoopEngine: %v", err)
 	}
-	if engine.Name() != "noop" {
-		t.Errorf("name: got %q, want %q", engine.Name(), "noop")
+	if engine.Name() != engineNoop {
+		t.Errorf("name: got %q, want %q", engine.Name(), engineNoop)
 	}
 
 	tmpDir := t.TempDir()
 	outPath := filepath.Join(tmpDir, "test.wav")
 
-	err = engine.Synthesize(context.Background(), "Небольшой текст для теста.", outPath)
-	if err != nil {
+	if err = engine.Synthesize(context.Background(), "Небольшой текст для теста.", outPath); err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
 
@@ -38,25 +43,27 @@ func TestNoopEngine_Synthesize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
-	if string(data[:4]) != "RIFF" {
+	if string(data[:4]) != wavRIFF {
 		t.Errorf("not a WAV file: missing RIFF header, got %q", data[:4])
 	}
-	if string(data[8:12]) != "WAVE" {
+	if string(data[8:12]) != wavWAVE {
 		t.Errorf("not a WAV file: missing WAVE, got %q", data[8:12])
 	}
 }
 
 func TestNewEngine_Noop(t *testing.T) {
-	engine, err := NewEngine(EngineConfig{Engine: "noop"})
+	t.Parallel()
+	engine, err := NewEngine(EngineConfig{Engine: engineNoop})
 	if err != nil {
 		t.Fatalf("NewEngine noop: %v", err)
 	}
-	if engine.Name() != "noop" {
+	if engine.Name() != engineNoop {
 		t.Errorf("engine name: got %q", engine.Name())
 	}
 }
 
 func TestNewEngine_Unknown(t *testing.T) {
+	t.Parallel()
 	_, err := NewEngine(EngineConfig{Engine: "nonexistent"})
 	if err == nil {
 		t.Fatal("expected error for unknown engine")
@@ -67,11 +74,12 @@ func TestNewEngine_Unknown(t *testing.T) {
 }
 
 func TestAvailableEngines(t *testing.T) {
+	t.Parallel()
 	engines := AvailableEngines()
-	if !contains(engines, "noop") {
+	if !contains(engines, engineNoop) {
 		t.Errorf("noop should be in available engines: %s", engines)
 	}
-	if !contains(engines, "silero-http") {
+	if !contains(engines, engineSileroHTTP) {
 		t.Errorf("silero-http should be in available engines: %s", engines)
 	}
 }
@@ -79,6 +87,7 @@ func TestAvailableEngines(t *testing.T) {
 // --- Stress tests ---
 
 func TestLoadStress_AbsentFile(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	s, err := LoadStress(tmpDir)
 	if err != nil {
@@ -90,6 +99,7 @@ func TestLoadStress_AbsentFile(t *testing.T) {
 }
 
 func TestStress_Lookup(t *testing.T) {
+	t.Parallel()
 	s := &Stress{
 		Entries: []StressEntry{
 			{Term: "кедров", Stressed: "к+едров"},
@@ -110,6 +120,7 @@ func TestStress_Lookup(t *testing.T) {
 }
 
 func TestStress_SaveAndLoad(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	s := &Stress{
 		Entries: []StressEntry{
@@ -135,6 +146,7 @@ func TestStress_SaveAndLoad(t *testing.T) {
 }
 
 func TestStress_Apply(t *testing.T) {
+	t.Parallel()
 	s := &Stress{
 		Entries: []StressEntry{
 			{Term: "кедров", Stressed: "к+едров"},
@@ -153,6 +165,7 @@ func TestStress_Apply(t *testing.T) {
 }
 
 func TestStress_Apply_WordBoundary(t *testing.T) {
+	t.Parallel()
 	s := &Stress{
 		Entries: []StressEntry{
 			{Term: "Орден", Stressed: "+Орден"},
@@ -167,6 +180,7 @@ func TestStress_Apply_WordBoundary(t *testing.T) {
 }
 
 func TestStress_Apply_WordBoundary_CyrillicShortTerm(t *testing.T) {
+	t.Parallel()
 	// Regression: "ИИ" (2-char acronym) was matching inside words because
 	// the byte-level word boundary check treated UTF-8 continuation bytes as
 	// non-word characters. The fix uses rune-level boundary detection.
@@ -190,8 +204,8 @@ func TestStress_Apply_WordBoundary_CyrillicShortTerm(t *testing.T) {
 	// previous character was never checked.
 	// "армии", "стратегии", "молнии" all end in "ии" which matches "ИИ".
 	for _, word := range []string{"армии", "стратегии", "молнии", "линии"} {
-		text := word + " было много."
-		result := s.Apply(text)
+		text = word + " было много."
+		result = s.Apply(text)
 		if contains(result, "И+И") {
 			t.Errorf("ИИ should not match at end of %q: %s", word, result)
 		}
@@ -221,6 +235,7 @@ func TestStress_Apply_WordBoundary_CyrillicShortTerm(t *testing.T) {
 }
 
 func TestStress_Apply_CaseInsensitive(t *testing.T) {
+	t.Parallel()
 	s := &Stress{
 		Entries: []StressEntry{
 			{Term: "орден", Stressed: "+орден"},
@@ -234,6 +249,7 @@ func TestStress_Apply_CaseInsensitive(t *testing.T) {
 }
 
 func TestStress_Apply_Empty(t *testing.T) {
+	t.Parallel()
 	s := &Stress{}
 	text := "Привет мир."
 	result := s.Apply(text)
@@ -243,6 +259,7 @@ func TestStress_Apply_Empty(t *testing.T) {
 }
 
 func TestStress_Apply_MultipleOccurrences(t *testing.T) {
+	t.Parallel()
 	s := &Stress{
 		Entries: []StressEntry{
 			{Term: "Нейт", Stressed: "Н+ейт"},
@@ -256,6 +273,7 @@ func TestStress_Apply_MultipleOccurrences(t *testing.T) {
 }
 
 func TestStress_Apply_DoesNotLoseTextOnWordBoundaryReject(t *testing.T) {
+	t.Parallel()
 	// Regression test: when a term match is rejected by atWordBoundary
 	// (because it's inside a longer word), the text before the rejected
 	// match must NOT be lost.
@@ -286,6 +304,7 @@ func TestStress_Apply_DoesNotLoseTextOnWordBoundaryReject(t *testing.T) {
 // --- Stress merge tests ---
 
 func TestStress_Merge_NoConflicts(t *testing.T) {
+	t.Parallel()
 	global := &Stress{
 		Entries: []StressEntry{
 			{Term: "кедров", Stressed: "к+едров"},
@@ -307,6 +326,7 @@ func TestStress_Merge_NoConflicts(t *testing.T) {
 }
 
 func TestStress_Merge_Conflicts(t *testing.T) {
+	t.Parallel()
 	global := &Stress{
 		Entries: []StressEntry{
 			{Term: "договор", Stressed: "догов+ор"},
@@ -330,6 +350,7 @@ func TestStress_Merge_Conflicts(t *testing.T) {
 }
 
 func TestMergeAll(t *testing.T) {
+	t.Parallel()
 	ch1 := &Stress{
 		Entries: []StressEntry{
 			{Term: "кедров", Stressed: "к+едров"},
@@ -360,6 +381,7 @@ func TestMergeAll(t *testing.T) {
 }
 
 func TestStress_ResolveConflict(t *testing.T) {
+	t.Parallel()
 	s := &Stress{
 		Entries: []StressEntry{
 			{Term: "договор", Stressed: "догов+ор"},
@@ -391,6 +413,7 @@ func TestStress_ResolveConflict(t *testing.T) {
 }
 
 func TestStress_Merge_ApprovedNoConflict(t *testing.T) {
+	t.Parallel()
 	global := &Stress{
 		Entries: []StressEntry{
 			{Term: "договор", Stressed: "догов+ор", Approved: true},
@@ -412,6 +435,7 @@ func TestStress_Merge_ApprovedNoConflict(t *testing.T) {
 }
 
 func TestStress_Merge_NotApprovedStillConflicts(t *testing.T) {
+	t.Parallel()
 	global := &Stress{
 		Entries: []StressEntry{
 			{Term: "договор", Stressed: "догов+ор", Approved: false},
@@ -429,6 +453,7 @@ func TestStress_Merge_NotApprovedStillConflicts(t *testing.T) {
 }
 
 func TestStress_MergeChapter_TagsNewEntries(t *testing.T) {
+	t.Parallel()
 	global := &Stress{}
 	other := &Stress{
 		Entries: []StressEntry{
@@ -449,6 +474,7 @@ func TestStress_MergeChapter_TagsNewEntries(t *testing.T) {
 }
 
 func TestStress_MergeChapter_TagsExistingEntries(t *testing.T) {
+	t.Parallel()
 	global := &Stress{
 		Entries: []StressEntry{
 			{Term: "кедров", Stressed: "к+едров", Chapters: []int{1}},
@@ -484,6 +510,7 @@ func TestStress_MergeChapter_TagsExistingEntries(t *testing.T) {
 }
 
 func TestStress_MergeChapter_NoDuplicateChapterID(t *testing.T) {
+	t.Parallel()
 	global := &Stress{
 		Entries: []StressEntry{
 			{Term: "кедров", Stressed: "к+едров", Chapters: []int{5}},
@@ -502,6 +529,7 @@ func TestStress_MergeChapter_NoDuplicateChapterID(t *testing.T) {
 }
 
 func TestStress_CountForChapter(t *testing.T) {
+	t.Parallel()
 	s := &Stress{
 		Entries: []StressEntry{
 			{Term: "кедров", Stressed: "к+едров", Chapters: []int{1, 3}},
@@ -524,6 +552,7 @@ func TestStress_CountForChapter(t *testing.T) {
 }
 
 func TestHasValidStressMark(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -550,6 +579,7 @@ func TestHasValidStressMark(t *testing.T) {
 // --- SSML generation tests ---
 
 func TestGenerateSSML_Simple(t *testing.T) {
+	t.Parallel()
 	text := "Привет мир. До свидания."
 	result := GenerateSSML(text)
 
@@ -571,6 +601,7 @@ func TestGenerateSSML_Simple(t *testing.T) {
 }
 
 func TestGenerateSSML_MultipleParagraphs(t *testing.T) {
+	t.Parallel()
 	text := "Первый абзац.\n\nВторой абзац."
 	result := GenerateSSML(text)
 
@@ -581,6 +612,7 @@ func TestGenerateSSML_MultipleParagraphs(t *testing.T) {
 }
 
 func TestGenerateSSML_PreservesStressMarks(t *testing.T) {
+	t.Parallel()
 	text := "В недрах тундры выдры в г+етрах т+ырят в вёдра ядра к+едров."
 	result := GenerateSSML(text)
 
@@ -593,6 +625,7 @@ func TestGenerateSSML_PreservesStressMarks(t *testing.T) {
 }
 
 func TestGenerateSSML_Empty(t *testing.T) {
+	t.Parallel()
 	result := GenerateSSML("")
 	if result != "<speak></speak>" {
 		t.Errorf("empty text should produce empty SSML: got %q", result)
@@ -600,6 +633,7 @@ func TestGenerateSSML_Empty(t *testing.T) {
 }
 
 func TestGenerateSSML_EscapesXML(t *testing.T) {
+	t.Parallel()
 	text := "5 < 10 & 20 > 15."
 	result := GenerateSSML(text)
 
@@ -615,6 +649,7 @@ func TestGenerateSSML_EscapesXML(t *testing.T) {
 }
 
 func TestGenerateSSML_ExclamationAndQuestion(t *testing.T) {
+	t.Parallel()
 	text := "Что это? Как интересно!"
 	result := GenerateSSML(text)
 
@@ -627,6 +662,7 @@ func TestGenerateSSML_ExclamationAndQuestion(t *testing.T) {
 }
 
 func TestGenerateSSML_LatinToCyrillic(t *testing.T) {
+	t.Parallel()
 	// Latin characters in Russian text crash Silero's SSML parser.
 	// They should be replaced with Cyrillic look-alikes.
 	tests := []struct {
@@ -668,6 +704,7 @@ func TestGenerateSSML_LatinToCyrillic(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			result := GenerateSSML(tc.input)
 			if !contains(result, tc.want) {
 				t.Errorf("expected %q in output: %s", tc.want, result)
@@ -680,6 +717,7 @@ func TestGenerateSSML_LatinToCyrillic(t *testing.T) {
 }
 
 func TestSanitizeStressMarks(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -728,6 +766,7 @@ func TestSanitizeStressMarks(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := sanitizeStressMarks(tc.input)
 			if got != tc.want {
 				t.Errorf("sanitizeStressMarks(%q) = %q, want %q", tc.input, got, tc.want)

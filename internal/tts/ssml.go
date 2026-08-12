@@ -85,7 +85,7 @@ func splitSentences(para string) []string {
 	var sentences []string
 	start := 0
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		r := runes[i]
 		if r == '.' || r == '!' || r == '?' || r == '…' {
 			// Include the punctuation and any trailing quotes/brackets.
@@ -195,76 +195,52 @@ func escapeXML(s string) string {
 // SSML — it crashes with "'NoneType' object has no attribute 'keys'" and
 // returns silence. This maps Latin letters to their Cyrillic look-alikes
 // so the text is all-Cyrillic before sending to the server.
+// Some entries are phonetic rather than visual (noted in comments).
 func latinToCyrillic(r rune) rune {
-	switch r {
-	case 'A':
-		return 'А'
-	case 'B':
-		return 'В'
-	case 'C':
-		return 'С'
-	case 'D':
-		return 'Д'
-	case 'E':
-		return 'Е'
-	case 'H':
-		return 'Н'
-	case 'K':
-		return 'К'
-	case 'M':
-		return 'М'
-	case 'O':
-		return 'О'
-	case 'P':
-		return 'Р'
-	case 'R':
-		return 'Р' // phonetic: Latin R → Cyrillic Р (both are R sound)
-	case 'S':
-		return 'С'
-	case 'T':
-		return 'Т'
-	case 'V':
-		return 'В' // phonetic: Latin V → Cyrillic В (both are V sound)
-	case 'X':
-		return 'Х'
-	case 'Y':
-		return 'У'
-	case 'Z':
-		return 'З' // phonetic: Latin Z → Cyrillic З (both are Z sound)
-	case 'a':
-		return 'а'
-	case 'b':
-		return 'в'
-	case 'c':
-		return 'с'
-	case 'd':
-		return 'д'
-	case 'e':
-		return 'е'
-	case 'h':
-		return 'н'
-	case 'k':
-		return 'к'
-	case 'm':
-		return 'м'
-	case 'o':
-		return 'о'
-	case 'p':
-		return 'р'
-	case 'r':
-		return 'р' // phonetic: Latin r → Cyrillic р
-	case 's':
-		return 'с'
-	case 't':
-		return 'т'
-	case 'v':
-		return 'в'
-	case 'x':
-		return 'х'
-	case 'y':
-		return 'у'
-	case 'z':
-		return 'з' // phonetic: Latin z → Cyrillic з
+	m := latinToCyrillicMap()
+	if cyr, ok := m[r]; ok {
+		return cyr
 	}
 	return r
+}
+
+// latinToCyrillicMap returns the Latin→Cyrillic lookup table, building it
+// once on first call.
+func latinToCyrillicMap() map[rune]rune {
+	return map[rune]rune{
+		'A': 'А',
+		'B': 'В',
+		'C': 'С',
+		'D': 'Д',
+		'E': 'Е',
+		'H': 'Н',
+		'K': 'К',
+		'M': 'М',
+		'O': 'О',
+		'P': 'Р',
+		'R': 'Р', // phonetic: Latin R → Cyrillic Р (both are R sound)
+		'S': 'С',
+		'T': 'Т',
+		'V': 'В', // phonetic: Latin V → Cyrillic В (both are V sound)
+		'X': 'Х',
+		'Y': 'У',
+		'Z': 'З', // phonetic: Latin Z → Cyrillic З (both are Z sound)
+		'a': 'а',
+		'b': 'в',
+		'c': 'с',
+		'd': 'д',
+		'e': 'е',
+		'h': 'н',
+		'k': 'к',
+		'm': 'м',
+		'o': 'о',
+		'p': 'р',
+		'r': 'р', // phonetic: Latin r → Cyrillic р
+		's': 'с',
+		't': 'т',
+		'v': 'в',
+		'x': 'х',
+		'y': 'у',
+		'z': 'з', // phonetic: Latin z → Cyrillic з
+	}
 }

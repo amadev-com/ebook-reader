@@ -2,6 +2,8 @@ package cli
 
 import (
 	"archive/zip"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,15 +92,15 @@ func writeZip(path string, files map[string]string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := mw.Write([]byte("application/epub+zip")); err != nil {
+	if _, err = mw.Write([]byte("application/epub+zip")); err != nil {
 		return err
 	}
+	var w io.Writer
 	for name, content := range files {
-		w, err := zw.Create(name)
-		if err != nil {
+		if w, err = zw.Create(name); err != nil {
 			return err
 		}
-		if _, err := w.Write([]byte(content)); err != nil {
+		if _, err = w.Write([]byte(content)); err != nil {
 			return err
 		}
 	}
@@ -117,12 +119,12 @@ func TestRunImportAndAnalyzeChapters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New project: %v", err)
 	}
-	if err := proj.EnsureDirs(); err != nil {
+	if err = proj.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
 
 	// Import.
-	if err := runImport(t.Context(), proj, epubPath, false); err != nil {
+	if err = runImport(t.Context(), proj, epubPath, false); err != nil {
 		t.Fatalf("runImport: %v", err)
 	}
 	// Verify expected artifacts.
@@ -140,7 +142,7 @@ func TestRunImportAndAnalyzeChapters(t *testing.T) {
 	}
 
 	// Analyze chapters.
-	if err := runAnalyzeChapters(t.Context(), proj, true, 0, "", "", nil); err != nil {
+	if err = runAnalyzeChapters(t.Context(), proj, true, 0, "", "", nil); err != nil {
 		t.Fatalf("runAnalyzeChapters: %v", err)
 	}
 	// Expect 2 chapters (cover skipped).
@@ -164,7 +166,7 @@ func TestRunImportAndAnalyzeChapters(t *testing.T) {
 		ChapterCount int    `json:"chapter_count"`
 		Strategy     string `json:"strategy"`
 	}
-	if err := project.LoadJSON(filepath.Join(proj.ChaptersDir(), "_index.json"), &idx); err != nil {
+	if err = project.LoadJSON(filepath.Join(proj.ChaptersDir(), "_index.json"), &idx); err != nil {
 		t.Fatalf("load index: %v", err)
 	}
 	if idx.ChapterCount != 2 {
@@ -183,18 +185,18 @@ func TestRunImportIdempotentWithoutForce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := proj.EnsureDirs(); err != nil {
+	if err = proj.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
-	if err := runImport(t.Context(), proj, epubPath, false); err != nil {
+	if err = runImport(t.Context(), proj, epubPath, false); err != nil {
 		t.Fatalf("first import: %v", err)
 	}
 	// Second import without --force must fail.
-	if err := runImport(t.Context(), proj, epubPath, false); err == nil {
+	if err = runImport(t.Context(), proj, epubPath, false); err == nil {
 		t.Fatal("second import without --force succeeded, want error")
 	}
 	// Second import with --force must succeed.
-	if err := runImport(t.Context(), proj, epubPath, true); err != nil {
+	if err = runImport(t.Context(), proj, epubPath, true); err != nil {
 		t.Fatalf("second import with --force: %v", err)
 	}
 }
@@ -206,7 +208,7 @@ func TestRunAnalyzeChaptersRequiresImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := proj.EnsureDirs(); err != nil {
+	if err = proj.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
 	// No import done yet -> analyze-chapters should fail with a clear message.
@@ -218,22 +220,20 @@ func TestRunAnalyzeChaptersRequiresImport(t *testing.T) {
 
 func TestParseChapterFilter(t *testing.T) {
 	t.Parallel()
-	// No filter -> nil (write all).
+	// No filter -> errNoChapterFilter (write all).
 	got, err := parseChapterFilter(0, "", 10)
-	if err != nil || got != nil {
-		t.Errorf("no filter: got %v, %v; want nil, nil", got, err)
+	if !errors.Is(err, errNoChapterFilter) || got != nil {
+		t.Errorf("no filter: got %v, %v; want nil, errNoChapterFilter", got, err)
 	}
 	// Single chapter.
-	got, err = parseChapterFilter(3, "", 10)
-	if err != nil {
+	if got, err = parseChapterFilter(3, "", 10); err != nil {
 		t.Fatalf("chapter 3: %v", err)
 	}
 	if len(got) != 1 || !got[3] {
 		t.Errorf("chapter 3: got %v, want {3:true}", got)
 	}
 	// Range.
-	got, err = parseChapterFilter(0, "2-5", 10)
-	if err != nil {
+	if got, err = parseChapterFilter(0, "2-5", 10); err != nil {
 		t.Fatalf("range 2-5: %v", err)
 	}
 	for i := 2; i <= 5; i++ {
@@ -245,14 +245,14 @@ func TestParseChapterFilter(t *testing.T) {
 		t.Errorf("range 2-5: ids outside range set: %v", got)
 	}
 	// Out of range.
-	if _, err := parseChapterFilter(11, "", 10); err == nil {
+	if _, err = parseChapterFilter(11, "", 10); err == nil {
 		t.Error("chapter 11 with max 10 should error")
 	}
-	if _, err := parseChapterFilter(0, "1-11", 10); err == nil {
+	if _, err = parseChapterFilter(0, "1-11", 10); err == nil {
 		t.Error("range 1-11 with max 10 should error")
 	}
 	// Bad range format.
-	if _, err := parseChapterFilter(0, "abc", 10); err == nil {
+	if _, err = parseChapterFilter(0, "abc", 10); err == nil {
 		t.Error("range 'abc' should error")
 	}
 }
@@ -282,7 +282,8 @@ func TestSlugify(t *testing.T) {
 }
 
 func TestImportCreatesProjectDir(t *testing.T) {
-	// Not parallel — uses global flagProject and os.Chdir.
+	t.Parallel()
+	// Uses global flagProject and os.Chdir.
 	epubPath := buildTestEPUB(t)
 	parentDir := t.TempDir()
 
@@ -292,7 +293,7 @@ func TestImportCreatesProjectDir(t *testing.T) {
 		t.Fatalf("getwd: %v", err)
 	}
 	defer func() { _ = os.Chdir(oldWd) }()
-	if err := os.Chdir(parentDir); err != nil {
+	if err = os.Chdir(parentDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
 
@@ -305,7 +306,7 @@ func TestImportCreatesProjectDir(t *testing.T) {
 	cmd.SetArgs([]string{epubPath, "My Test Book"})
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
-	if err := cmd.Execute(); err != nil {
+	if err = cmd.Execute(); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 
@@ -320,7 +321,8 @@ func TestImportCreatesProjectDir(t *testing.T) {
 }
 
 func TestImportWithExplicitProjectFlag(t *testing.T) {
-	// Not parallel — uses global flagProject.
+	t.Parallel()
+	// Uses global flagProject.
 	epubPath := buildTestEPUB(t)
 	projDir := t.TempDir()
 

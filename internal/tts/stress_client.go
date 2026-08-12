@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// stressTimeoutMinutes is the HTTP client timeout (in minutes) for stress
+// requests, accommodating large chapters.
+const stressTimeoutMinutes = 5
+
 // StressClient calls the /api/stress endpoint on the Silero TTS server
 // to apply automatic stress placement using the silero-stress model.
 // The endpoint accepts a batch of sentences and returns each sentence
@@ -27,7 +31,7 @@ func NewStressClient(serverURL string) *StressClient {
 	return &StressClient{
 		serverURL: strings.TrimRight(serverURL, "/"),
 		client: &http.Client{
-			Timeout: 5 * time.Minute,
+			Timeout: time.Duration(stressTimeoutMinutes) * time.Minute,
 		},
 	}
 }
@@ -95,7 +99,7 @@ func (c *StressClient) StressSentences(ctx context.Context, sentences []string) 
 	}
 
 	var sr stressResponse
-	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
+	if err = json.NewDecoder(resp.Body).Decode(&sr); err != nil {
 		return nil, fmt.Errorf("decode stress response: %w", err)
 	}
 

@@ -12,7 +12,7 @@ func makeSpineItem(id, href string, blocks ...epub.Block) SpineItem {
 }
 
 func h(level int, text, anchor string) epub.Block {
-	return epub.Block{Kind: "heading", Level: level, Anchor: anchor, Text: text}
+	return epub.Block{Kind: string(StrategyHeading), Level: level, Anchor: anchor, Text: text}
 }
 
 func p(text string) epub.Block {
@@ -86,7 +86,7 @@ func TestSplitByTOC_AmbiguousDefaultsToSkip(t *testing.T) {
 	// "Welcome" is ambiguous -> recorded as skip with reason ambiguous-default-skip.
 	found := false
 	for _, s := range res.Skipped {
-		if s.Title == "Welcome" && s.Reason == "ambiguous-default-skip" {
+		if s.Title == "Welcome" && s.Reason == reasonAmbiguousSkip {
 			found = true
 		}
 	}

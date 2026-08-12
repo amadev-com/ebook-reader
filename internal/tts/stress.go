@@ -2,6 +2,7 @@ package tts
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -57,6 +58,24 @@ func LoadStress(aiDir string) (*Stress, error) {
 		return nil, fmt.Errorf("load stress: %w", err)
 	}
 	return &s, nil
+}
+
+// NewStressFromOverrides builds a Stress store from pronunciation config
+// overrides. Each override becomes a StressEntry. This is used by the
+// --auto-stress flow to apply user-specified corrections on top of the
+// silero-stress model output.
+func NewStressFromOverrides(overrides []StressOverride) *Stress {
+	s := &Stress{}
+	for _, ov := range overrides {
+		if ov.Term == "" || ov.Phonemes == "" {
+			continue
+		}
+		s.Entries = append(s.Entries, StressEntry{
+			Term:     ov.Term,
+			Stressed: ov.Phonemes,
+		})
+	}
+	return s
 }
 
 // Save writes the global stress vocabulary to ai/stress.json, sorted by term
@@ -131,10 +150,8 @@ func (s *Stress) MergeChapter(other *Stress, chapterID int) []StressConflict {
 
 // addChapterID appends chapterID to s if not already present.
 func addChapterID(s []int, chapterID int) []int {
-	for _, v := range s {
-		if v == chapterID {
-			return s
-		}
+	if slices.Contains(s, chapterID) {
+		return s
 	}
 	return append(s, chapterID)
 }
@@ -153,40 +170,49 @@ func (s *Stress) Merge(other *Stress) []StressConflict {
 		if oe.Term == "" || oe.Stressed == "" {
 			continue
 		}
-		found := false
-		for i := range s.Entries {
-			if strings.EqualFold(s.Entries[i].Term, oe.Term) {
-				found = true
-				if !strings.EqualFold(s.Entries[i].Stressed, oe.Stressed) {
-					// If the existing entry is approved, silently keep it.
-					// Don't report a conflict — the user already decided.
-					if s.Entries[i].Approved {
-						break
-					}
-					if !conflictMap[strings.ToLower(oe.Term)] {
-						conflicts = append(conflicts, StressConflict{
-							Term:     oe.Term,
-							Variants: uniqueVariants(s.Entries[i].Stressed, oe.Stressed),
-						})
-						conflictMap[strings.ToLower(oe.Term)] = true
-					}
-				}
-				break
-			}
-		}
+		idx, found := s.findIndex(oe.Term)
 		if !found {
 			s.Entries = append(s.Entries, oe)
+			continue
+		}
+		// Conflict: same term, different stress.
+		if strings.EqualFold(s.Entries[idx].Stressed, oe.Stressed) {
+			continue
+		}
+		// If the existing entry is approved, silently keep it.
+		// Don't report a conflict — the user already decided.
+		if s.Entries[idx].Approved {
+			continue
+		}
+		if !conflictMap[strings.ToLower(oe.Term)] {
+			conflicts = append(conflicts, StressConflict{
+				Term:     oe.Term,
+				Variants: uniqueVariants(s.Entries[idx].Stressed, oe.Stressed),
+			})
+			conflictMap[strings.ToLower(oe.Term)] = true
 		}
 	}
 
 	return conflicts
 }
 
+// findIndex returns the index of the entry matching the given term (case-
+// insensitive), or (-1, false) if not found.
+func (s *Stress) findIndex(term string) (int, bool) {
+	for i := range s.Entries {
+		if strings.EqualFold(s.Entries[i].Term, term) {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
 // MergeAll merges multiple per-chapter stress stores into a single global
 // vocabulary. Returns the merged store and a list of conflicts for terms with
 // disagreeing stress marks across chapters.
-func MergeAll(chapters []*Stress) (merged *Stress, conflicts []StressConflict) {
-	merged = &Stress{}
+func MergeAll(chapters []*Stress) (*Stress, []StressConflict) {
+	merged := &Stress{}
+	var conflicts []StressConflict
 	for _, ch := range chapters {
 		c := merged.Merge(ch)
 		conflicts = append(conflicts, c...)
@@ -243,32 +269,11 @@ func (s *Stress) ResolveConflict(term, stressed string) {
 func (s *Stress) CountForChapter(chapterID int) int {
 	n := 0
 	for _, e := range s.Entries {
-		for _, c := range e.Chapters {
-			if c == chapterID {
-				n++
-				break
-			}
+		if slices.Contains(e.Chapters, chapterID) {
+			n++
 		}
 	}
 	return n
-}
-
-// NewStressFromOverrides builds a Stress store from pronunciation config
-// overrides. Each override becomes a StressEntry. This is used by the
-// --auto-stress flow to apply user-specified corrections on top of the
-// silero-stress model output.
-func NewStressFromOverrides(overrides []StressOverride) *Stress {
-	s := &Stress{}
-	for _, ov := range overrides {
-		if ov.Term == "" || ov.Phonemes == "" {
-			continue
-		}
-		s.Entries = append(s.Entries, StressEntry{
-			Term:     ov.Term,
-			Stressed: ov.Phonemes,
-		})
-	}
-	return s
 }
 
 // StressOverride is a user-specified stress correction (mirrors

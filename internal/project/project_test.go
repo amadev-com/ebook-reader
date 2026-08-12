@@ -28,7 +28,7 @@ func TestEnsureDirsCreatesAllStageDirs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := proj.EnsureDirs(); err != nil {
+	if err = proj.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
 	want := []string{
@@ -43,9 +43,9 @@ func TestEnsureDirsCreatesAllStageDirs(t *testing.T) {
 		proj.TTSDir(),
 		proj.AudioDir(),
 	}
+	var info os.FileInfo
 	for _, d := range want {
-		info, err := os.Stat(d)
-		if err != nil {
+		if info, err = os.Stat(d); err != nil {
 			t.Errorf("dir %s not created: %v", d, err)
 			continue
 		}
@@ -62,10 +62,10 @@ func TestEnsureDirsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := proj.EnsureDirs(); err != nil {
+	if err = proj.EnsureDirs(); err != nil {
 		t.Fatalf("first EnsureDirs: %v", err)
 	}
-	if err := proj.EnsureDirs(); err != nil {
+	if err = proj.EnsureDirs(); err != nil {
 		t.Fatalf("second EnsureDirs: %v", err)
 	}
 }

@@ -3,10 +3,13 @@ package cli
 import (
 	"fmt"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"ebook-reader/internal/chapters"
 	"ebook-reader/internal/project"
 	"ebook-reader/internal/translation"
 	"ebook-reader/internal/tts"
@@ -20,6 +23,17 @@ const shortChapterThreshold = 1500
 // largeDiffThreshold is the minimum raw-vs-current size difference (in bytes)
 // that gets a (!) marker in the diff column, indicating significant stripping.
 const largeDiffThreshold = 300
+
+// audioFormatMP3 is the default audio format when none is configured.
+const audioFormatMP3 = "mp3"
+
+// tableWidth is the number of '-' characters used as the separator line in
+// the chapters table.
+const tableWidth = 95
+
+// titleColWidth is the maximum number of characters displayed for a chapter
+// title in the chapters table.
+const titleColWidth = 40
 
 // newChaptersCmd implements `bookai chapters`: a per-chapter overview table
 // showing source size, glossary terms, characters, stress marks, translation
@@ -61,110 +75,147 @@ func runChapters(proj *project.Project) error {
 
 	audioFormat := proj.Cfg.TTS.AudioFormat
 	if audioFormat == "" {
-		audioFormat = "mp3"
+		audioFormat = audioFormatMP3
 	}
 	audioExt := audioExtension(audioFormat)
 
 	// Print header.
-	fmt.Printf("%-4s  %-8s  %-8s  %-7s  %-6s  %-6s  %-7s  %-9s  %-5s  %-5s  %s\n",
-		"ID", "Raw", "Size", "Diff", "Terms", "Chars", "Stress", "Trans", "SSML", "Audio", "Title")
-	fmt.Println(strings.Repeat("-", 95))
+	printChaptersTableHeader()
 
-	shortCount := 0
-	translatedCount := 0
-	ssmlCount := 0
-	audioCount := 0
-	strippedCount := 0
-
+	stats := &chaptersTableStats{}
 	for _, ch := range chs {
-		id := ch.ID
-		size := len(ch.Title) + len(ch.Source)
-		shortMark := ""
-		if size < shortChapterThreshold {
-			shortMark = " (!)"
-			shortCount++
-		}
-
-		// Raw size (before strip). If RawSize is 0, no stripping was done.
-		rawStr := "-"
-		diffStr := "-"
-		if ch.RawSize > 0 {
-			rawStr = fmt.Sprintf("%d", ch.RawSize)
-			diff := ch.RawSize - size
-			diffMark := ""
-			if diff > largeDiffThreshold {
-				diffMark = "!"
-				strippedCount++
-			}
-			if diff < 0 {
-				diffMark = "" // size grew somehow, no marker
-			}
-			diffStr = fmt.Sprintf("%d%s", diff, diffMark)
-		}
-
-		// Count glossary terms for this chapter.
-		terms := 0
-		for _, t := range glossary.Terms {
-			for _, c := range t.Chapters {
-				if c == id {
-					terms++
-					break
-				}
-			}
-		}
-
-		// Count characters for this chapter.
-		charCount := 0
-		for _, c := range chars.Characters {
-			for _, chID := range c.Chapters {
-				if chID == id {
-					charCount++
-					break
-				}
-			}
-		}
-
-		// Count stress entries for this chapter.
-		stressCount := stress.CountForChapter(id)
-
-		// Check translation.
-		transPath := translationPath(proj.TranslationDir(), id, targetLang)
-		transLen := "-"
-		if project.Exists(transPath) {
-			if data, err := os.ReadFile(transPath); err == nil {
-				transLen = fmt.Sprintf("%d", len(data))
-				translatedCount++
-			}
-		}
-
-		// Check SSML.
-		ssmlMark := "-"
-		ssmlPath := ssmlFilePath(proj.TTSDir(), id)
-		if project.Exists(ssmlPath) {
-			ssmlMark = "yes"
-			ssmlCount++
-		}
-
-		// Check audio.
-		audioMark := "-"
-		audioPath := audioPath(proj.AudioDir(), id, audioExt)
-		if project.Exists(audioPath) {
-			audioMark = "yes"
-			audioCount++
-		}
-
-		// Truncate title for display.
-		title := truncate(ch.Title, 40)
-
-		fmt.Printf("%-4d  %-8s  %-8s  %-7s  %-6d  %-6d  %-7d  %-9s  %-5s  %-5s  %s\n",
-			id, rawStr, fmt.Sprintf("%d%s", size, shortMark), diffStr,
-			terms, charCount, stressCount,
-			transLen, ssmlMark, audioMark, title)
+		printChapterRow(ch, glossary, chars, stress, proj, targetLang, audioExt, stats)
 	}
 
-	fmt.Println(strings.Repeat("-", 95))
-	fmt.Printf("total: %d chapters, %d short(!), %d stripped(!), %d translated, %d ssml, %d audio\n",
-		len(chs), shortCount, strippedCount, translatedCount, ssmlCount, audioCount)
-
+	printChaptersTableSummary(len(chs), stats)
 	return nil
+}
+
+// chaptersTableStats accumulates per-chapter counts for the summary line.
+type chaptersTableStats struct {
+	shortCount      int
+	translatedCount int
+	ssmlCount       int
+	audioCount      int
+	strippedCount   int
+}
+
+// printChaptersTableHeader prints the column header and separator line.
+func printChaptersTableHeader() {
+	fmt.Fprintf(os.Stdout, "%-4s  %-8s  %-8s  %-7s  %-6s  %-6s  %-7s  %-9s  %-5s  %-5s  %s\n",
+		"ID", "Raw", "Size", "Diff", "Terms", "Chars", "Stress", "Trans", "SSML", "Audio", "Title")
+	fmt.Fprintln(os.Stdout, strings.Repeat("-", tableWidth))
+}
+
+// printChaptersTableSummary prints the separator line and summary counts.
+func printChaptersTableSummary(total int, stats *chaptersTableStats) {
+	fmt.Fprintln(os.Stdout, strings.Repeat("-", tableWidth))
+	fmt.Fprintf(os.Stdout, "total: %d chapters, %d short(!), %d stripped(!), %d translated, %d ssml, %d audio\n",
+		total, stats.shortCount, stats.strippedCount, stats.translatedCount, stats.ssmlCount, stats.audioCount)
+}
+
+// printChapterRow renders a single chapter row and updates the stats counters.
+func printChapterRow(
+	ch chapters.Chapter,
+	glossary *translation.Glossary,
+	chars *translation.Characters,
+	stress *tts.Stress,
+	proj *project.Project,
+	targetLang, audioExt string,
+	stats *chaptersTableStats,
+) {
+	id := ch.ID
+	size := len(ch.Title) + len(ch.Source)
+	shortMark := ""
+	if size < shortChapterThreshold {
+		shortMark = " (!)"
+		stats.shortCount++
+	}
+
+	// Raw size (before strip). If RawSize is 0, no stripping was done.
+	rawStr, diffStr := chapterSizeColumns(ch, size, stats)
+
+	terms := countGlossaryTerms(glossary, id)
+	charCount := countCharacters(chars, id)
+	stressCount := stress.CountForChapter(id)
+
+	transLen := chapterTransLen(proj, id, targetLang, stats)
+	ssmlMark := chapterFileMark(proj, ssmlFilePath(proj.TTSDir(), id), &stats.ssmlCount)
+	audioMark := chapterFileMark(proj, audioPath(proj.AudioDir(), id, audioExt), &stats.audioCount)
+
+	title := truncate(ch.Title, titleColWidth)
+
+	fmt.Fprintf(os.Stdout, "%-4d  %-8s  %-8s  %-7s  %-6d  %-6d  %-7d  %-9s  %-5s  %-5s  %s\n",
+		id, rawStr, fmt.Sprintf("%d%s", size, shortMark), diffStr,
+		terms, charCount, stressCount,
+		transLen, ssmlMark, audioMark, title)
+}
+
+// chapterSizeColumns returns the raw and diff column strings for a chapter.
+func chapterSizeColumns(ch chapters.Chapter, size int, stats *chaptersTableStats) (string, string) {
+	rawStr := "-"
+	diffStr := "-"
+	if ch.RawSize > 0 {
+		rawStr = strconv.Itoa(ch.RawSize)
+		diff := ch.RawSize - size
+		diffMark := ""
+		if diff > largeDiffThreshold {
+			diffMark = "!"
+			stats.strippedCount++
+		}
+		if diff < 0 {
+			diffMark = "" // size grew somehow, no marker
+		}
+		diffStr = fmt.Sprintf("%d%s", diff, diffMark)
+	}
+	return rawStr, diffStr
+}
+
+// countGlossaryTerms returns the number of glossary terms tagged with the
+// given chapter ID.
+func countGlossaryTerms(glossary *translation.Glossary, id int) int {
+	terms := 0
+	for _, t := range glossary.Terms {
+		if slices.Contains(t.Chapters, id) {
+			terms++
+		}
+	}
+	return terms
+}
+
+// countCharacters returns the number of characters tagged with the given
+// chapter ID.
+func countCharacters(chars *translation.Characters, id int) int {
+	charCount := 0
+	for _, c := range chars.Characters {
+		if slices.Contains(c.Chapters, id) {
+			charCount++
+		}
+	}
+	return charCount
+}
+
+// chapterTransLen returns the translation file length string ("-" if missing)
+// and increments the translated counter if the file exists and is readable.
+func chapterTransLen(proj *project.Project, id int, targetLang string, stats *chaptersTableStats) string {
+	transPath := translationPath(proj.TranslationDir(), id, targetLang)
+	if !project.Exists(transPath) {
+		return "-"
+	}
+	data, err := os.ReadFile(transPath)
+	if err != nil {
+		return "-"
+	}
+	stats.translatedCount++
+	return strconv.Itoa(len(data))
+}
+
+// chapterFileMark returns "yes" if the file exists (incrementing the counter
+// via the pointer) or "-" otherwise.
+func chapterFileMark(_ *project.Project, path string, count *int) string {
+	if project.Exists(path) {
+		*count++
+		return "yes"
+	}
+	return "-"
 }

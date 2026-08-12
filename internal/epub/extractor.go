@@ -9,6 +9,10 @@ import (
 	"golang.org/x/net/html"
 )
 
+// navElement is the HTML tag name for the EPUB nav element, also used as the
+// EPUB3 manifest "nav" property and as a SourceKind value in TOC entries.
+const navElement = "nav"
+
 // Block is a semantic unit of a spine item's body: a heading, paragraph, list
 // item, blockquote, etc. Headings carry their Level (1-6) and an Anchor (the
 // id attribute of the heading or its nearest ancestor with an id) so TOC
@@ -43,87 +47,8 @@ func ExtractBlocks(xhtml []byte) ([]Block, error) {
 // id attribute; headings inherit it unless they have their own id.
 func walkBody(n *html.Node, currentAnchor string, out *[]Block) {
 	if n.Type == html.ElementNode {
-		switch n.Data {
-		case "script", "style", "head", "nav", "svg":
-			// Skip non-content elements. (nav is skipped because TOC nav
-			// documents are handled separately; in-content nav is rare.)
-			return
-		case "h1", "h2", "h3", "h4", "h5", "h6":
-			level := int(n.Data[1] - '0')
-			anchor := getAttr(n, "id")
-			if anchor == "" {
-				anchor = currentAnchor
-			}
-			*out = append(*out, Block{
-				Kind:   "heading",
-				Level:  level,
-				Anchor: anchor,
-				Text:   collapseWS(textOf(n)),
-			})
-			return
-		case "p":
-			text := collapseWS(textOf(n))
-			if text != "" {
-				*out = append(*out, Block{Kind: "paragraph", Anchor: currentAnchor, Text: text})
-			}
-			return
-		case "li":
-			text := collapseWS(textOf(n))
-			if text != "" {
-				*out = append(*out, Block{Kind: "list_item", Anchor: currentAnchor, Text: text})
-			}
-			return
-		case "blockquote":
-			// Recurse into children so nested <p> become paragraphs, but
-			// record the blockquote's id as the anchor context.
-			anchor := getAttr(n, "id")
-			if anchor == "" {
-				anchor = currentAnchor
-			}
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				walkBody(c, anchor, out)
-			}
-			return
-		case "pre":
-			text := collapseWS(textOf(n))
-			if text != "" {
-				*out = append(*out, Block{Kind: "pre", Anchor: currentAnchor, Text: text})
-			}
-			return
-		case "hr":
-			*out = append(*out, Block{Kind: "hr"})
-			return
-		case "img":
-			alt := getAttr(n, "alt")
-			*out = append(*out, Block{Kind: "image", Alt: alt})
-			return
-		case "div", "section", "article", "main", "header", "footer", "aside", "figure", "figcaption":
-			// Container elements: descend, propagating any id as the anchor.
-			anchor := getAttr(n, "id")
-			if anchor == "" {
-				anchor = currentAnchor
-			}
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				walkBody(c, anchor, out)
-			}
-			return
-		case "a", "span", "em", "strong", "b", "i", "u", "small", "sub", "sup",
-			"code", "abbr", "cite", "q", "mark", "del", "ins", "s", "time":
-			// Inline elements: their text is captured by the enclosing
-			// block-level element's textOf call, so we don't emit a block
-			// here. We must NOT descend, or text would be duplicated.
-			return
-		default:
-			// Unknown element: descend conservatively, propagating anchor.
-			anchor := getAttr(n, "id")
-			if anchor == "" {
-				anchor = currentAnchor
-			}
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				walkBody(c, anchor, out)
-			}
-			return
-		}
+		walkElement(n, currentAnchor, out)
+		return
 	}
 	// Text nodes outside any block element: only emit if non-trivial, to
 	// avoid capturing inter-element whitespace. This is a safety net for
@@ -136,6 +61,93 @@ func walkBody(n *html.Node, currentAnchor string, out *[]Block) {
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		walkBody(c, currentAnchor, out)
+	}
+}
+
+// walkElement handles a single element node, dispatching on the tag name to
+// emit the appropriate Block or recurse into children.
+func walkElement(n *html.Node, currentAnchor string, out *[]Block) {
+	switch n.Data {
+	case "script", "style", "head", navElement, "svg":
+		// Skip non-content elements. (nav is skipped because TOC nav
+		// documents are handled separately; in-content nav is rare.)
+		return
+	case "h1", "h2", "h3", "h4", "h5", "h6":
+		handleHeadingBlock(n, currentAnchor, out)
+		return
+	case "p":
+		handleTextBlock(n, currentAnchor, out, "paragraph")
+		return
+	case "li":
+		handleTextBlock(n, currentAnchor, out, "list_item")
+		return
+	case "blockquote":
+		// Recurse into children so nested <p> become paragraphs, but
+		// record the blockquote's id as the anchor context.
+		handleContainerBlock(n, currentAnchor, out)
+		return
+	case "pre":
+		handleTextBlock(n, currentAnchor, out, "pre")
+		return
+	case "hr":
+		*out = append(*out, Block{Kind: "hr"})
+		return
+	case "img":
+		alt := getAttr(n, "alt")
+		*out = append(*out, Block{Kind: "image", Alt: alt})
+		return
+	case "div", "section", "article", "main", "header", "footer", "aside", "figure", "figcaption":
+		// Container elements: descend, propagating any id as the anchor.
+		handleContainerBlock(n, currentAnchor, out)
+		return
+	case "a", "span", "em", "strong", "b", "i", "u", "small", "sub", "sup",
+		"code", "abbr", "cite", "q", "mark", "del", "ins", "s", "time":
+		// Inline elements: their text is captured by the enclosing
+		// block-level element's textOf call, so we don't emit a block
+		// here. We must NOT descend, or text would be duplicated.
+		return
+	default:
+		// Unknown element: descend conservatively, propagating anchor.
+		handleContainerBlock(n, currentAnchor, out)
+		return
+	}
+}
+
+// handleHeadingBlock emits a heading Block for h1-h6 elements, using the
+// element's own id as the anchor (falling back to the inherited anchor).
+func handleHeadingBlock(n *html.Node, currentAnchor string, out *[]Block) {
+	level := int(n.Data[1] - '0')
+	anchor := getAttr(n, "id")
+	if anchor == "" {
+		anchor = currentAnchor
+	}
+	*out = append(*out, Block{
+		Kind:   "heading",
+		Level:  level,
+		Anchor: anchor,
+		Text:   collapseWS(textOf(n)),
+	})
+}
+
+// handleTextBlock emits a text Block (paragraph, list_item, or pre) if the
+// element's collapsed text is non-empty.
+func handleTextBlock(n *html.Node, currentAnchor string, out *[]Block, kind string) {
+	text := collapseWS(textOf(n))
+	if text != "" {
+		*out = append(*out, Block{Kind: kind, Anchor: currentAnchor, Text: text})
+	}
+}
+
+// handleContainerBlock descends into an element's children, propagating any id
+// as the anchor context. Used for container elements (div, section, blockquote,
+// etc.) and unknown elements.
+func handleContainerBlock(n *html.Node, currentAnchor string, out *[]Block) {
+	anchor := getAttr(n, "id")
+	if anchor == "" {
+		anchor = currentAnchor
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		walkBody(c, anchor, out)
 	}
 }
 

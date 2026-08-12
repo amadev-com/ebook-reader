@@ -40,11 +40,11 @@ type SpineItemRef struct {
 
 // rawOPF mirrors the OPF XML structure for unmarshalling.
 type rawOPF struct {
-	XMLName   xml.Name    `xml:"package"`
-	Metadata  rawMetadata `xml:"metadata"`
-	Manifest  rawManifest `xml:"manifest"`
-	Spine     rawSpine    `xml:"spine"`
-	Version   string      `xml:"version,attr"`
+	XMLName  xml.Name    `xml:"package"`
+	Metadata rawMetadata `xml:"metadata"`
+	Manifest rawManifest `xml:"manifest"`
+	Spine    rawSpine    `xml:"spine"`
+	Version  string      `xml:"version,attr"`
 }
 
 type rawMetadata struct {

@@ -1,9 +1,10 @@
 package translation
 
 import (
-	"ebook-reader/internal/config"
 	"fmt"
 	"strings"
+
+	"ebook-reader/internal/config"
 )
 
 // ChapterInfo is the metadata about a chapter passed to prompt builders.
@@ -98,7 +99,8 @@ type ChapterText struct {
 // translator persona, the glossary block, and previous chapter context.
 func System(glossaryBlock, prevContext string) string {
 	var b strings.Builder
-	b.WriteString(`You are a professional literary translator translating an English book into Russian. Your translation must be natural, fluent Russian that reads as if originally written in that language — not a word-by-word rendering.
+	b.WriteString(
+		`You are a professional literary translator translating an English book into Russian. Your translation must be natural, fluent Russian that reads as if originally written in that language — not a word-by-word rendering.
 
 Rules:
 - Preserve the author's tone, style, and narrative voice.
@@ -108,7 +110,8 @@ Rules:
 - Do not add commentary, notes, or explanations. Output ONLY the translated text.
 - If you discover a new recurring term not in the glossary, translate it consistently within this chapter. The system will extract new terms separately.
 - Write ALL numbers as words in Russian, with correct gender and case agreement — including numbers in chapter titles. For example: "Глава 384" → "Глава триста восемьдесят четыре", "5 лет" → "пять лет", "5-го этажа" → "пятого этажа", "300 человек" → "триста человек", "2 раза" → "два раза". Never leave digits in the translated text — the text-to-speech engine cannot read numbers.
-- NEVER leave Latin characters in the output. All text must be in Cyrillic. Abbreviations and acronyms must be TRANSLATED to their Russian meaning, not transliterated letter-by-letter. For example: "MVS" → "МВС" is WRONG (transliteration); "VR" → "ВР" is WRONG. Instead translate the meaning: "MVS" (My Vampire System) → "Моя Система Вампира", "VR" (Virtual Reality) → "виртуальная реальность", "AI" → "искусственный интеллект", "HP" → "здоровье", "NPC" → "неигровой персонаж". If an abbreviation is a proper name with no Russian equivalent, use transliteration but with Cyrillic letters only.`)
+- NEVER leave Latin characters in the output. All text must be in Cyrillic. Abbreviations and acronyms must be TRANSLATED to their Russian meaning, not transliterated letter-by-letter. For example: "MVS" → "МВС" is WRONG (transliteration); "VR" → "ВР" is WRONG. Instead translate the meaning: "MVS" (My Vampire System) → "Моя Система Вампира", "VR" (Virtual Reality) → "виртуальная реальность", "AI" → "искусственный интеллект", "HP" → "здоровье", "NPC" → "неигровой персонаж". If an abbreviation is a proper name with no Russian equivalent, use transliteration but with Cyrillic letters only.`,
+	)
 	if glossaryBlock != "" {
 		b.WriteString("\n\n")
 		b.WriteString(glossaryBlock)
@@ -125,7 +128,11 @@ Rules:
 // text (chapter source starts with the title line). Including it twice would
 // cause the translator to duplicate it in the output.
 func User(ch ChapterInfo, source string) string {
-	return fmt.Sprintf("Translate chapter %d. The source text begins with the chapter title — translate it as part of the text.\n\n%s", ch.ID, source)
+	return fmt.Sprintf(
+		"Translate chapter %d. The source text begins with the chapter title — translate it as part of the text.\n\n%s",
+		ch.ID,
+		source,
+	)
 }
 
 // --- Summary prompts (post-translation memory) ---
@@ -164,7 +171,11 @@ Only extract terms that are clearly meaningful and likely to recur. Skip common 
 
 // NewTermsUser builds the user prompt for new-term extraction.
 func NewTermsUser(_ ChapterInfo, source, translation string) string {
-	return fmt.Sprintf("Source (English):\n\n%s\n\nTranslation (Russian):\n\n%s\n\nExtract new glossary terms as JSON.", source, translation)
+	return fmt.Sprintf(
+		"Source (English):\n\n%s\n\nTranslation (Russian):\n\n%s\n\nExtract new glossary terms as JSON.",
+		source,
+		translation,
+	)
 }
 
 // --- Glossary merge/unify prompts (bookai analyze — post-batch merge step) ---
@@ -198,9 +209,16 @@ The "role" field for characters should be one of: "protagonist", "antagonist", "
 // per-chapter extraction results serialized as JSON, plus the locked terms
 // from config overrides. If existing glossary/characters are provided, they
 // are included so the AI can merge new entries with the existing vocabulary.
-func GlossaryMergeUser(perChapterResults string, lockedTerms string, existingGlossary string, existingCharacters string) string {
+func GlossaryMergeUser(
+	perChapterResults string,
+	lockedTerms string,
+	existingGlossary string,
+	existingCharacters string,
+) string {
 	var b strings.Builder
-	b.WriteString("Merge and unify these per-chapter glossary extraction results into a single clean glossary + character list.\n\n")
+	b.WriteString(
+		"Merge and unify these per-chapter glossary extraction results into a single clean glossary + character list.\n\n",
+	)
 	if lockedTerms != "" {
 		b.WriteString("LOCKED TRANSLATIONS — you MUST use these exact translations for the matching terms. ")
 		b.WriteString("Do not change them:\n\n")
@@ -209,7 +227,9 @@ func GlossaryMergeUser(perChapterResults string, lockedTerms string, existingGlo
 	}
 	if existingGlossary != "" || existingCharacters != "" {
 		b.WriteString("EXISTING VOCABULARY — merge the new per-chapter results with these existing entries. ")
-		b.WriteString("Keep existing entries that are not contradicted by new results, and add new entries from the per-chapter results. ")
+		b.WriteString(
+			"Keep existing entries that are not contradicted by new results, and add new entries from the per-chapter results. ",
+		)
 		b.WriteString("If a term or character appears in both, prefer the more complete description/translation.\n\n")
 		if existingCharacters != "" {
 			b.WriteString("Existing characters (JSON):\n")
@@ -224,7 +244,9 @@ func GlossaryMergeUser(perChapterResults string, lockedTerms string, existingGlo
 	}
 	b.WriteString("Per-chapter extraction results (JSON array, one object per chapter):\n\n")
 	b.WriteString(perChapterResults)
-	b.WriteString("\n\nReturn the merged and unified JSON now. Remember: characters = ONLY real persons, terms = everything else WITHOUT characters.")
+	b.WriteString(
+		"\n\nReturn the merged and unified JSON now. Remember: characters = ONLY real persons, terms = everything else WITHOUT characters.",
+	)
 	return b.String()
 }
 
@@ -272,10 +294,14 @@ If no words need stress marks, return {"entries": []}.`
 // marks.
 func StressUser(chapterText string, overrides []config.PronunciationOverride) string {
 	var b strings.Builder
-	b.WriteString("Scan this Russian chapter text and identify words with non-obvious or ambiguous stress. Provide the stressed form with '+' before the stressed vowel for each problematic word.\n\n")
+	b.WriteString(
+		"Scan this Russian chapter text and identify words with non-obvious or ambiguous stress. Provide the stressed form with '+' before the stressed vowel for each problematic word.\n\n",
+	)
 
 	if len(overrides) > 0 {
-		b.WriteString("The following stress marks are mandatory (already defined by the user — include them in your output):\n")
+		b.WriteString(
+			"The following stress marks are mandatory (already defined by the user — include them in your output):\n",
+		)
 		for _, ov := range overrides {
 			fmt.Fprintf(&b, "- %s → %s\n", ov.Term, ov.Phonemes)
 		}

@@ -24,7 +24,7 @@ func (p *Project) EnsureDirs() error {
 		p.AudioDir(),
 	}
 	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o750); err != nil {
 			return fmt.Errorf("create dir %s: %w", d, err)
 		}
 	}
@@ -45,7 +45,7 @@ func SaveJSON(path string, v any) error {
 		return fmt.Errorf("marshal %s: %w", path, err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err = os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
@@ -57,7 +57,7 @@ func LoadJSON(path string, v any) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	if err := json.Unmarshal(data, v); err != nil {
+	if err = json.Unmarshal(data, v); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
 	return nil
@@ -65,10 +65,10 @@ func LoadJSON(path string, v any) error {
 
 // SaveBytes writes raw bytes to path, creating parent directories as needed.
 func SaveBytes(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create dir for %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil

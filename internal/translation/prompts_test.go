@@ -1,9 +1,10 @@
 package translation
 
 import (
-	"ebook-reader/internal/config"
 	"strings"
 	"testing"
+
+	"ebook-reader/internal/config"
 )
 
 func TestGlossaryExtractionUser(t *testing.T) {

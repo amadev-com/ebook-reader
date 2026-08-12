@@ -73,10 +73,10 @@ func runVerifyGlossary(_ context.Context, proj *project.Project) error {
 	targetLang := proj.Cfg.Languages.Target
 	var violations []GlossaryViolation
 
+	var data []byte
 	for _, chID := range translatedIDs {
 		path := translationPath(proj.TranslationDir(), chID, targetLang)
-		data, err := os.ReadFile(path)
-		if err != nil {
+		if data, err = os.ReadFile(path); err != nil {
 			return fmt.Errorf("read translation for chapter %d: %w", chID, err)
 		}
 		translationText := string(data)
@@ -101,24 +101,28 @@ func runVerifyGlossary(_ context.Context, proj *project.Project) error {
 
 	// Report.
 	if len(violations) == 0 {
-		fmt.Printf("No violations found. All %d glossary terms are consistently translated across %d chapters.\n",
-			len(glossary.Terms), len(translatedIDs))
+		fmt.Fprintf(
+			os.Stdout,
+			"No violations found. All %d glossary terms are consistently translated across %d chapters.\n",
+			len(glossary.Terms),
+			len(translatedIDs),
+		)
 		return nil
 	}
 
-	fmt.Printf("Found %d glossary violation(s) across %d translated chapters:\n\n",
+	fmt.Fprintf(os.Stdout, "Found %d glossary violation(s) across %d translated chapters:\n\n",
 		len(violations), len(translatedIDs))
 	for _, v := range violations {
-		fmt.Printf("  Chapter %d: %q appears untranslated (should be %q)\n",
+		fmt.Fprintf(os.Stdout, "  Chapter %d: %q appears untranslated (should be %q)\n",
 			v.ChapterID, v.SourceTerm, v.ExpectedTarget)
 	}
 
 	// Write violations to ai/glossary_violations.json for review.
 	violationsPath := filepath.Join(proj.AIDir(), "glossary_violations.json")
-	if err := project.SaveJSON(violationsPath, violations); err != nil {
+	if err = project.SaveJSON(violationsPath, violations); err != nil {
 		return fmt.Errorf("write violations: %w", err)
 	}
-	fmt.Printf("\nViolations written to %s\n", violationsPath)
+	fmt.Fprintf(os.Stdout, "\nViolations written to %s\n", violationsPath)
 	return nil
 }
 

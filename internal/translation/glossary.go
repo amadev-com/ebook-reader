@@ -3,10 +3,19 @@ package translation
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	"ebook-reader/internal/project"
+)
+
+// Glossary term type constants used in GlossaryTerm.Type and the prompt
+// formatting typeOrder slice.
+const (
+	typeCharacter    = "character"
+	typeOrganization = "organization"
+	TypeTerm         = "term"
 )
 
 // Glossary is the persistent terminology store (ai/glossary.json). It maps
@@ -111,12 +120,12 @@ func (g *Glossary) WithCharacters(chars *Characters) *Glossary {
 		merged.Terms = append(merged.Terms, GlossaryTerm{
 			Source: c.Name,
 			Target: c.Translation,
-			Type:   "character",
+			Type:   typeCharacter,
 		})
 	}
 	// Add non-character terms, skipping any that duplicate a character entry.
 	for _, t := range g.Terms {
-		if t.Type == "character" {
+		if t.Type == typeCharacter {
 			continue // characters come from chars, not glossary
 		}
 		if _, exists := merged.Find(t.Source); exists {
@@ -175,7 +184,7 @@ func (g *Glossary) promptBlockForTerms(terms []GlossaryTerm) string {
 		return ""
 	}
 	// Group by type, preserving a stable type order.
-	typeOrder := []string{"character", "place", "organization", "title", "term"}
+	typeOrder := []string{typeCharacter, "place", typeOrganization, "title", TypeTerm}
 	byType := make(map[string][]GlossaryTerm)
 	for _, t := range terms {
 		byType[t.Type] = append(byType[t.Type], t)
@@ -194,13 +203,7 @@ func (g *Glossary) promptBlockForTerms(terms []GlossaryTerm) string {
 	}
 	// Any types not in typeOrder.
 	for ty, ts := range byType {
-		known := false
-		for _, k := range typeOrder {
-			if k == ty {
-				known = true
-				break
-			}
-		}
+		known := slices.Contains(typeOrder, ty)
 		if known {
 			continue
 		}
@@ -214,12 +217,7 @@ func (g *Glossary) promptBlockForTerms(terms []GlossaryTerm) string {
 
 // containsInt reports whether s contains v.
 func containsInt(s []int, v int) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, v)
 }
 
 // Characters is the persistent character store (ai/characters.json). It is a

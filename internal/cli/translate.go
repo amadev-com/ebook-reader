@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -14,6 +15,10 @@ import (
 	"ebook-reader/internal/project"
 	"ebook-reader/internal/translation"
 )
+
+// prevSummaryCount is the number of previous chapter summaries loaded as
+// context for each translation request.
+const prevSummaryCount = 2
 
 // newTranslateCmd implements `bookai translate`: translates chapters to the
 // target language using the OpenAI Batch API for cost-effective processing.
@@ -53,7 +58,7 @@ func newTranslateCmd() *cobra.Command {
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "translate only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "translate a range of chapter ids, e.g. 5-12")
 	cmd.Flags().BoolVar(&skipMem, "skip-memory", false, "don't load previous chapter summaries as context")
-	cmd.Flags().IntVar(&pollInt, "poll-interval", 60, "seconds between batch status polls")
+	cmd.Flags().IntVar(&pollInt, "poll-interval", defaultPollInterval, "seconds between batch status polls")
 	return cmd
 }
 
@@ -66,9 +71,17 @@ func newTranslateCmd() *cobra.Command {
 // Summaries are generated in the analyze step (not here) so they're available
 // as context at batch submission time. No post-processing is done after
 // translation — the glossary is finalized by analyze.
-func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, chapter int, chRange string, skipMem bool, pollInt int) error {
-	if pollInt < 10 {
-		pollInt = 60
+func runTranslate(
+	ctx context.Context,
+	proj *project.Project,
+	force, cont bool,
+	chapter int,
+	chRange string,
+	skipMem bool,
+	pollInt int,
+) error {
+	if pollInt < minPollInterval {
+		pollInt = defaultPollInterval
 	}
 
 	// --continue: resume polling an existing batch.
@@ -77,14 +90,14 @@ func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, 
 	}
 
 	// Check for an existing pending batch.
-	if state, _ := translation.LoadBatchState(proj.AIDir(), "translate"); state != nil {
+	if state, _ := translation.LoadBatchState(proj.AIDir(), translation.BatchTypeTranslate); state != nil {
 		if !translation.IsTerminalStatus(state.Status) {
 			slog.Info("found pending translate batch, resuming polling (use --force to start a new one)",
 				"batch_id", state.BatchID, "status", state.Status)
 			return pollTranslateBatch(ctx, proj, state, pollInt)
 		}
 		slog.Info("cleaning up completed batch state from previous run", "batch_id", state.BatchID)
-		_ = translation.DeleteBatchState(proj.AIDir(), "translate")
+		_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypeTranslate)
 	}
 
 	// Load all chapters to know the range.
@@ -98,26 +111,14 @@ func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, 
 
 	// Determine which chapters to translate.
 	ids, err := parseChapterFilter(chapter, chRange, len(chs))
-	if err != nil {
+	if err != nil && !errors.Is(err, errNoChapterFilter) {
 		return err
 	}
-	writeAll := ids == nil
+	writeAll := errors.Is(err, errNoChapterFilter)
 
 	// Filter chapters that need translation.
-	var toTranslate []chapters.Chapter
-	skipped := 0
 	targetLang := proj.Cfg.Languages.Target
-	for _, ch := range chs {
-		if !writeAll && !ids[ch.ID] {
-			continue
-		}
-		translationPath := translationPath(proj.TranslationDir(), ch.ID, targetLang)
-		if project.Exists(translationPath) && !force {
-			skipped++
-			continue
-		}
-		toTranslate = append(toTranslate, ch)
-	}
+	toTranslate, skipped := filterTranslateChapters(chs, proj, ids, writeAll, targetLang, force)
 	if len(toTranslate) == 0 {
 		slog.Info("no chapters to translate", "skipped", skipped)
 		return nil
@@ -141,6 +142,101 @@ func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, 
 
 	// Build batch requests: one per chapter.
 	model := proj.Cfg.OpenAI.TranslationModel
+	reqs, chapterIDs, err := buildTranslateRequests(toTranslate, glossary, proj, model, skipMem)
+	if err != nil {
+		return err
+	}
+
+	state, err := submitTranslateBatch(ctx, proj, reqs, chapterIDs, model)
+	if err != nil {
+		return err
+	}
+
+	// Poll until completion.
+	return pollTranslateBatch(ctx, proj, state, pollInt)
+}
+
+// submitTranslateBatch builds the JSONL, submits the batch to OpenAI, and
+// persists the batch state.
+func submitTranslateBatch(
+	ctx context.Context,
+	proj *project.Project,
+	reqs []translation.BatchRequest,
+	chapterIDs []int,
+	model string,
+) (*translation.BatchState, error) {
+	jsonlData, err := translation.BuildJSONL(reqs)
+	if err != nil {
+		return nil, fmt.Errorf("build batch JSONL: %w", err)
+	}
+	slog.Info("built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
+
+	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
+	if err != nil {
+		return nil, err
+	}
+
+	batchID, inputFileID, err := batchClient.SubmitBatch(ctx, jsonlData, map[string]string{
+		translation.BatchMetadataKeyType:    translation.BatchTypeTranslate,
+		translation.BatchMetadataKeyProject: proj.Cfg.Project,
+	})
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
+
+	state := &translation.BatchState{
+		BatchID:     batchID,
+		InputFileID: inputFileID,
+		Type:        translation.BatchTypeTranslate,
+		Model:       model,
+		Endpoint:    translation.BatchEndpoint,
+		Status:      translation.BatchStatusValidating,
+		ChapterIDs:  chapterIDs,
+		CreatedAt:   time.Now(),
+	}
+	if err = translation.SaveBatchState(proj.AIDir(), state); err != nil {
+		return nil, fmt.Errorf("save batch state: %w", err)
+	}
+	return state, nil
+}
+
+// filterTranslateChapters selects chapters that need translation (don't
+// already have a translation file unless force is set). Returns the chapters
+// to translate and the number skipped.
+func filterTranslateChapters(
+	chs []chapters.Chapter,
+	proj *project.Project,
+	ids map[int]bool,
+	writeAll bool,
+	targetLang string,
+	force bool,
+) ([]chapters.Chapter, int) {
+	var toTranslate []chapters.Chapter
+	skipped := 0
+	for _, ch := range chs {
+		if !writeAll && !ids[ch.ID] {
+			continue
+		}
+		translationPath := translationPath(proj.TranslationDir(), ch.ID, targetLang)
+		if project.Exists(translationPath) && !force {
+			skipped++
+			continue
+		}
+		toTranslate = append(toTranslate, ch)
+	}
+	return toTranslate, skipped
+}
+
+// buildTranslateRequests builds batch requests (one per chapter) with
+// per-chapter glossary filtering and previous chapter summaries as context.
+func buildTranslateRequests(
+	toTranslate []chapters.Chapter,
+	glossary *translation.Glossary,
+	proj *project.Project,
+	model string,
+	skipMem bool,
+) ([]translation.BatchRequest, []int, error) {
 	reqs := make([]translation.BatchRequest, len(toTranslate))
 	chapterIDs := make([]int, len(toTranslate))
 	for i, ch := range toTranslate {
@@ -151,9 +247,9 @@ func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, 
 
 		prevContext := ""
 		if !skipMem {
-			prevContext, err = translation.PreviousSummaries(proj.MemoryDir(), ch.ID, 2)
-			if err != nil {
-				return fmt.Errorf("load previous summaries: %w", err)
+			var err error
+			if prevContext, err = translation.PreviousSummaries(proj.MemoryDir(), ch.ID, prevSummaryCount); err != nil {
+				return nil, nil, fmt.Errorf("load previous summaries: %w", err)
 			}
 		}
 		systemPrompt := translation.System(glossaryBlock, prevContext)
@@ -166,56 +262,19 @@ func runTranslate(ctx context.Context, proj *project.Project, force, cont bool, 
 		}
 		chapterIDs[i] = ch.ID
 	}
-
-	// Build JSONL.
-	jsonlData, err := translation.BuildJSONL(reqs)
-	if err != nil {
-		return fmt.Errorf("build batch JSONL: %w", err)
-	}
-	slog.Info("built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
-
-	// Create the batch client and submit.
-	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
-	if err != nil {
-		return err
-	}
-
-	batchID, inputFileID, err := batchClient.SubmitBatch(ctx, jsonlData, map[string]string{
-		"type":    "translate",
-		"project": proj.Cfg.Project,
-	})
-	if err != nil {
-		return err
-	}
-	slog.Info("batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
-
-	// Save batch state.
-	state := &translation.BatchState{
-		BatchID:     batchID,
-		InputFileID: inputFileID,
-		Type:        "translate",
-		Model:       model,
-		Endpoint:    "/v1/responses",
-		Status:      "validating",
-		ChapterIDs:  chapterIDs,
-		CreatedAt:   time.Now(),
-	}
-	if err := translation.SaveBatchState(proj.AIDir(), state); err != nil {
-		return fmt.Errorf("save batch state: %w", err)
-	}
-
-	// Poll until completion.
-	return pollTranslateBatch(ctx, proj, state, pollInt)
+	return reqs, chapterIDs, nil
 }
 
 // resumeTranslateBatch loads the persisted batch state and resumes polling.
 func resumeTranslateBatch(ctx context.Context, proj *project.Project, pollInt int) error {
-	state, err := translation.LoadBatchState(proj.AIDir(), "translate")
+	state, err := translation.LoadBatchState(proj.AIDir(), translation.BatchTypeTranslate)
 	if err != nil {
+		if errors.Is(err, translation.ErrBatchStateNotFound) {
+			return fmt.Errorf(
+				"no pending translate batch found — run `bookai translate` without --continue to start a new one",
+			)
+		}
 		return fmt.Errorf("load batch state: %w", err)
-	}
-	if state == nil {
-		return fmt.Errorf("no pending translate batch found — run `bookai translate` without --continue to start a new one")
 	}
 	slog.Info("resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
 	return pollTranslateBatch(ctx, proj, state, pollInt)
@@ -224,66 +283,26 @@ func resumeTranslateBatch(ctx context.Context, proj *project.Project, pollInt in
 // pollTranslateBatch polls the batch status every pollInt seconds. When the
 // batch reaches a terminal status, it downloads results and processes them.
 func pollTranslateBatch(ctx context.Context, proj *project.Project, state *translation.BatchState, pollInt int) error {
-	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
+	batchClient, err := pollBatchUntilTerminal(ctx, proj, state, pollInt, "batch")
 	if err != nil {
 		return err
 	}
-
-	for {
-		if ctx.Err() != nil {
-			slog.Info("interrupted by signal", "batch_id", state.BatchID, "last_status", state.Status)
-			return ctx.Err()
-		}
-
-		info, err := batchClient.PollBatch(ctx, state.BatchID)
-		if err != nil {
-			return fmt.Errorf("poll batch: %w", err)
-		}
-
-		state.Status = info.Status
-		state.OutputFileID = info.OutputFileID
-		state.ErrorFileID = info.ErrorFileID
-		state.Total = info.Total
-		state.Completed = info.Completed
-		state.Failed = info.Failed
-		_ = translation.SaveBatchState(proj.AIDir(), state)
-
-		slog.Info("batch status",
-			"batch_id", state.BatchID, "status", info.Status,
-			"completed", info.Completed, "failed", info.Failed, "total", info.Total)
-
-		if translation.IsTerminalStatus(info.Status) {
-			break
-		}
-
-		slog.Info("waiting for batch", "poll_seconds", pollInt)
-		select {
-		case <-ctx.Done():
-			slog.Info("interrupted during poll wait", "batch_id", state.BatchID)
-			return ctx.Err()
-		case <-time.After(time.Duration(pollInt) * time.Second):
-		}
+	if state.Status != translation.BatchStatusCompleted {
+		return batchTerminalError(state, "batch")
 	}
-
-	switch state.Status {
-	case "completed":
-		return processTranslateResults(ctx, proj, state, batchClient)
-	case "failed":
-		return fmt.Errorf("batch %s failed — check OpenAI dashboard for details", state.BatchID)
-	case "expired":
-		return fmt.Errorf("batch %s expired before completion", state.BatchID)
-	case "cancelled":
-		return fmt.Errorf("batch %s was cancelled", state.BatchID)
-	default:
-		return fmt.Errorf("batch %s ended in unexpected status: %s", state.BatchID, state.Status)
-	}
+	return processTranslateResults(ctx, proj, state, batchClient)
 }
 
 // processTranslateResults downloads the batch output and writes translation
 // files. No post-processing is done — summaries are generated in the analyze
 // step, and the glossary is finalized by analyze. Chapter status is updated
 // to "translated".
-func processTranslateResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient) error {
+func processTranslateResults(
+	ctx context.Context,
+	proj *project.Project,
+	state *translation.BatchState,
+	batchClient *translation.BatchClient,
+) error {
 	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
 
 	results, err := batchClient.DownloadResults(ctx, state.OutputFileID)
@@ -297,7 +316,7 @@ func processTranslateResults(ctx context.Context, proj *project.Project, state *
 
 	// Write translation files.
 	for _, res := range results {
-		chID := translation.SplitCustomID(res.CustomID, "translate")
+		chID := translation.SplitCustomID(res.CustomID, translation.BatchTypeTranslate)
 		if chID == 0 {
 			slog.Warn("unrecognized custom_id in batch output", "custom_id", res.CustomID)
 			continue
@@ -311,18 +330,18 @@ func processTranslateResults(ctx context.Context, proj *project.Project, state *
 		translationPath := translationPath(proj.TranslationDir(), chID, targetLang)
 		content := strings.TrimSpace(res.Content)
 		content = deduplicateTitle(content)
-		if err := project.SaveBytes(translationPath, []byte(content+"\n")); err != nil {
+		if err = project.SaveBytes(translationPath, []byte(content+"\n")); err != nil {
 			return fmt.Errorf("write translation for chapter %d: %w", chID, err)
 		}
 
 		// Update chapter status.
 		chPath := filepath.Join(proj.ChaptersDir(), fmt.Sprintf("chapter_%03d.json", chID))
 		var ch chapters.Chapter
-		if err := project.LoadJSON(chPath, &ch); err != nil {
+		if err = project.LoadJSON(chPath, &ch); err != nil {
 			slog.Warn("failed to load chapter for status update", "chapter", chID, "error", err)
 		} else {
 			ch.Status = "translated"
-			if err := project.SaveJSON(chPath, ch); err != nil {
+			if err = project.SaveJSON(chPath, ch); err != nil {
 				slog.Warn("failed to update chapter status", "chapter", chID, "error", err)
 			}
 		}
@@ -331,7 +350,7 @@ func processTranslateResults(ctx context.Context, proj *project.Project, state *
 	}
 
 	// Clean up batch state.
-	_ = translation.DeleteBatchState(proj.AIDir(), "translate")
+	_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypeTranslate)
 	slog.Info("translate batch complete", "batch_id", state.BatchID, "translated", translated, "failed", failedCount)
 
 	return nil
@@ -349,37 +368,37 @@ func translationPath(translationDir string, chapterID int, targetLang string) st
 // starts with "Title\n\nTitle\n...", it becomes "Title\n\n...".
 func deduplicateTitle(text string) string {
 	// Find the first non-empty line.
-	firstNL := strings.IndexByte(text, '\n')
-	if firstNL < 0 {
+	before, after, ok := strings.Cut(text, "\n")
+	if !ok {
 		return text
 	}
-	firstLine := strings.TrimSpace(text[:firstNL])
+	firstLine := strings.TrimSpace(before)
 	if firstLine == "" {
 		return text
 	}
 
 	// Skip the blank line(s) after the first line.
-	rest := text[firstNL+1:]
+	rest := after
 	rest = strings.TrimLeft(rest, "\n\r \t")
 	if rest == "" {
 		return text
 	}
 
 	// Check if the remaining text starts with the same line.
-	secondNL := strings.IndexByte(rest, '\n')
+	before0, after0, ok0 := strings.Cut(rest, "\n")
 	var secondLine string
-	if secondNL < 0 {
+	if !ok0 {
 		secondLine = rest
 	} else {
-		secondLine = rest[:secondNL]
+		secondLine = before0
 	}
 	secondLine = strings.TrimSpace(secondLine)
 
 	if secondLine == firstLine {
 		// Duplicate detected: keep the first line + blank line + rest after second line.
 		afterSecond := rest
-		if secondNL >= 0 {
-			afterSecond = rest[secondNL+1:]
+		if ok0 {
+			afterSecond = after0
 		}
 		return firstLine + "\n\n" + strings.TrimLeft(afterSecond, "\n\r \t")
 	}

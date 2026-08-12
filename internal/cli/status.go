@@ -8,6 +8,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// jsonExt is the file extension for JSON artifacts counted by runStatus.
+const jsonExt = ".json"
+
 // newStatusCmd implements `bookai status`: a quick tree of the project
 // directory with per-stage counts so the user can see pipeline progress.
 func newStatusCmd() *cobra.Command {
@@ -27,8 +30,8 @@ func newStatusCmd() *cobra.Command {
 }
 
 func runStatus(proj statusProject) error {
-	fmt.Printf("project: %s\n", proj.RootPath())
-	fmt.Printf("config:  %s\n", proj.ConfigPath())
+	fmt.Fprintf(os.Stdout, "project: %s\n", proj.RootPath())
+	fmt.Fprintf(os.Stdout, "config:  %s\n", proj.ConfigPath())
 
 	type stage struct {
 		name string
@@ -37,9 +40,9 @@ func runStatus(proj statusProject) error {
 	}
 	stages := []stage{
 		{"source (epub)", proj.SourceDir(), ".epub"},
-		{"extracted", proj.ExtractedDir(), ".json"},
-		{"chapters", proj.ChaptersDir(), ".json"},
-		{"ai", proj.AIDir(), ".json"},
+		{"extracted", proj.ExtractedDir(), jsonExt},
+		{"chapters", proj.ChaptersDir(), jsonExt},
+		{"ai", proj.AIDir(), jsonExt},
 		{"translation", proj.TranslationDir(), ".txt"},
 		{"memory", proj.MemoryDir(), ".txt"},
 		{"tts (ssml)", proj.TTSDir(), ".ssml"},
@@ -51,7 +54,7 @@ func runStatus(proj statusProject) error {
 		if exists {
 			mark = "x"
 		}
-		fmt.Printf("[%s] %-16s %3d file(s)  %s\n", mark, s.name, count, s.dir)
+		fmt.Fprintf(os.Stdout, "[%s] %-16s %3d file(s)  %s\n", mark, s.name, count, s.dir)
 	}
 	return nil
 }
@@ -66,7 +69,10 @@ func countFiles(dir, ext string) (int, bool) {
 	}
 	n := 0
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if ext == "" || filepath.Ext(path) == ext {

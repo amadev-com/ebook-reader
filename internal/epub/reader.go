@@ -31,7 +31,7 @@ func Open(path string) (*Reader, error) {
 		return nil, fmt.Errorf("open epub %s: %w", path, err)
 	}
 	r := &Reader{zip: zr}
-	if err := r.loadOPF(); err != nil {
+	if err = r.loadOPF(); err != nil {
 		_ = zr.Close()
 		return nil, err
 	}

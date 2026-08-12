@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -73,13 +74,19 @@ type EngineConfig struct {
 }
 
 var (
-	registryMu sync.RWMutex
-	registry   = make(map[string]EngineFactory)
+	registryMu sync.RWMutex                     //nolint:gochecknoglobals // engine registry state
+	registry   = make(map[string]EngineFactory) //nolint:gochecknoglobals // engine registry state
 )
 
-// Register adds an EngineFactory under the given name. Called by engine
-// implementations in init(). Panics if the name is already registered (a
-// programming error, not a runtime condition).
+// RegisterEngines registers all built-in engine factories. Must be called
+// once at startup before NewEngine is used.
+func RegisterEngines() {
+	Register(engineNoop, NewNoopEngine)
+	Register(engineSileroHTTP, NewSileroEngine)
+}
+
+// Register adds an EngineFactory under the given name. Panics if the name is
+// already registered (a programming error, not a runtime condition).
 func Register(name string, factory EngineFactory) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -124,11 +131,13 @@ func joinNames(names []string) string {
 		return "(none)"
 	}
 	result := ""
+	var resultSb127 strings.Builder
 	for i, n := range names {
 		if i > 0 {
-			result += ", "
+			resultSb127.WriteString(", ")
 		}
-		result += n
+		resultSb127.WriteString(n)
 	}
+	result += resultSb127.String()
 	return result
 }

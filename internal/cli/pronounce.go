@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -60,7 +61,7 @@ func newPronounceCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&reset, "reset", false, "erase existing ai/stress.json and start merge from scratch")
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "process only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "process a range of chapter ids, e.g. 5-12")
-	cmd.Flags().IntVar(&pollInt, "poll-interval", 60, "seconds between batch status polls")
+	cmd.Flags().IntVar(&pollInt, "poll-interval", defaultPollInterval, "seconds between batch status polls")
 	return cmd
 }
 
@@ -69,9 +70,16 @@ func newPronounceCmd() *cobra.Command {
 //  2. Otherwise: build JSONL with one request per chapter, upload, create batch.
 //  3. Poll batch status every pollInt seconds until terminal.
 //  4. Download results, save per-chapter stress files, merge into global vocabulary.
-func runPronounce(ctx context.Context, proj *project.Project, force, cont, reset bool, chapter int, chRange string, pollInt int) error {
-	if pollInt < 10 {
-		pollInt = 60
+func runPronounce(
+	ctx context.Context,
+	proj *project.Project,
+	force, cont, reset bool,
+	chapter int,
+	chRange string,
+	pollInt int,
+) error {
+	if pollInt < minPollInterval {
+		pollInt = defaultPollInterval
 	}
 
 	// --continue: resume polling an existing batch.
@@ -80,14 +88,14 @@ func runPronounce(ctx context.Context, proj *project.Project, force, cont, reset
 	}
 
 	// Check for an existing pending batch.
-	if state, _ := translation.LoadBatchState(proj.AIDir(), "pronounce"); state != nil {
+	if state, _ := translation.LoadBatchState(proj.AIDir(), translation.BatchTypePronounce); state != nil {
 		if !translation.IsTerminalStatus(state.Status) {
 			slog.Info("found pending pronounce batch, resuming polling (use --force to start a new one)",
 				"batch_id", state.BatchID, "status", state.Status)
 			return pollPronounceBatch(ctx, proj, state, pollInt, reset)
 		}
 		slog.Info("cleaning up completed batch state from previous run", "batch_id", state.BatchID)
-		_ = translation.DeleteBatchState(proj.AIDir(), "pronounce")
+		_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypePronounce)
 	}
 
 	// Load all chapters.
@@ -101,13 +109,80 @@ func runPronounce(ctx context.Context, proj *project.Project, force, cont, reset
 
 	// Determine which chapters to process.
 	ids, err := parseChapterFilter(chapter, chRange, len(chs))
-	if err != nil {
+	if err != nil && !errors.Is(err, errNoChapterFilter) {
 		return err
 	}
-	writeAll := ids == nil
+	writeAll := errors.Is(err, errNoChapterFilter)
 
 	// Filter chapters that have translations and need stress marks.
 	targetLang := proj.Cfg.Languages.Target
+	toProcess, skipped := filterPronounceChapters(chs, proj, ids, writeAll, targetLang, force)
+	if len(toProcess) == 0 {
+		slog.Info("no chapters to process", "skipped", skipped)
+		return nil
+	}
+	slog.Info("chapters to process", "count", len(toProcess), "skipped", skipped)
+
+	// Build batch requests: one per chapter.
+	model := proj.Cfg.OpenAI.HelperModel
+	overrides := proj.Cfg.Pronunciation
+	reqs, chapterIDs, err := buildPronounceRequests(toProcess, proj, targetLang, model, overrides)
+	if err != nil {
+		return err
+	}
+
+	// Build JSONL.
+	jsonlData, err := translation.BuildJSONL(reqs)
+	if err != nil {
+		return fmt.Errorf("build batch JSONL: %w", err)
+	}
+	slog.Info("built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
+
+	// Create the batch client and submit.
+	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
+	if err != nil {
+		return err
+	}
+
+	batchID, inputFileID, err := batchClient.SubmitBatch(ctx, jsonlData, map[string]string{
+		translation.BatchMetadataKeyType:    translation.BatchTypePronounce,
+		translation.BatchMetadataKeyProject: proj.Cfg.Project,
+	})
+	if err != nil {
+		return err
+	}
+	slog.Info("batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
+
+	// Save batch state.
+	state := &translation.BatchState{
+		BatchID:     batchID,
+		InputFileID: inputFileID,
+		Type:        translation.BatchTypePronounce,
+		Model:       model,
+		Endpoint:    translation.BatchEndpoint,
+		Status:      translation.BatchStatusValidating,
+		ChapterIDs:  chapterIDs,
+		CreatedAt:   time.Now(),
+	}
+	if err = translation.SaveBatchState(proj.AIDir(), state); err != nil {
+		return fmt.Errorf("save batch state: %w", err)
+	}
+
+	// Poll until completion.
+	return pollPronounceBatch(ctx, proj, state, pollInt, reset)
+}
+
+// filterPronounceChapters selects chapters that have translations and don't
+// already have stress marks (unless force is set). Returns the chapters to
+// process and the number skipped.
+func filterPronounceChapters(
+	chs []chapters.Chapter,
+	proj *project.Project,
+	ids map[int]bool,
+	writeAll bool,
+	targetLang string,
+	force bool,
+) ([]chapters.Chapter, int) {
 	var toProcess []chapters.Chapter
 	skipped := 0
 	for _, ch := range chs {
@@ -126,22 +201,24 @@ func runPronounce(ctx context.Context, proj *project.Project, force, cont, reset
 		}
 		toProcess = append(toProcess, ch)
 	}
-	if len(toProcess) == 0 {
-		slog.Info("no chapters to process", "skipped", skipped)
-		return nil
-	}
-	slog.Info("chapters to process", "count", len(toProcess), "skipped", skipped)
+	return toProcess, skipped
+}
 
-	// Build batch requests: one per chapter.
-	model := proj.Cfg.OpenAI.HelperModel
-	overrides := proj.Cfg.Pronunciation
+// buildPronounceRequests builds batch requests (one per chapter) and the
+// corresponding chapter ID list.
+func buildPronounceRequests(
+	toProcess []chapters.Chapter,
+	proj *project.Project,
+	targetLang, model string,
+	overrides []config.PronunciationOverride,
+) ([]translation.BatchRequest, []int, error) {
 	reqs := make([]translation.BatchRequest, len(toProcess))
 	chapterIDs := make([]int, len(toProcess))
 	for i, ch := range toProcess {
 		translationPath := translationPath(proj.TranslationDir(), ch.ID, targetLang)
 		text, err := os.ReadFile(translationPath)
 		if err != nil {
-			return fmt.Errorf("read translation for chapter %d: %w", ch.ID, err)
+			return nil, nil, fmt.Errorf("read translation for chapter %d: %w", ch.ID, err)
 		}
 
 		reqs[i] = translation.BatchRequest{
@@ -153,56 +230,19 @@ func runPronounce(ctx context.Context, proj *project.Project, force, cont, reset
 		}
 		chapterIDs[i] = ch.ID
 	}
-
-	// Build JSONL.
-	jsonlData, err := translation.BuildJSONL(reqs)
-	if err != nil {
-		return fmt.Errorf("build batch JSONL: %w", err)
-	}
-	slog.Info("built batch input", "requests", len(reqs), "jsonl_bytes", len(jsonlData), "model", model)
-
-	// Create the batch client and submit.
-	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
-	if err != nil {
-		return err
-	}
-
-	batchID, inputFileID, err := batchClient.SubmitBatch(ctx, jsonlData, map[string]string{
-		"type":    "pronounce",
-		"project": proj.Cfg.Project,
-	})
-	if err != nil {
-		return err
-	}
-	slog.Info("batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
-
-	// Save batch state.
-	state := &translation.BatchState{
-		BatchID:     batchID,
-		InputFileID: inputFileID,
-		Type:        "pronounce",
-		Model:       model,
-		Endpoint:    "/v1/responses",
-		Status:      "validating",
-		ChapterIDs:  chapterIDs,
-		CreatedAt:   time.Now(),
-	}
-	if err := translation.SaveBatchState(proj.AIDir(), state); err != nil {
-		return fmt.Errorf("save batch state: %w", err)
-	}
-
-	// Poll until completion.
-	return pollPronounceBatch(ctx, proj, state, pollInt, reset)
+	return reqs, chapterIDs, nil
 }
 
 // resumePronounceBatch loads the persisted batch state and resumes polling.
 func resumePronounceBatch(ctx context.Context, proj *project.Project, reset bool, pollInt int) error {
-	state, err := translation.LoadBatchState(proj.AIDir(), "pronounce")
+	state, err := translation.LoadBatchState(proj.AIDir(), translation.BatchTypePronounce)
 	if err != nil {
+		if errors.Is(err, translation.ErrBatchStateNotFound) {
+			return fmt.Errorf(
+				"no pending pronounce batch found — run `bookai pronounce` without --continue to start a new one",
+			)
+		}
 		return fmt.Errorf("load batch state: %w", err)
-	}
-	if state == nil {
-		return fmt.Errorf("no pending pronounce batch found — run `bookai pronounce` without --continue to start a new one")
 	}
 	slog.Info("resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
 	return pollPronounceBatch(ctx, proj, state, pollInt, reset)
@@ -210,60 +250,21 @@ func resumePronounceBatch(ctx context.Context, proj *project.Project, reset bool
 
 // pollPronounceBatch polls the batch status every pollInt seconds. When the
 // batch reaches a terminal status, it downloads results and processes them.
-func pollPronounceBatch(ctx context.Context, proj *project.Project, state *translation.BatchState, pollInt int, reset bool) error {
-	batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
+func pollPronounceBatch(
+	ctx context.Context,
+	proj *project.Project,
+	state *translation.BatchState,
+	pollInt int,
+	reset bool,
+) error {
+	batchClient, err := pollBatchUntilTerminal(ctx, proj, state, pollInt, "batch")
 	if err != nil {
 		return err
 	}
-
-	for {
-		if ctx.Err() != nil {
-			slog.Info("interrupted by signal", "batch_id", state.BatchID, "last_status", state.Status)
-			return ctx.Err()
-		}
-
-		info, err := batchClient.PollBatch(ctx, state.BatchID)
-		if err != nil {
-			return fmt.Errorf("poll batch: %w", err)
-		}
-
-		state.Status = info.Status
-		state.OutputFileID = info.OutputFileID
-		state.ErrorFileID = info.ErrorFileID
-		state.Total = info.Total
-		state.Completed = info.Completed
-		state.Failed = info.Failed
-		_ = translation.SaveBatchState(proj.AIDir(), state)
-
-		slog.Info("batch status",
-			"batch_id", state.BatchID, "status", info.Status,
-			"completed", info.Completed, "failed", info.Failed, "total", info.Total)
-
-		if translation.IsTerminalStatus(info.Status) {
-			break
-		}
-
-		slog.Info("waiting for batch", "poll_seconds", pollInt)
-		select {
-		case <-ctx.Done():
-			slog.Info("interrupted during poll wait", "batch_id", state.BatchID)
-			return ctx.Err()
-		case <-time.After(time.Duration(pollInt) * time.Second):
-		}
+	if state.Status != translation.BatchStatusCompleted {
+		return batchTerminalError(state, "batch")
 	}
-
-	switch state.Status {
-	case "completed":
-		return processPronounceResults(ctx, proj, state, batchClient, reset)
-	case "failed":
-		return fmt.Errorf("batch %s failed — check OpenAI dashboard for details", state.BatchID)
-	case "expired":
-		return fmt.Errorf("batch %s expired before completion", state.BatchID)
-	case "cancelled":
-		return fmt.Errorf("batch %s was cancelled", state.BatchID)
-	default:
-		return fmt.Errorf("batch %s ended in unexpected status: %s", state.BatchID, state.Status)
-	}
+	return processPronounceResults(ctx, proj, state, batchClient, reset)
 }
 
 // processPronounceResults downloads the batch output and merges each
@@ -271,7 +272,13 @@ func pollPronounceBatch(ctx context.Context, proj *project.Project, state *trans
 // vocabulary. Conflicts (same term, different stressed forms) are resolved
 // interactively in the CLI. Per-chapter stress files are never written to
 // disk — results are merged in memory as they're parsed.
-func processPronounceResults(ctx context.Context, proj *project.Project, state *translation.BatchState, batchClient *translation.BatchClient, reset bool) error {
+func processPronounceResults(
+	ctx context.Context,
+	proj *project.Project,
+	state *translation.BatchState,
+	batchClient *translation.BatchClient,
+	reset bool,
+) error {
 	slog.Info("downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
 
 	results, err := batchClient.DownloadResults(ctx, state.OutputFileID)
@@ -285,8 +292,8 @@ func processPronounceResults(ctx context.Context, proj *project.Project, state *
 		slog.Info("resetting global stress vocabulary (--reset)")
 		global = &tts.Stress{}
 	} else {
-		existing, err := tts.LoadStress(proj.AIDir())
-		if err != nil {
+		var existing *tts.Stress
+		if existing, err = tts.LoadStress(proj.AIDir()); err != nil {
 			return fmt.Errorf("load existing stress: %w", err)
 		}
 		global = existing
@@ -298,7 +305,7 @@ func processPronounceResults(ctx context.Context, proj *project.Project, state *
 	var allConflicts []tts.StressConflict
 
 	for _, res := range results {
-		chID := translation.SplitCustomID(res.CustomID, "pronounce")
+		chID := translation.SplitCustomID(res.CustomID, translation.BatchTypePronounce)
 		if chID == 0 {
 			slog.Warn("unrecognized custom_id in batch output", "custom_id", res.CustomID)
 			continue
@@ -311,8 +318,16 @@ func processPronounceResults(ctx context.Context, proj *project.Project, state *
 
 		// Parse the JSON response.
 		var result stressResult
-		if err := json.Unmarshal([]byte(res.Content), &result); err != nil {
-			slog.Warn("failed to parse stress JSON", "chapter", chID, "error", err, "content", truncate(res.Content, 200))
+		if err = json.Unmarshal([]byte(res.Content), &result); err != nil {
+			slog.Warn(
+				"failed to parse stress JSON",
+				"chapter",
+				chID,
+				"error",
+				err,
+				"content",
+				truncate(res.Content, truncateLength),
+			)
 			failedCount++
 			continue
 		}
@@ -341,19 +356,19 @@ func processPronounceResults(ctx context.Context, proj *project.Project, state *
 	if len(deduped) > 0 {
 		slog.Info("found stress mark conflicts, resolving interactively",
 			"conflicts", len(deduped), "raw_conflicts", len(allConflicts))
-		if err := resolveStressConflicts(global, deduped); err != nil {
+		if err = resolveStressConflicts(global, deduped); err != nil {
 			return fmt.Errorf("resolve conflicts: %w", err)
 		}
 	}
 
 	// Save the merged global vocabulary.
-	if err := global.Save(proj.AIDir()); err != nil {
+	if err = global.Save(proj.AIDir()); err != nil {
 		return fmt.Errorf("save global stress: %w", err)
 	}
 	slog.Info("global stress vocabulary saved", "entries", len(global.Entries))
 
 	// Clean up batch state.
-	_ = translation.DeleteBatchState(proj.AIDir(), "pronounce")
+	_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypePronounce)
 	slog.Info("pronounce batch complete", "batch_id", state.BatchID, "processed", processed, "failed", failedCount)
 
 	return nil
@@ -402,14 +417,14 @@ func resolveStressConflicts(global *tts.Stress, conflicts []tts.StressConflict) 
 	skipped := 0
 
 	for _, c := range conflicts {
-		fmt.Printf("\nConflict for term %q:\n", c.Term)
+		fmt.Fprintf(os.Stdout, "\nConflict for term %q:\n", c.Term)
 		for i, v := range c.Variants {
-			fmt.Printf("  [%d] %s\n", i+1, v)
+			fmt.Fprintf(os.Stdout, "  [%d] %s\n", i+1, v)
 		}
-		fmt.Printf("  [%d] skip (leave unstressed)\n", len(c.Variants)+1)
+		fmt.Fprintf(os.Stdout, "  [%d] skip (leave unstressed)\n", len(c.Variants)+1)
 
 		for {
-			fmt.Printf("Choose: ")
+			fmt.Fprintf(os.Stdout, "Choose: ")
 			line, err := reader.ReadString('\n')
 			if err != nil {
 				return fmt.Errorf("read input: %w", err)
@@ -418,17 +433,17 @@ func resolveStressConflicts(global *tts.Stress, conflicts []tts.StressConflict) 
 
 			choice, err := parseIntChoice(line, len(c.Variants)+1)
 			if err != nil {
-				fmt.Printf("  invalid choice: %s (enter 1-%d)\n", err, len(c.Variants)+1)
+				fmt.Fprintf(os.Stdout, "  invalid choice: %s (enter 1-%d)\n", err, len(c.Variants)+1)
 				continue
 			}
 
 			if choice <= len(c.Variants) {
 				global.ResolveConflict(c.Term, c.Variants[choice-1])
-				fmt.Printf("  → %s\n", c.Variants[choice-1])
+				fmt.Fprintf(os.Stdout, "  → %s\n", c.Variants[choice-1])
 				resolved++
 			} else {
 				global.ResolveConflict(c.Term, "")
-				fmt.Printf("  → skipped\n")
+				fmt.Fprintf(os.Stdout, "  → skipped\n")
 				skipped++
 			}
 			break

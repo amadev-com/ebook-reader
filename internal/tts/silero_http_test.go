@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,8 +16,9 @@ import (
 )
 
 func TestNewSileroEngine_RequiresServerURL(t *testing.T) {
+	t.Parallel()
 	_, err := NewSileroEngine(EngineConfig{
-		Engine: "silero-http",
+		Engine: engineSileroHTTP,
 		Voice:  "silero:v5_5_ru#xenia",
 	})
 	if err == nil {
@@ -26,8 +27,9 @@ func TestNewSileroEngine_RequiresServerURL(t *testing.T) {
 }
 
 func TestNewSileroEngine_RequiresVoice(t *testing.T) {
+	t.Parallel()
 	_, err := NewSileroEngine(EngineConfig{
-		Engine:    "silero-http",
+		Engine:    engineSileroHTTP,
 		ServerURL: "http://localhost:5555",
 	})
 	if err == nil {
@@ -36,8 +38,9 @@ func TestNewSileroEngine_RequiresVoice(t *testing.T) {
 }
 
 func TestNewSileroEngine_Success(t *testing.T) {
+	t.Parallel()
 	engine, err := NewSileroEngine(EngineConfig{
-		Engine:    "silero-http",
+		Engine:    engineSileroHTTP,
 		ServerURL: "http://localhost:5555",
 		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
@@ -45,7 +48,7 @@ func TestNewSileroEngine_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSileroEngine: %v", err)
 	}
-	if engine.Name() != "silero-http" {
+	if engine.Name() != engineSileroHTTP {
 		t.Errorf("name: got %q", engine.Name())
 	}
 }
@@ -53,9 +56,9 @@ func TestNewSileroEngine_Success(t *testing.T) {
 // makeWAV creates a minimal valid WAV file with the given PCM data size.
 func makeWAV(dataSize int) []byte {
 	wav := make([]byte, 44+dataSize)
-	copy(wav[0:4], []byte("RIFF"))
+	copy(wav[0:4], []byte(wavRIFF))
 	binary.LittleEndian.PutUint32(wav[4:8], uint32(36+dataSize))
-	copy(wav[8:12], []byte("WAVE"))
+	copy(wav[8:12], []byte(wavWAVE))
 	copy(wav[12:16], []byte("fmt "))
 	binary.LittleEndian.PutUint32(wav[16:20], 16)
 	binary.LittleEndian.PutUint16(wav[20:22], 1) // PCM
@@ -70,6 +73,7 @@ func makeWAV(dataSize int) []byte {
 }
 
 func TestSileroEngine_Synthesize(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/tts" {
 			http.NotFound(w, r)
@@ -93,7 +97,7 @@ func TestSileroEngine_Synthesize(t *testing.T) {
 	defer ts.Close()
 
 	engine, err := NewSileroEngine(EngineConfig{
-		Engine:     "silero-http",
+		Engine:     engineSileroHTTP,
 		ServerURL:  ts.URL,
 		Voice:      "silero:v5_5_ru#xenia",
 		Language:   "ru",
@@ -118,12 +122,13 @@ func TestSileroEngine_Synthesize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
-	if string(data[:4]) != "RIFF" {
+	if string(data[:4]) != wavRIFF {
 		t.Errorf("not a WAV: got %q", data[:4])
 	}
 }
 
 func TestSileroEngine_PassesSSMLThrough(t *testing.T) {
+	t.Parallel()
 	var receivedText string
 	var receivedSSML bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +141,7 @@ func TestSileroEngine_PassesSSMLThrough(t *testing.T) {
 	defer ts.Close()
 
 	engine, err := NewSileroEngine(EngineConfig{
-		Engine:    "silero-http",
+		Engine:    engineSileroHTTP,
 		ServerURL: ts.URL,
 		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
@@ -147,8 +152,7 @@ func TestSileroEngine_PassesSSMLThrough(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	text := "<speak><p><s>Привет мир.</s></p></speak>"
-	err = engine.Synthesize(context.Background(), text, filepath.Join(tmpDir, "out.wav"))
-	if err != nil {
+	if err = engine.Synthesize(context.Background(), text, filepath.Join(tmpDir, "out.wav")); err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
 
@@ -161,13 +165,14 @@ func TestSileroEngine_PassesSSMLThrough(t *testing.T) {
 }
 
 func TestSileroEngine_ServerError(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "model not loaded", http.StatusInternalServerError)
 	}))
 	defer ts.Close()
 
 	engine, err := NewSileroEngine(EngineConfig{
-		Engine:    "silero-http",
+		Engine:    engineSileroHTTP,
 		ServerURL: ts.URL,
 		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
@@ -183,6 +188,7 @@ func TestSileroEngine_ServerError(t *testing.T) {
 }
 
 func TestSileroEngine_CheckHealth(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			w.WriteHeader(http.StatusOK)
@@ -194,7 +200,7 @@ func TestSileroEngine_CheckHealth(t *testing.T) {
 	defer ts.Close()
 
 	engine, err := NewSileroEngine(EngineConfig{
-		Engine:    "silero-http",
+		Engine:    engineSileroHTTP,
 		ServerURL: ts.URL,
 		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
@@ -207,21 +213,22 @@ func TestSileroEngine_CheckHealth(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *SileroEngine, got %T", engine)
 	}
-	if err := sileroEngine.CheckHealth(context.Background()); err != nil {
+	if err = sileroEngine.CheckHealth(context.Background()); err != nil {
 		t.Errorf("CheckHealth: %v", err)
 	}
 }
 
 func TestNewEngine_Silero(t *testing.T) {
+	t.Parallel()
 	engine, err := NewEngine(EngineConfig{
-		Engine:    "silero-http",
+		Engine:    engineSileroHTTP,
 		ServerURL: "http://localhost:9999",
 		Voice:     "silero:v5_5_ru#xenia",
 	})
 	if err != nil {
 		t.Fatalf("NewEngine silero-http: %v", err)
 	}
-	if engine.Name() != "silero-http" {
+	if engine.Name() != engineSileroHTTP {
 		t.Errorf("engine name: got %q", engine.Name())
 	}
 }
@@ -229,21 +236,23 @@ func TestNewEngine_Silero(t *testing.T) {
 // --- Chunking tests ---
 
 func TestSplitSSML_ShortText(t *testing.T) {
+	t.Parallel()
 	ssml := "<speak><p><s>Привет мир.</s></p></speak>"
-	chunks := splitSSML(ssml, 900)
+	chunks := splitSSML(ssml)
 	if len(chunks) != 1 {
 		t.Errorf("expected 1 chunk, got %d: %v", len(chunks), chunks)
 	}
 }
 
 func TestSplitSSML_LongText(t *testing.T) {
+	t.Parallel()
 	// Build SSML with many sentences to exceed 900 chars.
 	var sentences []string
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		sentences = append(sentences, "<s>Это тестовое предложение номер "+string(rune('A'+i%26))+".</s>")
 	}
 	ssml := "<speak><p>" + strings.Join(sentences, "") + "</p></speak>"
-	chunks := splitSSML(ssml, 900)
+	chunks := splitSSML(ssml)
 
 	if len(chunks) < 2 {
 		t.Fatalf("expected multiple chunks, got %d", len(chunks))
@@ -263,8 +272,9 @@ func TestSplitSSML_LongText(t *testing.T) {
 }
 
 func TestSplitSSML_PreservesSentenceTags(t *testing.T) {
+	t.Parallel()
 	ssml := "<speak><p><s>Первое.</s><s>Второе.</s></p></speak>"
-	chunks := splitSSML(ssml, 900)
+	chunks := splitSSML(ssml)
 	if len(chunks) != 1 {
 		t.Fatalf("expected 1 chunk, got %d", len(chunks))
 	}
@@ -277,6 +287,7 @@ func TestSplitSSML_PreservesSentenceTags(t *testing.T) {
 }
 
 func TestSplitSSML_SingleSentenceTooLong(t *testing.T) {
+	t.Parallel()
 	// Build a single very long sentence.
 	words := make([]string, 200)
 	for i := range words {
@@ -284,7 +295,7 @@ func TestSplitSSML_SingleSentenceTooLong(t *testing.T) {
 	}
 	longInner := strings.Join(words, " ")
 	ssml := "<speak><p><s>" + longInner + "</s></p></speak>"
-	chunks := splitSSML(ssml, 900)
+	chunks := splitSSML(ssml)
 
 	if len(chunks) < 2 {
 		t.Fatalf("expected multiple chunks for long sentence, got %d", len(chunks))
@@ -297,8 +308,9 @@ func TestSplitSSML_SingleSentenceTooLong(t *testing.T) {
 }
 
 func TestSplitSSML_NoSentenceTags(t *testing.T) {
+	t.Parallel()
 	ssml := "<speak>Просто текст без тегов предложений.</speak>"
-	chunks := splitSSML(ssml, 900)
+	chunks := splitSSML(ssml)
 	if len(chunks) != 1 {
 		t.Errorf("expected 1 chunk for text without <s> tags, got %d", len(chunks))
 	}
@@ -307,6 +319,7 @@ func TestSplitSSML_NoSentenceTags(t *testing.T) {
 // --- WAV concatenation tests ---
 
 func TestConcatWAVs_Single(t *testing.T) {
+	t.Parallel()
 	wav := makeWAV(100)
 	combined, err := concatWAVs([][]byte{wav})
 	if err != nil {
@@ -318,6 +331,7 @@ func TestConcatWAVs_Single(t *testing.T) {
 }
 
 func TestConcatWAVs_Multiple(t *testing.T) {
+	t.Parallel()
 	wav1 := makeWAV(100)
 	wav2 := makeWAV(200)
 	wav3 := makeWAV(50)
@@ -348,15 +362,16 @@ func TestConcatWAVs_Multiple(t *testing.T) {
 	}
 
 	// Check it's a valid WAV.
-	if string(combined[0:4]) != "RIFF" {
+	if string(combined[0:4]) != wavRIFF {
 		t.Error("missing RIFF header")
 	}
-	if string(combined[8:12]) != "WAVE" {
+	if string(combined[8:12]) != wavWAVE {
 		t.Error("missing WAVE")
 	}
 }
 
 func TestConcatWAVs_Empty(t *testing.T) {
+	t.Parallel()
 	_, err := concatWAVs(nil)
 	if err == nil {
 		t.Fatal("expected error for no WAV data")
@@ -364,6 +379,7 @@ func TestConcatWAVs_Empty(t *testing.T) {
 }
 
 func TestConcatWAVs_InvalidWAV(t *testing.T) {
+	t.Parallel()
 	_, err := concatWAVs([][]byte{[]byte("not a wav"), makeWAV(10)})
 	if err == nil {
 		t.Fatal("expected error for invalid WAV")
@@ -371,6 +387,7 @@ func TestConcatWAVs_InvalidWAV(t *testing.T) {
 }
 
 func TestExtractSentences(t *testing.T) {
+	t.Parallel()
 	ssml := "<speak><p><s>Первое.</s><s>Второе.</s></p><p><s>Третье.</s></p></speak>"
 	sentences := extractSentences(ssml)
 	if len(sentences) != 3 {
@@ -385,6 +402,7 @@ func TestExtractSentences(t *testing.T) {
 }
 
 func TestExtractSentences_None(t *testing.T) {
+	t.Parallel()
 	ssml := "<speak>Просто текст.</speak>"
 	sentences := extractSentences(ssml)
 	if len(sentences) != 0 {
@@ -395,6 +413,7 @@ func TestExtractSentences_None(t *testing.T) {
 // --- Integration: chunked synthesis ---
 
 func TestSileroEngine_ChunkedSynthesis(t *testing.T) {
+	t.Parallel()
 	var requestCount int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
@@ -406,7 +425,7 @@ func TestSileroEngine_ChunkedSynthesis(t *testing.T) {
 	defer ts.Close()
 
 	engine, err := NewSileroEngine(EngineConfig{
-		Engine:    "silero-http",
+		Engine:    engineSileroHTTP,
 		ServerURL: ts.URL,
 		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
@@ -417,15 +436,14 @@ func TestSileroEngine_ChunkedSynthesis(t *testing.T) {
 
 	// Build SSML that exceeds 900 chars.
 	var sentences []string
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		sentences = append(sentences, "<s>Это тестовое предложение для проверки.</s>")
 	}
 	ssml := "<speak><p>" + strings.Join(sentences, "") + "</p></speak>"
 
 	tmpDir := t.TempDir()
 	outPath := filepath.Join(tmpDir, "chunked.wav")
-	err = engine.Synthesize(context.Background(), ssml, outPath)
-	if err != nil {
+	if err = engine.Synthesize(context.Background(), ssml, outPath); err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
 
@@ -437,7 +455,7 @@ func TestSileroEngine_ChunkedSynthesis(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
-	if string(data[:4]) != "RIFF" {
+	if string(data[:4]) != wavRIFF {
 		t.Error("output is not a valid WAV")
 	}
 
@@ -454,25 +472,26 @@ func TestSileroEngine_ChunkedSynthesis(t *testing.T) {
 }
 
 func TestSileroEngine_ParallelSynthesis(t *testing.T) {
-	var requestCount int32
+	t.Parallel()
+	var requestCount atomic.Int32
 	// Track concurrent requests to verify parallelism.
-	var concurrent int32
+	var concurrent atomic.Int32
 	var maxConcurrent int32
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		cur := atomic.AddInt32(&concurrent, 1)
+		cur := concurrent.Add(1)
 		if cur > atomic.LoadInt32(&maxConcurrent) {
 			atomic.StoreInt32(&maxConcurrent, cur)
 		}
 		time.Sleep(50 * time.Millisecond) // simulate work
-		atomic.AddInt32(&concurrent, -1)
-		atomic.AddInt32(&requestCount, 1)
+		concurrent.Add(-1)
+		requestCount.Add(1)
 		_, _ = w.Write(makeWAV(100))
 	}))
 	defer ts.Close()
 
 	engine, err := NewSileroEngine(EngineConfig{
-		Engine:    "silero-http",
+		Engine:    engineSileroHTTP,
 		ServerURL: ts.URL,
 		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
@@ -484,15 +503,14 @@ func TestSileroEngine_ParallelSynthesis(t *testing.T) {
 
 	// Build SSML with enough sentences to produce multiple chunks.
 	var sentences []string
-	for i := 0; i < 30; i++ {
-		sentences = append(sentences, "<s>Предложение номер "+fmt.Sprintf("%d", i)+".</s>")
+	for i := range 30 {
+		sentences = append(sentences, "<s>Предложение номер "+strconv.Itoa(i)+".</s>")
 	}
 	ssml := "<speak><p>" + strings.Join(sentences, "") + "</p></speak>"
 
 	tmpDir := t.TempDir()
 	outPath := filepath.Join(tmpDir, "parallel.wav")
-	err = engine.Synthesize(context.Background(), ssml, outPath)
-	if err != nil {
+	if err = engine.Synthesize(context.Background(), ssml, outPath); err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
 
@@ -501,7 +519,7 @@ func TestSileroEngine_ParallelSynthesis(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
-	if string(data[:4]) != "RIFF" {
+	if string(data[:4]) != wavRIFF {
 		t.Error("output is not a valid WAV")
 	}
 
@@ -513,18 +531,19 @@ func TestSileroEngine_ParallelSynthesis(t *testing.T) {
 }
 
 func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
+	t.Parallel()
 	// Each request returns a WAV with a unique data size based on request
 	// order. After concatenation, the data sizes must be in chunk order.
-	var seq int32
+	var seq atomic.Int32
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		n := atomic.AddInt32(&seq, 1)
+		n := seq.Add(1)
 		_, _ = w.Write(makeWAV(int(n * 10)))
 	}))
 	defer ts.Close()
 
 	engine, err := NewSileroEngine(EngineConfig{
-		Engine:    "silero-http",
+		Engine:    engineSileroHTTP,
 		ServerURL: ts.URL,
 		Voice:     "silero:v5_5_ru#xenia",
 		Language:  "ru",
@@ -536,15 +555,14 @@ func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
 
 	// Build SSML that produces exactly 3 chunks.
 	var sentences []string
-	for i := 0; i < 15; i++ {
-		sentences = append(sentences, "<s>Предложение "+fmt.Sprintf("%d", i)+".</s>")
+	for i := range 15 {
+		sentences = append(sentences, "<s>Предложение "+strconv.Itoa(i)+".</s>")
 	}
 	ssml := "<speak><p>" + strings.Join(sentences, "") + "</p></speak>"
 
 	tmpDir := t.TempDir()
 	outPath := filepath.Join(tmpDir, "ordered.wav")
-	err = engine.Synthesize(context.Background(), ssml, outPath)
-	if err != nil {
+	if err = engine.Synthesize(context.Background(), ssml, outPath); err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
 
@@ -554,7 +572,7 @@ func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
-	if string(data[:4]) != "RIFF" {
+	if string(data[:4]) != wavRIFF {
 		t.Error("output is not a valid WAV")
 	}
 }

@@ -21,9 +21,23 @@ import (
 )
 
 var (
-	flagProject string
-	flagVerbose bool
+	flagProject string //nolint:gochecknoglobals // cobra flag binding requires package-level var
+	flagVerbose bool   //nolint:gochecknoglobals // cobra flag binding requires package-level var
 )
+
+// Shared CLI constants used by multiple batch-based commands (analyze,
+// pronounce, translate).
+
+// defaultPollInterval is the default seconds between batch status polls.
+const defaultPollInterval = 60
+
+// minPollInterval is the minimum allowed poll interval; smaller values are
+// clamped up to defaultPollInterval.
+const minPollInterval = 10
+
+// truncateLength is the maximum number of characters shown when truncating
+// content in log/warning messages.
+const truncateLength = 200
 
 // NewRoot builds the cobra root command with all subcommands attached.
 func NewRoot() *cobra.Command {
@@ -34,7 +48,8 @@ func NewRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().StringVarP(&flagProject, "project", "p", ".", "path to the bookai project directory (default: current dir)")
+	root.PersistentFlags().
+		StringVarP(&flagProject, "project", "p", ".", "path to the bookai project directory (default: current dir)")
 	root.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "enable debug logging")
 
 	root.AddCommand(
@@ -92,7 +107,7 @@ func newVersionCmd() *cobra.Command {
 		Short: "Print bookai version and current milestone",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Printf("bookai %s (%s)\n", version.Version, version.Milestone)
+			fmt.Fprintf(os.Stdout, "bookai %s (%s)\n", version.Version, version.Milestone)
 			return nil
 		},
 	}

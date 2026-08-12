@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,6 +15,22 @@ import (
 	"ebook-reader/internal/epub"
 	"ebook-reader/internal/project"
 )
+
+// errNoChapterFilter is returned by parseChapterFilter when neither --chapter
+// nor --range is set, meaning all chapters should be processed.
+var errNoChapterFilter = errors.New("no chapter filter set")
+
+// rangeSplitParts is the number of parts expected when splitting a range
+// string on the "-" separator (e.g. "5-12" → 2 parts).
+const rangeSplitParts = 2
+
+// stripTailLen is the number of trailing characters examined by the strip
+// trailer filter when looking for boilerplate triggers.
+const stripTailLen = 400
+
+// starSeparatorLen is the minimum number of consecutive '*' characters that
+// form a scene-break/trailer separator.
+const starSeparatorLen = 3
 
 // newAnalyzeChaptersCmd implements `bookai analyze-chapters`. It reads the
 // extracted/ artifacts, runs the chapter splitter, and writes chapters/*.json.
@@ -47,11 +64,19 @@ func newAnalyzeChaptersCmd() *cobra.Command {
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "analyze only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "analyze a range of chapter ids, e.g. 5-12")
 	cmd.Flags().StringVar(&strategy, "strategy", "", "force detection strategy: toc|heading|per-item")
-	cmd.Flags().StringArrayVar(&strip, "strip", nil, "remove boilerplate trailer from chapter source (repeatable; also see config chapters.strip)")
+	cmd.Flags().
+		StringArrayVar(&strip, "strip", nil, "remove boilerplate trailer from chapter source (repeatable; also see config chapters.strip)")
 	return cmd
 }
 
-func runAnalyzeChapters(_ context.Context, proj *project.Project, force bool, chapter int, chRange, strategy string, strip []string) error {
+func runAnalyzeChapters(
+	_ context.Context,
+	proj *project.Project,
+	force bool,
+	chapter int,
+	chRange, strategy string,
+	strip []string,
+) error {
 	extractedDir := proj.ExtractedDir()
 	spinePath := filepath.Join(extractedDir, "spine.json")
 	if !project.Exists(spinePath) {
@@ -66,12 +91,7 @@ func runAnalyzeChapters(_ context.Context, proj *project.Project, force bool, ch
 	slog.Info("loaded extracted artifacts", "spine_items", len(in.Spine), "toc_entries", len(in.TOC))
 
 	// Run the splitter. If --strategy is set, force that single strategy.
-	var res *chapters.SplitResult
-	if strategy != "" {
-		res, err = splitWithStrategy(in, chapters.Strategy(strategy))
-	} else {
-		res, err = chapters.Split(in)
-	}
+	res, err := splitChapters(in, strategy)
 	if err != nil {
 		return err
 	}
@@ -83,40 +103,68 @@ func runAnalyzeChapters(_ context.Context, proj *project.Project, force bool, ch
 	// the last "***" separator (3+ stars) before the trigger to the end. This
 	// removes promotional notices, author notes, and other boilerplate that
 	// appears after a *** separator at the end of chapters.
-	if len(strip) > 0 {
-		stripped := 0
-		for i := range res.Chapters {
-			orig := res.Chapters[i].Source
-			// Record raw size for all chapters so the chapters command can
-			// show it even when the chapter wasn't modified by stripping.
-			res.Chapters[i].RawSize = len(res.Chapters[i].Title) + len(orig)
-			cleaned := orig
-			for _, s := range strip {
-				cleaned = stripTrailer(cleaned, s)
-			}
-			cleaned = strings.TrimSpace(cleaned)
-			if cleaned != orig {
-				res.Chapters[i].Source = cleaned
-				stripped++
-			}
-		}
-		slog.Info("applied strip filters", "patterns", len(strip), "chapters_modified", stripped)
-	}
+	applyStripFilters(res.Chapters, strip)
 
 	// Determine which chapter ids to write (default: all).
 	ids, err := parseChapterFilter(chapter, chRange, res.Index.ChapterCount)
-	if err != nil {
+	if err != nil && !errors.Is(err, errNoChapterFilter) {
 		return err
 	}
-	writeAll := ids == nil // nil means no filter -> write all
+	writeAll := errors.Is(err, errNoChapterFilter) // no filter -> write all
 
 	chaptersDir := proj.ChaptersDir()
-	if err := os.MkdirAll(chaptersDir, 0o755); err != nil {
+	if err = os.MkdirAll(chaptersDir, 0o750); err != nil {
 		return fmt.Errorf("create chapters dir: %w", err)
 	}
 
+	written, err := writeChapters(res.Chapters, chaptersDir, ids, writeAll, force)
+	if err != nil {
+		return err
+	}
+	slog.Info("wrote chapters", "count", written)
+
+	// Always (re)write _skipped.json and _index.json so they reflect the
+	// latest analysis run.
+	if err = project.SaveJSON(filepath.Join(chaptersDir, "_skipped.json"), res.Skipped); err != nil {
+		return err
+	}
+	if err = project.SaveJSON(filepath.Join(chaptersDir, "_index.json"), res.Index); err != nil {
+		return err
+	}
+	return nil
+}
+
+// applyStripFilters applies each strip trigger to every chapter, recording
+// the raw size and truncating boilerplate trailers. See stripTrailer for
+// the per-chapter logic.
+func applyStripFilters(chs []chapters.Chapter, strip []string) {
+	if len(strip) == 0 {
+		return
+	}
+	stripped := 0
+	for i := range chs {
+		orig := chs[i].Source
+		// Record raw size for all chapters so the chapters command can
+		// show it even when the chapter wasn't modified by stripping.
+		chs[i].RawSize = len(chs[i].Title) + len(orig)
+		cleaned := orig
+		for _, s := range strip {
+			cleaned = stripTrailer(cleaned, s)
+		}
+		cleaned = strings.TrimSpace(cleaned)
+		if cleaned != orig {
+			chs[i].Source = cleaned
+			stripped++
+		}
+	}
+	slog.Info("applied strip filters", "patterns", len(strip), "chapters_modified", stripped)
+}
+
+// writeChapters saves the selected chapters to chaptersDir, skipping those
+// that already exist unless force is set. Returns the number written.
+func writeChapters(chs []chapters.Chapter, chaptersDir string, ids map[int]bool, writeAll, force bool) (int, error) {
 	written := 0
-	for _, ch := range res.Chapters {
+	for _, ch := range chs {
 		if !writeAll && !ids[ch.ID] {
 			continue
 		}
@@ -126,21 +174,19 @@ func runAnalyzeChapters(_ context.Context, proj *project.Project, force bool, ch
 			continue
 		}
 		if err := project.SaveJSON(path, ch); err != nil {
-			return err
+			return written, err
 		}
 		written++
 	}
-	slog.Info("wrote chapters", "count", written)
+	return written, nil
+}
 
-	// Always (re)write _skipped.json and _index.json so they reflect the
-	// latest analysis run.
-	if err := project.SaveJSON(filepath.Join(chaptersDir, "_skipped.json"), res.Skipped); err != nil {
-		return err
+// splitChapters runs the splitter, forcing a single strategy if one is set.
+func splitChapters(in chapters.SplitInput, strategy string) (*chapters.SplitResult, error) {
+	if strategy != "" {
+		return splitWithStrategy(in, chapters.Strategy(strategy))
 	}
-	if err := project.SaveJSON(filepath.Join(chaptersDir, "_index.json"), res.Index); err != nil {
-		return err
-	}
-	return nil
+	return chapters.Split(in)
 }
 
 // loadSplitInput reads spine.json, toc.json, and blocks/itemNNN.json from the
@@ -202,7 +248,7 @@ func splitWithStrategy(in chapters.SplitInput, s chapters.Strategy) (*chapters.S
 // chapter id (1-based).
 func parseChapterFilter(chapter int, chRange string, maxID int) (map[int]bool, error) {
 	if chapter == 0 && chRange == "" {
-		return nil, nil
+		return nil, errNoChapterFilter
 	}
 	set := make(map[int]bool)
 	if chapter != 0 {
@@ -212,8 +258,8 @@ func parseChapterFilter(chapter int, chRange string, maxID int) (map[int]bool, e
 		set[chapter] = true
 	}
 	if chRange != "" {
-		parts := strings.SplitN(chRange, "-", 2)
-		if len(parts) != 2 {
+		parts := strings.SplitN(chRange, "-", rangeSplitParts)
+		if len(parts) != rangeSplitParts {
 			return nil, fmt.Errorf("--range must be M-N, got %q", chRange)
 		}
 		var lo, hi int
@@ -252,10 +298,7 @@ func stripTrailer(text, trigger string) string {
 	}
 
 	// Check only the last 400 chars for the trigger.
-	tailStart := len(text) - 400
-	if tailStart < 0 {
-		tailStart = 0
-	}
+	tailStart := max(len(text)-stripTailLen, 0)
 	tail := text[tailStart:]
 
 	triggerIdx := strings.Index(strings.ToLower(tail), strings.ToLower(trigger))
@@ -270,11 +313,11 @@ func stripTrailer(text, trigger string) string {
 	// Only search within the tail (last 400 chars) to avoid matching
 	// scene-break separators in the middle of the chapter body.
 	cutFrom := triggerAbs
-	for i := triggerAbs - 1; i >= tailStart+2; i-- {
+	for i := triggerAbs - 1; i >= tailStart+starSeparatorLen-1; i-- {
 		if text[i] == '*' && text[i-1] == '*' && text[i-2] == '*' {
 			// Found a 3+ star separator. Walk back to include all leading
 			// stars and any whitespace before them.
-			cutFrom = i - 2
+			cutFrom = i - (starSeparatorLen - 1)
 			for cutFrom > 0 && text[cutFrom-1] == '*' {
 				cutFrom--
 			}

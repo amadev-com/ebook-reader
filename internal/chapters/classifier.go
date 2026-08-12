@@ -11,6 +11,18 @@ import (
 	"strings"
 )
 
+// Classifier rule names and decision labels used in Reason.Rule and
+// Decision.String(). Extracted as constants for goconst.
+const (
+	decisionLabelUnknown = "UNKNOWN"
+
+	ruleCopyright        = "copyright"
+	ruleContents         = "contents"
+	ruleAcknowledgements = "acknowledgements"
+	ruleChapterNum       = "chapter-num"
+	rulePart             = "part"
+)
+
 // Decision is the classifier's verdict for a section.
 type Decision int
 
@@ -30,15 +42,16 @@ const (
 // String returns a human-readable label for the decision.
 func (d Decision) String() string {
 	switch d {
+	case DecisionUnknown:
+		return decisionLabelUnknown
 	case DecisionKeep:
 		return "KEEP"
 	case DecisionSkip:
 		return "SKIP"
 	case DecisionAmbiguous:
 		return "AMBIGUOUS"
-	default:
-		return "UNKNOWN"
 	}
+	return decisionLabelUnknown
 }
 
 // Reason records why a classifier reached its decision.
@@ -49,16 +62,18 @@ type Reason struct {
 
 // skipPatterns are case-insensitive substring/regex patterns for front/back
 // matter titles. Matched against the trimmed title.
+//
+//nolint:gochecknoglobals // compiled regex patterns, immutable after init
 var skipPatterns = []struct {
 	name string
 	re   *regexp.Regexp
 }{
 	{"cover", regexp.MustCompile(`(?i)^cover(\s|$)`)},
-	{"copyright", regexp.MustCompile(`(?i)copyright`)},
+	{ruleCopyright, regexp.MustCompile(`(?i)copyright`)},
 	{"title-page", regexp.MustCompile(`(?i)^title\s*page`)},
-	{"contents", regexp.MustCompile(`(?i)^(table\s+of\s+)?contents?$`)},
+	{ruleContents, regexp.MustCompile(`(?i)^(table\s+of\s+)?contents?$`)},
 	{"toc", regexp.MustCompile(`(?i)^toc$`)},
-	{"acknowledgements", regexp.MustCompile(`(?i)^acknowledg(e)?ments`)},
+	{ruleAcknowledgements, regexp.MustCompile(`(?i)^acknowledg(e)?ments`)},
 	{"about-author", regexp.MustCompile(`(?i)^about\s+the\s+author`)},
 	{"about-book", regexp.MustCompile(`(?i)^about\s+(the\s+)?book`)},
 	{"dedication", regexp.MustCompile(`(?i)^dedication`)},
@@ -79,14 +94,16 @@ var skipPatterns = []struct {
 }
 
 // keepPatterns are case-insensitive regex patterns for chapter-like titles.
+//
+//nolint:gochecknoglobals // compiled regex patterns, immutable after init
 var keepPatterns = []struct {
 	name string
 	re   *regexp.Regexp
 }{
-	{"chapter-num", regexp.MustCompile(`(?i)^chapter\s+(\d+|[ivxlcdm]+)\b`)},
+	{ruleChapterNum, regexp.MustCompile(`(?i)^chapter\s+(\d+|[ivxlcdm]+)\b`)},
 	{"chapter-word", regexp.MustCompile(`(?i)^chapter\s+([a-z]|[ivxlcdm]+)\b`)},
 	{"chapter-any", regexp.MustCompile(`(?i)^chapter\b`)},
-	{"part", regexp.MustCompile(`(?i)^part\s+(\d+|[ivxlcdm]+)\b`)},
+	{rulePart, regexp.MustCompile(`(?i)^part\s+(\d+|[ivxlcdm]+)\b`)},
 	{"book-num", regexp.MustCompile(`(?i)^book\s+(\d+|[ivxlcdm]+)\b`)},
 	{"volume", regexp.MustCompile(`(?i)^volume\s+(\d+|[ivxlcdm]+)\b`)},
 	{"prologue", regexp.MustCompile(`(?i)^prologue\b`)},
