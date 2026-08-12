@@ -528,7 +528,10 @@ func extractWAVData(wav []byte, expectedOffset int) ([]byte, error) {
 	if dataSize > math.MaxInt32 {
 		return nil, fmt.Errorf("WAV data chunk size too large: %d", dataSize)
 	}
-	end := min(dataOffset+int(dataSize), len(wav))
+	end := dataOffset + int(dataSize)
+	if end > len(wav) {
+		return nil, fmt.Errorf("WAV data chunk truncated: declared %d bytes, have %d", dataSize, len(wav)-dataOffset)
+	}
 	return wav[dataOffset:end], nil
 }
 
