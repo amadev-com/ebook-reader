@@ -46,7 +46,12 @@ func pollBatchUntilTerminal(
 		state.Completed = info.Completed
 		state.Failed = info.Failed
 		if err = translation.SaveBatchState(proj.AIDir(), state); err != nil {
-			return nil, fmt.Errorf("save %s state: %w", label, err)
+			// Log but don't abort — the batch is already submitted and
+			// being paid for. The in-memory state is still current; only
+			// the persisted checkpoint is stale. --continue may resume
+			// from an older status, but that's recoverable.
+			slog.Default().WarnContext(ctx, "failed to persist batch state",
+				"batch_id", state.BatchID, "error", err)
 		}
 
 		slog.Default().InfoContext(ctx, label+" status",
