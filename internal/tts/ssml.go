@@ -190,57 +190,57 @@ func escapeXML(s string) string {
 	return b.String()
 }
 
+// latinToCyrillicMap maps Latin letters to their Cyrillic visual equivalents.
+// Silero's Russian TTS model cannot handle Latin characters in SSML — it
+// crashes with "'NoneType' object has no attribute 'keys'" and returns silence.
+// Some entries are phonetic rather than visual (noted in comments).
+//
+//nolint:gochecknoglobals // immutable lookup table, read-only after init
+var latinToCyrillicMap = map[rune]rune{
+	'A': 'А',
+	'B': 'В',
+	'C': 'С',
+	'D': 'Д',
+	'E': 'Е',
+	'H': 'Н',
+	'K': 'К',
+	'M': 'М',
+	'O': 'О',
+	'P': 'Р',
+	'R': 'Р', // phonetic: Latin R → Cyrillic Р (both are R sound)
+	'S': 'С',
+	'T': 'Т',
+	'V': 'В', // phonetic: Latin V → Cyrillic В (both are V sound)
+	'X': 'Х',
+	'Y': 'У',
+	'Z': 'З', // phonetic: Latin Z → Cyrillic З (both are Z sound)
+	'a': 'а',
+	'b': 'в',
+	'c': 'с',
+	'd': 'д',
+	'e': 'е',
+	'h': 'н',
+	'k': 'к',
+	'm': 'м',
+	'o': 'о',
+	'p': 'р',
+	'r': 'р', // phonetic: Latin r → Cyrillic р
+	's': 'с',
+	't': 'т',
+	'v': 'в',
+	'x': 'х',
+	'y': 'у',
+	'z': 'з', // phonetic: Latin z → Cyrillic з
+}
+
 // latinToCyrillic replaces Latin letters that have Cyrillic visual
 // equivalents. Silero's Russian TTS model cannot handle Latin characters in
 // SSML — it crashes with "'NoneType' object has no attribute 'keys'" and
 // returns silence. This maps Latin letters to their Cyrillic look-alikes
 // so the text is all-Cyrillic before sending to the server.
-// Some entries are phonetic rather than visual (noted in comments).
 func latinToCyrillic(r rune) rune {
-	m := latinToCyrillicMap()
-	if cyr, ok := m[r]; ok {
+	if cyr, ok := latinToCyrillicMap[r]; ok {
 		return cyr
 	}
 	return r
-}
-
-// latinToCyrillicMap returns the Latin→Cyrillic lookup table, building it
-// once on first call.
-func latinToCyrillicMap() map[rune]rune {
-	return map[rune]rune{
-		'A': 'А',
-		'B': 'В',
-		'C': 'С',
-		'D': 'Д',
-		'E': 'Е',
-		'H': 'Н',
-		'K': 'К',
-		'M': 'М',
-		'O': 'О',
-		'P': 'Р',
-		'R': 'Р', // phonetic: Latin R → Cyrillic Р (both are R sound)
-		'S': 'С',
-		'T': 'Т',
-		'V': 'В', // phonetic: Latin V → Cyrillic В (both are V sound)
-		'X': 'Х',
-		'Y': 'У',
-		'Z': 'З', // phonetic: Latin Z → Cyrillic З (both are Z sound)
-		'a': 'а',
-		'b': 'в',
-		'c': 'с',
-		'd': 'д',
-		'e': 'е',
-		'h': 'н',
-		'k': 'к',
-		'm': 'м',
-		'o': 'о',
-		'p': 'р',
-		'r': 'р', // phonetic: Latin r → Cyrillic р
-		's': 'с',
-		't': 'т',
-		'v': 'в',
-		'x': 'х',
-		'y': 'у',
-		'z': 'з', // phonetic: Latin z → Cyrillic з
-	}
 }
