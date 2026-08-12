@@ -29,11 +29,18 @@ func LoadSummary(memoryDir string, chapterID int) (string, error) {
 // SaveSummary writes a chapter's summary to memory/chapter_NNN.summary.txt.
 func SaveSummary(memoryDir string, chapterID int, summary string) error {
 	path := summaryPath(memoryDir, chapterID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("create memory dir: %w", err)
+	}
+	if err := os.Chmod(dir, 0o750); err != nil { //nolint:gosec // G302: 0750 is appropriate for directories
+		return fmt.Errorf("chmod memory dir: %w", err)
 	}
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(summary)+"\n"), 0o600); err != nil {
 		return fmt.Errorf("write summary for chapter %d: %w", chapterID, err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("chmod summary for chapter %d: %w", chapterID, err)
 	}
 	return nil
 }
