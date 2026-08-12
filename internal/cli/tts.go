@@ -248,7 +248,13 @@ func tempWAVPath(audioDir string, chapterID int) string {
 // atomically on success, so a cancelled or failed conversion never leaves a
 // partially-written output file that would cause later runs to skip the chapter.
 func convertAudio(ctx context.Context, input, output, format, bitrate string) error {
-	tmpOut := output + ".tmp"
+	// Build a temp name that preserves the real extension (so ffmpeg can
+	// infer the muxer) but is clearly temporary and hidden from countFiles.
+	// e.g. "chapter_001.mp3" → ".chapter_001.tmp.mp3"
+	dir, base := filepath.Split(output)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	tmpOut := filepath.Join(dir, "."+stem+".tmp"+ext)
 	args := []string{"-y", "-i", input}
 
 	switch strings.ToLower(format) {
