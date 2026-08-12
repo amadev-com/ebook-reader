@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -179,8 +178,8 @@ func runPronounce(
 }
 
 // filterPronounceChapters selects chapters that have translations and don't
-// already have stress marks (unless force is set). Returns the chapters to
-// process and the number skipped.
+// already have stress marks in the global vocabulary (unless force is set).
+// Returns the chapters to process and the number skipped.
 func filterPronounceChapters(
 	chs []chapters.Chapter,
 	proj *project.Project,
@@ -189,6 +188,13 @@ func filterPronounceChapters(
 	targetLang string,
 	force bool,
 ) ([]chapters.Chapter, int) {
+	// Load the global stress vocabulary to check which chapters already have
+	// stress marks. This prevents completed chapters from being resubmitted.
+	var stress *tts.Stress
+	if !force {
+		stress, _ = tts.LoadStress(proj.AIDir())
+	}
+
 	var toProcess []chapters.Chapter
 	skipped := 0
 	for _, ch := range chs {
@@ -200,8 +206,7 @@ func filterPronounceChapters(
 			skipped++
 			continue
 		}
-		stressPath := filepath.Join(proj.AIDir(), fmt.Sprintf("stress_%03d.json", ch.ID))
-		if project.Exists(stressPath) && !force {
+		if stress != nil && stress.CountForChapter(ch.ID) > 0 {
 			skipped++
 			continue
 		}
