@@ -46,10 +46,9 @@ func newAnalyzeChaptersCmd() *cobra.Command {
 		Use:   "analyze-chapters",
 		Short: "Detect chapters from extracted spine/TOC and write chapters/*.json",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			setupLogger()
-			ctx, cancel := rootContext()
-			defer cancel()
+			ctx := cmd.Context()
 			proj, err := openProject()
 			if err != nil {
 				return err

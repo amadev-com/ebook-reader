@@ -48,10 +48,9 @@ func newAnalyzeCmd() *cobra.Command {
 		Use:   "analyze",
 		Short: "Extract glossary and characters via OpenAI Batch API",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			setupLogger()
-			ctx, cancel := rootContext()
-			defer cancel()
+			ctx := cmd.Context()
 			proj, err := openProject()
 			if err != nil {
 				return err

@@ -32,10 +32,9 @@ func newTTSCmd() *cobra.Command {
 		Use:   "tts",
 		Short: "Synthesize audio from SSML via the configured TTS engine",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			setupLogger()
-			ctx, cancel := rootContext()
-			defer cancel()
+			ctx := cmd.Context()
 			proj, err := openProject()
 			if err != nil {
 				return err

@@ -7,12 +7,9 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -71,12 +68,6 @@ func NewRoot() *cobra.Command {
 // openProject loads the project at flagProject, applying defaults.
 func openProject() (*project.Project, error) {
 	return project.New(flagProject)
-}
-
-// rootContext returns a context cancelled on SIGINT/SIGTERM.
-func rootContext() (context.Context, context.CancelFunc) {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	return ctx, cancel
 }
 
 // setupLogger configures slog to stderr at the requested level.

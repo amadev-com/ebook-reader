@@ -40,8 +40,7 @@ func newImportCmd() *cobra.Command {
 		Args:  cobra.RangeArgs(minImportArgs, maxImportArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			setupLogger()
-			ctx, cancel := rootContext()
-			defer cancel()
+			ctx := cmd.Context()
 
 			epubPath := args[0]
 			bookName := ""

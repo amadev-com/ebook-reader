@@ -45,10 +45,9 @@ func newPronounceCmd() *cobra.Command {
 		Use:   "pronounce",
 		Short: "Generate Silero stress marks per chapter via OpenAI Batch API",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			setupLogger()
-			ctx, cancel := rootContext()
-			defer cancel()
+			ctx := cmd.Context()
 			proj, err := openProject()
 			if err != nil {
 				return err

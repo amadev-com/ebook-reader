@@ -42,10 +42,9 @@ func newTranslateCmd() *cobra.Command {
 		Use:   "translate",
 		Short: "Translate chapters to the target language via OpenAI Batch API",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			setupLogger()
-			ctx, cancel := rootContext()
-			defer cancel()
+			ctx := cmd.Context()
 			proj, err := openProject()
 			if err != nil {
 				return err

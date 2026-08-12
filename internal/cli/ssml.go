@@ -36,10 +36,9 @@ func newSSMLCmd() *cobra.Command {
 		Use:   "ssml",
 		Short: "Apply stress marks and wrap translations in SSML for Silero TTS",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			setupLogger()
-			ctx, cancel := rootContext()
-			defer cancel()
+			ctx := cmd.Context()
 			proj, err := openProject()
 			if err != nil {
 				return err
