@@ -120,7 +120,7 @@ func runPronounce(
 
 	// Filter chapters that have translations and need stress marks.
 	targetLang := proj.Cfg.Languages.Target
-	toProcess, skipped := filterPronounceChapters(chs, proj, ids, writeAll, targetLang, force)
+	toProcess, skipped := filterPronounceChapters(chs, proj, ids, writeAll, targetLang, force || reset)
 	if len(toProcess) == 0 {
 		slog.Default().InfoContext(ctx, "no chapters to process", "skipped", skipped)
 		return nil
