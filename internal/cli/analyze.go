@@ -106,7 +106,11 @@ func runAnalyze(
 	}
 
 	// Check for an existing pending batch.
-	if state, _ := translation.LoadBatchState(proj.AIDir(), translation.BatchTypeAnalyze); state != nil {
+	state, err := translation.LoadBatchState(proj.AIDir(), translation.BatchTypeAnalyze)
+	if err != nil && !errors.Is(err, translation.ErrBatchStateNotFound) {
+		return fmt.Errorf("load batch state: %w", err)
+	}
+	if state != nil {
 		if !translation.IsTerminalStatus(state.Status) {
 			slog.Info("found pending analyze batch, resuming polling (use --force to start a new one)",
 				"batch_id", state.BatchID, "status", state.Status)
@@ -158,7 +162,7 @@ func runAnalyze(
 	)
 
 	// Create the batch client and submit.
-	state, err := submitAnalyzeBatch(ctx, proj, jsonlData, model, chapterIDs)
+	state, err = submitAnalyzeBatch(ctx, proj, jsonlData, model, chapterIDs)
 	if err != nil {
 		return err
 	}
@@ -256,13 +260,18 @@ func filterChapters(chs []chapters.Chapter, chapter int, chRange string) ([]chap
 // extraction batch (the first phase).
 func resumeAnalyzeBatch(ctx context.Context, proj *project.Project, pollInt int) error {
 	// Check for a pending merge batch first (second phase).
-	if mergeState, _ := translation.LoadBatchState(proj.AIDir(), translation.BatchTypeAnalyzeMerge); mergeState != nil {
+	mergeState, err := translation.LoadBatchState(proj.AIDir(), translation.BatchTypeAnalyzeMerge)
+	if err != nil && !errors.Is(err, translation.ErrBatchStateNotFound) {
+		return fmt.Errorf("load merge batch state: %w", err)
+	}
+	if mergeState != nil {
 		if !translation.IsTerminalStatus(mergeState.Status) {
 			slog.Info("resuming merge batch polling", "batch_id", mergeState.BatchID, "status", mergeState.Status)
 			return pollAnalyzeMergeBatch(ctx, proj, mergeState)
 		}
 		slog.Info("merge batch already completed, processing results", "batch_id", mergeState.BatchID)
-		batchClient, err := translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
+		var batchClient *translation.BatchClient
+		batchClient, err = translation.NewBatchClient(proj.Cfg.OpenAI.BaseURL, proj.Cfg.OpenAI.MaxRetries)
 		if err != nil {
 			return err
 		}
