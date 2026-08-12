@@ -87,7 +87,11 @@ func runPronounce(
 	}
 
 	// Check for an existing pending batch.
-	if state, _ := translation.LoadBatchState(proj.AIDir(), translation.BatchTypePronounce); state != nil {
+	state, err := translation.LoadBatchState(proj.AIDir(), translation.BatchTypePronounce)
+	if err != nil && !errors.Is(err, translation.ErrBatchStateNotFound) {
+		return fmt.Errorf("load batch state: %w", err)
+	}
+	if state != nil {
 		if !translation.IsTerminalStatus(state.Status) {
 			slog.Default().
 				InfoContext(ctx, "found pending pronounce batch, resuming polling (use --force to start a new one)",
@@ -156,7 +160,7 @@ func runPronounce(
 	slog.Default().InfoContext(ctx, "batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
 
 	// Save batch state.
-	state := &translation.BatchState{
+	state = &translation.BatchState{
 		BatchID:     batchID,
 		InputFileID: inputFileID,
 		Type:        translation.BatchTypePronounce,

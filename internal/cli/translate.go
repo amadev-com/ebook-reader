@@ -89,7 +89,11 @@ func runTranslate(
 	}
 
 	// Check for an existing pending batch.
-	if state, _ := translation.LoadBatchState(proj.AIDir(), translation.BatchTypeTranslate); state != nil {
+	state, err := translation.LoadBatchState(proj.AIDir(), translation.BatchTypeTranslate)
+	if err != nil && !errors.Is(err, translation.ErrBatchStateNotFound) {
+		return fmt.Errorf("load batch state: %w", err)
+	}
+	if state != nil {
 		if !translation.IsTerminalStatus(state.Status) {
 			slog.Default().
 				InfoContext(ctx, "found pending translate batch, resuming polling (use --force to start a new one)",
@@ -149,7 +153,7 @@ func runTranslate(
 		return err
 	}
 
-	state, err := submitTranslateBatch(ctx, proj, reqs, chapterIDs, model)
+	state, err = submitTranslateBatch(ctx, proj, reqs, chapterIDs, model)
 	if err != nil {
 		return err
 	}
