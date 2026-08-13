@@ -507,7 +507,8 @@ func parseWAVHeader(wav []byte) ([]byte, int, error) {
 
 // extractWAVData returns the PCM data from a WAV file, starting at the given
 // data offset (from the first WAV's header). Falls back to parsing if the
-// offset doesn't match.
+// offset doesn't match. A declared data size larger than the bytes actually
+// received is clamped to the available data.
 func extractWAVData(wav []byte, expectedOffset int) ([]byte, error) {
 	// Try the expected offset first (fast path — all WAVs have same header).
 	if expectedOffset < len(wav) && string(wav[expectedOffset-4:expectedOffset]) == "data" {
@@ -528,10 +529,7 @@ func extractWAVData(wav []byte, expectedOffset int) ([]byte, error) {
 	if dataSize > math.MaxInt32 {
 		return nil, fmt.Errorf("WAV data chunk size too large: %d", dataSize)
 	}
-	end := dataOffset + int(dataSize)
-	if end > len(wav) {
-		return nil, fmt.Errorf("WAV data chunk truncated: declared %d bytes, have %d", dataSize, len(wav)-dataOffset)
-	}
+	end := min(dataOffset+int(dataSize), len(wav))
 	return wav[dataOffset:end], nil
 }
 
