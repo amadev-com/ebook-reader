@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -28,7 +29,9 @@ import (
 // merged directly into the global ai/stress.json vocabulary, with each
 // entry tagged by chapter ID for per-chapter tracking and the chapter ID
 // recorded in processed_chapters. Chapters already recorded there are
-// skipped unless --force or --reset is used.
+// skipped unless --force is used. --reset wipes the vocabulary (with a
+// backup that is restored on failure) before processing, which naturally
+// re-selects all chapters.
 //
 // The command supports a --continue flag to resume polling an interrupted
 // batch. Batch state is persisted locally in ai/batch_pronounce.json.
@@ -57,9 +60,11 @@ func newPronounceCmd() *cobra.Command {
 			return runPronounce(ctx, proj, force, cont, reset, chapter, chRange, pollInt)
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "re-generate stress marks even if they already exist")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"re-process chapters even if stress marks already exist (merges with existing)")
 	cmd.Flags().BoolVar(&cont, "continue", false, "resume polling an interrupted batch")
-	cmd.Flags().BoolVar(&reset, "reset", false, "erase existing ai/stress.json and start merge from scratch")
+	cmd.Flags().BoolVar(&reset, "reset", false,
+		"wipe ai/stress.json before processing (backs up to stress.json.bak, restores on failure)")
 	cmd.Flags().IntVar(&chapter, "chapter", 0, "process only a single chapter id (1-based)")
 	cmd.Flags().StringVar(&chRange, "range", "", "process a range of chapter ids, e.g. 5-12")
 	cmd.Flags().IntVar(&pollInt, "poll-interval", defaultPollInterval, "seconds between batch status polls")
@@ -101,13 +106,34 @@ func runPronounce(
 			slog.Default().
 				InfoContext(ctx, "found pending pronounce batch, resuming polling (use --force to start a new one)",
 					"batch_id", state.BatchID, "status", state.Status)
-			return pollPronounceBatch(ctx, proj, state, pollInt, reset)
+			return withResetGuard(ctx, proj, reset, func() error {
+				return pollPronounceBatch(ctx, proj, state, pollInt)
+			})
 		}
 		slog.Default().
 			InfoContext(ctx, "cleaning up completed batch state from previous run", "batch_id", state.BatchID)
 		_ = translation.DeleteBatchState(proj.AIDir(), translation.BatchTypePronounce)
 	}
 
+	// --reset: backup and wipe the vocabulary before filtering so all
+	// chapters are naturally selected. The backup is restored on failure
+	// or deleted on success. The entire new-batch flow runs inside the
+	// guard so any failure (filter, submit, poll) triggers restore.
+	return withResetGuard(ctx, proj, reset, func() error {
+		return runPronounceNewBatch(ctx, proj, force, chapter, chRange, pollInt)
+	})
+}
+
+// runPronounceNewBatch handles the new-batch path: filter chapters, build
+// requests, submit batch, and poll until completion.
+func runPronounceNewBatch(
+	ctx context.Context,
+	proj *project.Project,
+	force bool,
+	chapter int,
+	chRange string,
+	pollInt int,
+) error {
 	// Load all chapters.
 	chs, err := loadAllChapters(proj)
 	if err != nil {
@@ -125,8 +151,10 @@ func runPronounce(
 	writeAll := errors.Is(err, errNoChapterFilter)
 
 	// Filter chapters that have translations and need stress marks.
+	// --reset already wiped the vocabulary, so all chapters pass the skip
+	// check naturally. --force bypasses the skip check without wiping.
 	targetLang := proj.Cfg.Languages.Target
-	toProcess, skipped := filterPronounceChapters(chs, proj, ids, writeAll, targetLang, force || reset)
+	toProcess, skipped := filterPronounceChapters(chs, proj, ids, writeAll, targetLang, force)
 	if len(toProcess) == 0 {
 		slog.Default().InfoContext(ctx, "no chapters to process", "skipped", skipped)
 		return nil
@@ -165,7 +193,7 @@ func runPronounce(
 	slog.Default().InfoContext(ctx, "batch submitted", "batch_id", batchID, "input_file_id", inputFileID)
 
 	// Save batch state.
-	state = &translation.BatchState{
+	state := &translation.BatchState{
 		BatchID:     batchID,
 		InputFileID: inputFileID,
 		Type:        translation.BatchTypePronounce,
@@ -180,7 +208,7 @@ func runPronounce(
 	}
 
 	// Poll until completion.
-	return pollPronounceBatch(ctx, proj, state, pollInt, reset)
+	return pollPronounceBatch(ctx, proj, state, pollInt)
 }
 
 // filterPronounceChapters selects chapters that have translations and have
@@ -266,7 +294,42 @@ func resumePronounceBatch(ctx context.Context, proj *project.Project, reset bool
 		return fmt.Errorf("load batch state: %w", err)
 	}
 	slog.Default().InfoContext(ctx, "resuming batch polling", "batch_id", state.BatchID, "status", state.Status)
-	return pollPronounceBatch(ctx, proj, state, pollInt, reset)
+	return withResetGuard(ctx, proj, reset, func() error {
+		return pollPronounceBatch(ctx, proj, state, pollInt)
+	})
+}
+
+// withResetGuard wraps fn with --reset backup/restore logic. When reset is
+// true, it backs up and wipes ai/stress.json before fn runs. On success the
+// backup is deleted; on failure it is restored. When reset is false, fn runs
+// directly.
+func withResetGuard(
+	ctx context.Context,
+	proj *project.Project,
+	reset bool,
+	fn func() error,
+) error {
+	if !reset {
+		return fn()
+	}
+	if err := backupAndResetStress(ctx, proj); err != nil {
+		return err
+	}
+	success := false
+	defer func() {
+		if !success {
+			if rerr := restoreStressBackup(proj); rerr != nil {
+				slog.Default().WarnContext(ctx, "failed to restore stress backup", "error", rerr)
+			}
+		} else {
+			deleteStressBackup(proj)
+		}
+	}()
+	if err := fn(); err != nil {
+		return err
+	}
+	success = true
+	return nil
 }
 
 // pollPronounceBatch polls the batch status every pollInt seconds. When the
@@ -278,7 +341,6 @@ func pollPronounceBatch(
 	proj *project.Project,
 	state *translation.BatchState,
 	pollInt int,
-	reset bool,
 ) error {
 	batchClient, err := pollBatchUntilTerminal(ctx, proj, state, pollInt, "batch")
 	if err != nil {
@@ -287,7 +349,7 @@ func pollPronounceBatch(
 	if state.Status != translation.BatchStatusCompleted {
 		return batchTerminalError(state, "batch")
 	}
-	return processPronounceResults(ctx, proj, state, batchClient, reset)
+	return processPronounceResults(ctx, proj, state, batchClient)
 }
 
 // processPronounceResults downloads the batch output and merges each
@@ -296,15 +358,15 @@ func pollPronounceBatch(
 // interactively in the CLI. Per-chapter stress files are never written to
 // processPronounceResults downloads and processes pronunciation batch results, merges
 // them into the global stress vocabulary, resolves conflicts, and saves the result.
-// When reset is true, it replaces the existing vocabulary. It returns an error if
-// results cannot be downloaded, the vocabulary cannot be loaded or saved, or
+// The vocabulary should already be in the desired state (existing for merge,
+// empty for --reset which was wiped before batch submission). It returns an error
+// if results cannot be downloaded, the vocabulary cannot be loaded or saved, or
 // conflicts cannot be resolved.
 func processPronounceResults(
 	ctx context.Context,
 	proj *project.Project,
 	state *translation.BatchState,
 	batchClient *translation.BatchClient,
-	reset bool,
 ) error {
 	slog.Default().
 		InfoContext(ctx, "downloading batch results", "batch_id", state.BatchID, "output_file_id", state.OutputFileID)
@@ -314,17 +376,12 @@ func processPronounceResults(
 		return fmt.Errorf("download results: %w", err)
 	}
 
-	// Load existing global stress or start fresh.
-	var global *tts.Stress
-	if reset {
-		slog.Default().InfoContext(ctx, "resetting global stress vocabulary (--reset)")
-		global = &tts.Stress{}
-	} else {
-		var existing *tts.Stress
-		if existing, err = tts.LoadStress(proj.AIDir()); err != nil {
-			return fmt.Errorf("load existing stress: %w", err)
-		}
-		global = existing
+	// Load existing global stress (empty if --reset wiped it before batch).
+	global, err := tts.LoadStress(proj.AIDir())
+	if err != nil {
+		return fmt.Errorf("load existing stress: %w", err)
+	}
+	if len(global.Entries) > 0 {
 		slog.Default().
 			InfoContext(ctx, "merging with existing stress vocabulary", "existing_entries", len(global.Entries))
 	}
@@ -585,5 +642,68 @@ func applyStressOverrides(result *stressResult, overrides []config.Pronunciation
 	}
 	if overridden > 0 {
 		slog.Default().Info("applied stress overrides", "overridden", overridden, "config_entries", len(overrides))
+	}
+}
+
+// stressBackupPath returns the backup file path for ai/stress.json.
+func stressBackupPath(proj *project.Project) string {
+	return filepath.Join(proj.AIDir(), "stress.json.bak")
+}
+
+// backupAndResetStress copies ai/stress.json to stress.json.bak (if not already
+// backed up) and writes an empty stress file. This allows --reset to wipe the
+// vocabulary before the skip check runs, so all chapters are naturally selected
+// without needing --force. The backup is restored on failure or deleted on success.
+func backupAndResetStress(ctx context.Context, proj *project.Project) error {
+	stressPath := filepath.Join(proj.AIDir(), "stress.json")
+	bakPath := stressBackupPath(proj)
+
+	// Only create a backup if one doesn't already exist (e.g. from a previous
+	// --reset run that was interrupted and is being resumed with --continue).
+	if !project.Exists(bakPath) && project.Exists(stressPath) {
+		data, rerr := os.ReadFile(stressPath)
+		if rerr != nil {
+			return fmt.Errorf("read stress for backup: %w", rerr)
+		}
+		//nolint:gosec // G703: path from trusted project AIDir
+		if werr := os.WriteFile(bakPath, data, 0o600); werr != nil {
+			return fmt.Errorf("write stress backup: %w", werr)
+		}
+		slog.Default().InfoContext(ctx, "backed up stress vocabulary", "backup", bakPath)
+	}
+
+	// Write empty stress file so filterPronounceChapters sees no processed chapters.
+	if err := (&tts.Stress{}).Save(proj.AIDir()); err != nil {
+		return fmt.Errorf("reset stress: %w", err)
+	}
+	slog.Default().InfoContext(ctx, "reset stress vocabulary (--reset)")
+	return nil
+}
+
+// restoreStressBackup restores ai/stress.json from stress.json.bak if the
+// backup exists. Used when a --reset batch fails or is interrupted.
+func restoreStressBackup(proj *project.Project) error {
+	bakPath := stressBackupPath(proj)
+	if !project.Exists(bakPath) {
+		return nil
+	}
+	stressPath := filepath.Join(proj.AIDir(), "stress.json")
+	data, rerr := os.ReadFile(bakPath)
+	if rerr != nil {
+		return fmt.Errorf("read stress backup: %w", rerr)
+	}
+	//nolint:gosec // G703: path from trusted project AIDir
+	if werr := os.WriteFile(stressPath, data, 0o600); werr != nil {
+		return fmt.Errorf("restore stress from backup: %w", werr)
+	}
+	_ = os.Remove(bakPath)
+	return nil
+}
+
+// deleteStressBackup removes stress.json.bak after a successful --reset run.
+func deleteStressBackup(proj *project.Project) {
+	bakPath := stressBackupPath(proj)
+	if project.Exists(bakPath) {
+		_ = os.Remove(bakPath)
 	}
 }
