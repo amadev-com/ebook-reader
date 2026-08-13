@@ -575,6 +575,7 @@ func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
 	// derived from the request text. Responses are delayed so that earlier
 	// chunks complete after later ones, forcing out-of-order completion.
 	// After concatenation, the PCM markers must appear in original chunk order.
+	var requestSeq atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body sileroRequestBody
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -583,9 +584,11 @@ func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
 		}
 		// Derive a unique marker from the complete chunk text via FNV-1a.
 		marker := chunkMarker(body.Text)
-		// Delay based on text length so earlier chunks (shorter text from
-		// splitSSML ordering) finish after later chunks.
-		time.Sleep(time.Duration(50+len(body.Text)) * time.Millisecond)
+		// Delay inversely by arrival order: first request (chunk 0) waits
+		// longest, last request waits least. With 3 chunks and parallel=4,
+		// all start simultaneously but complete in reverse order.
+		seq := requestSeq.Add(1)
+		time.Sleep(time.Duration(400-seq*100) * time.Millisecond)
 		_, _ = w.Write(makeWAVWithPCM(marker))
 	}))
 	defer ts.Close()
