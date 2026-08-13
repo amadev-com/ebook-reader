@@ -73,6 +73,7 @@ func newAnalyzeCmd() *cobra.Command {
 //  1. If --continue: load existing batch state and jump to polling.
 //  2. Otherwise: build JSONL with one request per chapter, upload, create batch.
 //  3. Poll batch status every pollInt seconds until terminal.
+//
 // runAnalyze orchestrates chapter analysis, batch submission and resumption, and glossary and character merging.
 // It returns an error if chapter loading, batch preparation, submission, or processing fails.
 func runAnalyze(

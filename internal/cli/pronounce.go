@@ -70,6 +70,7 @@ func newPronounceCmd() *cobra.Command {
 //  1. If --continue: load existing batch state and jump to polling.
 //  2. Otherwise: build JSONL with one request per chapter, upload, create batch.
 //  3. Poll batch status every pollInt seconds until terminal.
+//
 // runPronounce generates pronunciation stress marks for selected translated chapters,
 // submits them as a batch, and processes the completed results into the project's
 // global stress vocabulary. It resumes pending batches when applicable.
