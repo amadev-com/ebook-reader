@@ -33,7 +33,7 @@ const stripTailLen = 400
 const starSeparatorLen = 3
 
 // newAnalyzeChaptersCmd implements `bookai analyze-chapters`. It reads the
-// newAnalyzeChaptersCmd creates the Cobra command that analyzes extracted artifacts and writes chapter JSON files.
+// extracted/ artifacts, runs the chapter splitter, and writes chapters/*.json.
 func newAnalyzeChaptersCmd() *cobra.Command {
 	var (
 		force    bool
@@ -137,7 +137,7 @@ func runAnalyzeChapters(
 
 // applyStripFilters applies each strip trigger to every chapter, recording
 // the raw size and truncating boilerplate trailers. See stripTrailer for
-// applyStripFilters removes configured trailing content from each chapter and records its original title and source size.
+// the per-chapter logic.
 func applyStripFilters(chs []chapters.Chapter, strip []string) {
 	if len(strip) == 0 {
 		return
@@ -162,9 +162,7 @@ func applyStripFilters(chs []chapters.Chapter, strip []string) {
 }
 
 // writeChapters saves the selected chapters to chaptersDir, skipping those
-// writeChapters writes selected chapters to the chapters directory, preserving existing
-// files unless force is true. It returns the number of chapters written and any error
-// encountered while saving a chapter.
+// that already exist unless force is set. Returns the number written.
 func writeChapters(chs []chapters.Chapter, chaptersDir string, ids map[int]bool, writeAll, force bool) (int, error) {
 	written := 0
 	for _, ch := range chs {
@@ -184,7 +182,7 @@ func writeChapters(chs []chapters.Chapter, chaptersDir string, ids map[int]bool,
 	return written, nil
 }
 
-// splitChapters splits the input chapters using the specified strategy or the default strategy when none is provided.
+// splitChapters runs the splitter, forcing a single strategy if one is set.
 func splitChapters(in chapters.SplitInput, strategy string) (*chapters.SplitResult, error) {
 	if strategy != "" {
 		return splitWithStrategy(in, chapters.Strategy(strategy))
@@ -193,8 +191,7 @@ func splitChapters(in chapters.SplitInput, strategy string) (*chapters.SplitResu
 }
 
 // loadSplitInput reads spine.json, toc.json, and blocks/itemNNN.json from the
-// loadSplitInput loads spine, table-of-contents, and block data from an extracted directory.
-// Missing block files produce spine items without blocks, while malformed files return an error.
+// extracted directory and assembles a chapters.SplitInput.
 func loadSplitInput(extractedDir string) (chapters.SplitInput, error) {
 	var spine []spineEntry
 	if err := project.LoadJSON(filepath.Join(extractedDir, "spine.json"), &spine); err != nil {
@@ -249,9 +246,7 @@ func splitWithStrategy(in chapters.SplitInput, s chapters.Strategy) (*chapters.S
 
 // parseChapterFilter interprets --chapter and --range. Returns nil if no
 // filter is set (meaning "all chapters"). Otherwise returns a set keyed by
-// parseChapterFilter builds the set of chapter IDs selected by a chapter number and range.
-// Chapter IDs are one-based and must fall within maxID. It returns errNoChapterFilter when
-// neither filter is provided.
+// chapter id (1-based).
 func parseChapterFilter(chapter int, chRange string, maxID int) (map[int]bool, error) {
 	if chapter == 0 && chRange == "" {
 		return nil, errNoChapterFilter
@@ -297,10 +292,7 @@ func chapterPath(chaptersDir string, id int) string {
 //
 // The backward search for "***" is limited to the tail (last 400 chars) so
 // that scene-break separators ("***") in the middle of the chapter body are
-// stripTrailer removes trailer content beginning at a case-insensitive trigger found
-// within the final 400 bytes of text. It also removes a preceding three-or-more-star
-// separator and adjacent whitespace when present; otherwise, it truncates at the
-// trigger. Empty text or triggers are returned unchanged.
+// not mistaken for the trailer separator.
 func stripTrailer(text, trigger string) string {
 	if trigger == "" || len(text) == 0 {
 		return text

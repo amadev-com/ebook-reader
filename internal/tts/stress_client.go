@@ -26,8 +26,7 @@ type StressClient struct {
 
 // NewStressClient creates a StressClient pointing at the given server URL
 // (e.g. "http://localhost:5555"). Uses a 5-minute timeout to accommodate
-// NewStressClient creates a stress client for the specified server URL. Trailing
-// slashes are removed from the URL, and requests use a five-minute timeout.
+// large chapters.
 func NewStressClient(serverURL string) *StressClient {
 	return &StressClient{
 		serverURL: strings.TrimRight(serverURL, "/"),

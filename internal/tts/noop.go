@@ -61,7 +61,7 @@ type NoopEngine struct {
 }
 
 // NewNoopEngine constructs a NoopEngine from the given config. The config is
-// NewNoopEngine creates a dependency-free no-op TTS engine with the specified configuration.
+// accepted but largely ignored — the noop engine needs no model or runtime.
 func NewNoopEngine(cfg EngineConfig) (Engine, error) {
 	return &NoopEngine{cfg: cfg}, nil
 }
@@ -80,7 +80,7 @@ func (e *NoopEngine) Synthesize(_ context.Context, text string, outPath string) 
 }
 
 // noopDuration returns a duration between 0.5s and 3s based on text length,
-// noopDuration calculates a capped audio duration from the input text length.
+// so noop audio files vary in size for merge testing.
 func noopDuration(textLen int) time.Duration {
 	if textLen < 0 {
 		textLen = 0
@@ -92,7 +92,7 @@ func noopDuration(textLen int) time.Duration {
 	return time.Duration(secs * float64(time.Second))
 }
 
-// noopSineWave generates mono 16-bit PCM samples for the specified frequency, duration, and sample rate.
+// noopSineWave generates a mono 16-bit PCM sine wave.
 func noopSineWave(freq float64, duration time.Duration, sampleRate int) []int16 {
 	numSamples := int(duration.Seconds() * float64(sampleRate))
 	samples := make([]int16, numSamples)
@@ -104,7 +104,7 @@ func noopSineWave(freq float64, duration time.Duration, sampleRate int) []int16 
 	return samples
 }
 
-// writeWAV writes samples to a mono, 16-bit PCM WAV file at the specified sample rate.
+// writeWAV writes a minimal 16-bit mono PCM WAV file.
 func writeWAV(path string, samples []int16, sampleRate int) error {
 	if sampleRate < 0 || sampleRate > math.MaxUint32/2 {
 		return fmt.Errorf("invalid sample rate: %d", sampleRate)

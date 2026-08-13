@@ -28,7 +28,7 @@ const prevSummaryCount = 2
 // new-term extraction) runs as live calls.
 //
 // The command supports a --continue flag to resume polling an interrupted
-// newTranslateCmd creates the translate command for submitting and monitoring chapter translation batches. Batch state is persisted locally in ai/batch_translate.json.
+// batch. Batch state is persisted locally in ai/batch_translate.json.
 func newTranslateCmd() *cobra.Command {
 	var (
 		force   bool
@@ -69,9 +69,7 @@ func newTranslateCmd() *cobra.Command {
 //
 // Summaries are generated in the analyze step (not here) so they're available
 // as context at batch submission time. No post-processing is done after
-// runTranslate translates the selected chapters, resuming pending batches and
-// submitting a new batch when necessary. It applies chapter filters, translation
-// options, and glossary context before polling the batch to completion.
+// translation — the glossary is finalized by analyze.
 func runTranslate(
 	ctx context.Context,
 	proj *project.Project,
@@ -165,8 +163,7 @@ func runTranslate(
 }
 
 // submitTranslateBatch builds the JSONL, submits the batch to OpenAI, and
-// submitTranslateBatch submits translation requests and persists the resulting batch state.
-// It returns the saved batch state or an error if request construction, submission, or state persistence fails.
+// persists the batch state.
 func submitTranslateBatch(
 	ctx context.Context,
 	proj *project.Project,
@@ -213,7 +210,7 @@ func submitTranslateBatch(
 
 // filterTranslateChapters selects chapters that need translation (don't
 // already have a translation file unless force is set). Returns the chapters
-// filterTranslateChapters selects chapters eligible for translation and counts existing translations that were skipped. Chapters are limited to ids unless writeAll is true, and existing target-language translations are skipped unless force is true.
+// to translate and the number skipped.
 func filterTranslateChapters(
 	chs []chapters.Chapter,
 	proj *project.Project,
@@ -239,10 +236,7 @@ func filterTranslateChapters(
 }
 
 // buildTranslateRequests builds batch requests (one per chapter) with
-// buildTranslateRequests creates translation batch requests for the supplied chapters and
-// returns their chapter IDs. It includes chapter-specific glossary terms and, unless
-// skipMem is true, previous chapter summaries as context. It returns an error if previous
-// summaries cannot be loaded.
+// per-chapter glossary filtering and previous chapter summaries as context.
 func buildTranslateRequests(
 	toTranslate []chapters.Chapter,
 	glossary *translation.Glossary,
@@ -294,7 +288,7 @@ func resumeTranslateBatch(ctx context.Context, proj *project.Project, pollInt in
 }
 
 // pollTranslateBatch polls the batch status every pollInt seconds. When the
-// pollTranslateBatch polls a translation batch until it reaches a terminal status and processes its results when completed.
+// batch reaches a terminal status, it downloads results and processes them.
 func pollTranslateBatch(ctx context.Context, proj *project.Project, state *translation.BatchState, pollInt int) error {
 	batchClient, err := pollBatchUntilTerminal(ctx, proj, state, pollInt, "batch")
 	if err != nil {
@@ -309,7 +303,7 @@ func pollTranslateBatch(ctx context.Context, proj *project.Project, state *trans
 // processTranslateResults downloads the batch output and writes translation
 // files. No post-processing is done — summaries are generated in the analyze
 // step, and the glossary is finalized by analyze. Chapter status is updated
-// processTranslateResults downloads and processes completed translation results, writes translation files, updates chapter statuses, and removes the saved batch state. It returns an error if results cannot be downloaded or a translation file cannot be written.
+// to "translated".
 func processTranslateResults(
 	ctx context.Context,
 	proj *project.Project,
@@ -384,7 +378,7 @@ func translationPath(translationDir string, chapterID int, targetLang string) st
 // translation. Some chapter sources begin with the title line, and the
 // translation prompt used to repeat the title in the header — causing the
 // model to output the title twice. This strips the duplicate: if the text
-// deduplicateTitle removes a repeated second title line from the beginning of text.
+// starts with "Title\n\nTitle\n...", it becomes "Title\n\n...".
 func deduplicateTitle(text string) string {
 	// Find the first non-empty line.
 	before, after, ok := strings.Cut(text, "\n")

@@ -24,8 +24,7 @@ import (
 // By default, stress marks come from the global ai/stress.json (built by
 // `bookai pronounce`). With --auto-stress, the silero-stress model on the
 // TTS server is used instead — no stress.json needed. Config pronunciation
-// newSSMLCmd creates the Cobra command for generating SSML from translated chapters.
-// The command supports chapter selection, forced regeneration, and automatic stress generation.
+// overrides are always applied on top.
 func newSSMLCmd() *cobra.Command {
 	var (
 		force      bool
@@ -126,8 +125,7 @@ func runSSML(
 }
 
 // buildStressOverrides converts config pronunciation overrides into a
-// buildStressOverrides creates a stress store from configured pronunciation overrides.
-// It returns nil when no overrides are provided.
+// tts.Stress store. Returns nil if there are no overrides.
 func buildStressOverrides(pronOverrides []config.PronunciationOverride) *tts.Stress {
 	if len(pronOverrides) == 0 {
 		return nil
@@ -142,7 +140,7 @@ func buildStressOverrides(pronOverrides []config.PronunciationOverride) *tts.Str
 }
 
 // setupStressSource initializes either the auto-stress client (silero-stress
-// setupStressSource selects automatic server-based stress processing or loads the project's global stress vocabulary. It returns an error when automatic stress lacks a configured server URL or the vocabulary cannot be loaded.
+// model on TTS server) or loads the global stress.json vocabulary.
 func setupStressSource(proj *project.Project, autoStress bool) (*tts.StressClient, *tts.Stress, error) {
 	if autoStress {
 		if proj.Cfg.TTS.ServerURL == "" {
@@ -163,8 +161,7 @@ func setupStressSource(proj *project.Project, autoStress bool) (*tts.StressClien
 
 // processSSMLChapter processes a single chapter: reads its translation,
 // applies stress marks, generates SSML, and saves the result. Returns the
-// processSSMLChapter generates an SSML file for a selected translated chapter.
-// It returns the generated count, skipped count, and any processing error.
+// generated (1 or 0) and skipped (1 or 0) counts.
 func processSSMLChapter(
 	ctx context.Context,
 	ch chapters.Chapter,
@@ -225,9 +222,7 @@ func processSSMLChapter(
 
 // applyStressToText applies stress marks to the chapter text using either the
 // auto-stress model or the global stress vocabulary, then applies config
-// applyStressToText applies pronunciation stress using automatic stress generation or a
-// configured vocabulary, then applies pronunciation overrides. It returns an error if
-// automatic stress generation fails.
+// overrides on top.
 func applyStressToText(
 	ctx context.Context,
 	text string,

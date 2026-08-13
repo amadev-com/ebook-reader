@@ -96,10 +96,7 @@ type ChapterText struct {
 // --- Translation prompts (bookai translate) ---
 
 // System builds the system prompt for a chapter translation. It includes the
-// System builds the translation system prompt with optional glossary terms and previous-chapter context.
-// glossaryBlock contains glossary instructions to append to the prompt.
-// prevContext contains context from preceding chapters to append to the prompt.
-// The returned prompt instructs the translator to produce natural Russian while preserving required terminology and formatting.
+// translator persona, the glossary block, and previous chapter context.
 func System(glossaryBlock, prevContext string) string {
 	var b strings.Builder
 	b.WriteString(
@@ -129,7 +126,7 @@ Rules:
 // User builds the user prompt for translating one chapter. The title is not
 // included in the prompt header because it is already embedded in the source
 // text (chapter source starts with the title line). Including it twice would
-// User builds a translation prompt for a chapter, including the chapter number and source text.
+// cause the translator to duplicate it in the output.
 func User(ch ChapterInfo, source string) string {
 	return fmt.Sprintf(
 		"Translate chapter %d. The source text begins with the chapter title — translate it as part of the text.\n\n%s",
@@ -208,9 +205,10 @@ Return a JSON object with this exact shape:
 The "type" field for terms must be one of: "place", "organization", "title", "term".
 The "role" field for characters should be one of: "protagonist", "antagonist", "supporting" (or empty if unclear).`
 
-// GlossaryMergeUser builds a prompt that merges per-chapter extraction results with existing vocabulary.
-// Locked translations are supplied as mandatory mappings, and existing characters and glossary terms are
-// retained when appropriate. It returns the resulting merge prompt.
+// GlossaryMergeUser builds the user prompt for the merge step. It receives all
+// per-chapter extraction results serialized as JSON, plus the locked terms
+// from config overrides. If existing glossary/characters are provided, they
+// are included so the AI can merge new entries with the existing vocabulary.
 func GlossaryMergeUser(
 	perChapterResults string,
 	lockedTerms string,
@@ -293,8 +291,7 @@ If no words need stress marks, return {"entries": []}.`
 // StressUser builds the user prompt for a single chapter. It sends the full
 // chapter text so the model can scan it for words with non-obvious stress.
 // Config overrides are included so the model respects user-specified stress
-// StressUser builds a prompt for identifying ambiguous Russian word stress in chapter text,
-// including any mandatory pronunciation overrides.
+// marks.
 func StressUser(chapterText string, overrides []config.PronunciationOverride) string {
 	var b strings.Builder
 	b.WriteString(

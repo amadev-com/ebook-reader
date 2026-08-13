@@ -17,7 +17,7 @@ import (
 // newVerifyGlossaryCmd implements `bookai verify-glossary`: scans all
 // translations for glossary source terms and reports any that appear
 // untranslated (still in English) in the Russian text, indicating the model
-// newVerifyGlossaryCmd creates the command that checks translations for untranslated or inconsistent glossary terms.
+// missed or ignored a glossary entry.
 func newVerifyGlossaryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify-glossary",

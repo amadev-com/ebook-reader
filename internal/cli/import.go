@@ -31,7 +31,7 @@ const maxImportArgs = 2
 // spine, TOC, and per-item blocks.
 //
 // If --project is explicitly set, that directory is used instead of
-// newImportCmd creates the command that initializes a project from an EPUB file and extracts its contents.
+// auto-creating one from the book name.
 func newImportCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
@@ -67,10 +67,7 @@ func newImportCmd() *cobra.Command {
 // resolveProjectDir determines the project directory for the import command.
 // If --project was explicitly set (non-default), use it as-is. Otherwise,
 // derive a directory name from the EPUB filename (or the optional bookName
-// resolveProjectDir resolves the project directory from the explicit project flag or
-// derives it from the book name or EPUB filename, creating the directory and default
-// configuration when needed. It returns an error if the working directory, project
-// directory, or default configuration cannot be created.
+// argument) and create it in the current working directory.
 func resolveProjectDir(cmd *cobra.Command, epubPath, bookName string) (string, error) {
 	// Check if --project was explicitly set by the user.
 	projectFlag := cmd.Flag("project")
@@ -136,8 +133,7 @@ func slugify(s string) string {
 //   - extracted/blocks/itemNNN.json (structured Block list per spine item)
 //
 // It is idempotent: if source/original.epub already exists and --force is not
-// runImport imports an EPUB into the project and extracts its metadata, spine, table of contents, and supported content items.
-// An existing source EPUB is overwritten only when force is true.
+// set, it returns an error pointing the user at --force.
 func runImport(ctx context.Context, proj *project.Project, epubPath string, force bool) error {
 	if err := proj.EnsureDirs(); err != nil {
 		return err
@@ -199,7 +195,7 @@ func runImport(ctx context.Context, proj *project.Project, epubPath string, forc
 }
 
 // buildSpineEntries assembles the ordered spine entry list from the OPF
-// buildSpineEntries converts OPF spine references into ordered spine entries, skipping references whose manifest items are missing.
+// manifest and spine references.
 func buildSpineEntries(opf *epub.OPF) []spineEntry {
 	spine := make([]spineEntry, 0, len(opf.Spine))
 	for _, ref := range opf.Spine {
@@ -219,9 +215,7 @@ func buildSpineEntries(opf *epub.OPF) []spineEntry {
 }
 
 // extractSpineItems reads each HTML spine item from the EPUB, saves the raw
-// extractSpineItems extracts HTML spine items and saves their raw content and blocks
-// to the extracted directory. Non-HTML items are skipped. It returns an error if an
-// item cannot be read, extracted, or saved.
+// bytes and extracted blocks to the extracted directory.
 func extractSpineItems(r *epub.Reader, spine []spineEntry, extractedDir string) error {
 	for i, entry := range spine {
 		if !isHTMLMediaType(entry.MediaType) {

@@ -54,10 +54,7 @@ type SileroEngine struct {
 
 // NewSileroEngine constructs a SileroEngine from the given config. The
 // ServerURL and Voice fields are required. The engine uses a 10-minute timeout
-// NewSileroEngine creates a Silero HTTP text-to-speech engine.
-// It requires a server URL and voice, trims trailing slashes from the server URL,
-// and uses at least one synthesis worker. It returns an error when a required
-// configuration value is missing.
+// to accommodate long chapter synthesis on first model load.
 func NewSileroEngine(cfg EngineConfig) (Engine, error) {
 	if cfg.ServerURL == "" {
 		return nil, fmt.Errorf("tts.silero: server_url is required")
@@ -212,8 +209,7 @@ func (e *SileroEngine) synthesizeChunkWorker(
 }
 
 // collectChunkResults checks for errors and missing data in chunk order,
-// collectChunkResults validates chunk results and returns them in order, or the first
-// encountered error. It reports missing data for any chunk.
+// returning the first error found or the complete wavData slice.
 func collectChunkResults(wavData [][]byte, errs []error, n int) ([][]byte, error) {
 	for i, err := range errs {
 		if err != nil {
@@ -281,7 +277,7 @@ func (e *SileroEngine) synthesizeOne(ctx context.Context, text string) ([]byte, 
 //
 // The input is expected to be <speak>...</speak> with <p> and <s> tags.
 // The output chunks are <speak><s>...</s><s>...</s></speak> (paragraph
-// splitSSML splits SSML into ordered chunks within the maximum chunk length while preserving sentence boundaries and pauses. It falls back to punctuation-based splitting when sentence tags are absent.
+// structure is flattened — pauses are preserved by sentence breaks).
 func splitSSML(ssml string) []string {
 	// Extract all <s>...</s> sentence blocks.
 	sentences := extractSentences(ssml)
@@ -386,9 +382,7 @@ func splitSentenceOnWords(sentence string, maxLen int) []string {
 }
 
 // splitRaw is a fallback when no <s> tags are found. It splits on sentence
-// splitRaw divides text into ordered chunks at sentence-ending punctuation.
-// Chunks are grouped up to maxLen characters when possible; an individual
-// segment may exceed that limit.
+// punctuation (.!?) and wraps each chunk in <speak>.
 func splitRaw(text string, maxLen int) []string {
 	if len(text) <= maxLen {
 		return []string{text}
@@ -423,9 +417,7 @@ func splitRaw(text string, maxLen int) []string {
 
 // concatWAVs concatenates multiple WAV files into one by extracting the PCM
 // data from each and writing a new WAV with the combined data. All input
-// concatWAVs combines WAV files into a single WAV file by concatenating their PCM data.
-// It preserves the first file's header and updates its RIFF and data chunk sizes. Returns
-// an error if the input is empty, any WAV is invalid, or the combined file exceeds WAV size limits.
+// WAVs must have the same format (sample rate, channels, bits per sample).
 func concatWAVs(wavs [][]byte) ([]byte, error) {
 	if len(wavs) == 0 {
 		return nil, fmt.Errorf("no WAV data to concatenate")
@@ -475,9 +467,7 @@ func concatWAVs(wavs [][]byte) ([]byte, error) {
 }
 
 // parseWAVHeader returns the header bytes (up to and including the "data"
-// parseWAVHeader validates a WAV header and locates the start of its PCM data.
-// It returns the header through the data chunk header, the PCM data offset, and
-// an error if the input is invalid or does not contain a data chunk.
+// chunk header) and the offset where PCM data starts.
 func parseWAVHeader(wav []byte) ([]byte, int, error) {
 	if len(wav) < minWAVHeaderSize {
 		return nil, 0, fmt.Errorf("WAV too short: %d bytes", len(wav))
@@ -518,8 +508,7 @@ func parseWAVHeader(wav []byte) ([]byte, int, error) {
 // extractWAVData returns the PCM data from a WAV file, starting at the given
 // data offset (from the first WAV's header). Falls back to parsing if the
 // offset doesn't match. A declared data size larger than the bytes actually
-// extractWAVData extracts PCM data from a WAV file, using the expected data offset when valid.
-// It limits the extracted data to the bytes available in wav.
+// received is clamped to the available data.
 func extractWAVData(wav []byte, expectedOffset int) ([]byte, error) {
 	// Try the expected offset first (fast path — all WAVs have same header).
 	if expectedOffset < len(wav) && string(wav[expectedOffset-4:expectedOffset]) == "data" {

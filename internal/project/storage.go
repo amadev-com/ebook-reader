@@ -38,8 +38,7 @@ func Exists(path string) bool {
 }
 
 // SaveJSON writes v as pretty-printed JSON to path. Pretty printing (2-space
-// SaveJSON writes v as indented JSON followed by a newline to path using restrictive file permissions.
-// It returns an error if marshaling or writing fails.
+// indent + sorted keys) keeps diffs stable so reruns are detectable in git.
 func SaveJSON(path string, v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {

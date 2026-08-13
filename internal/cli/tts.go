@@ -21,8 +21,7 @@ import (
 // the configured TTS engine. The engine is selected from config.yaml
 // (tts.engine) and is swappable via the tts.Engine registry. Engines produce
 // WAV audio; the CLI layer converts to the configured output format (MP3 by
-// newTTSCmd creates the command for synthesizing chapter audio from SSML using the configured TTS engine.
-// It supports forcing regeneration and selecting a single chapter or chapter range.
+// default) via ffmpeg. Output files are written to audio/chapter_NNN.mp3.
 func newTTSCmd() *cobra.Command {
 	var (
 		force   bool
@@ -122,10 +121,7 @@ func resolveAudioFormat(format string) string {
 }
 
 // synthesizeChapter synthesizes a single chapter's audio from its SSML file.
-// synthesizeChapter synthesizes audio for a chapter when it is selected and eligible.
-// It skips chapters without SSML or existing audio unless forced, and updates the chapter
-// status after successful synthesis. It returns synthesized and skipped counts, plus any
-// synthesis or file-reading error.
+// Returns the synthesized (1 or 0) and skipped (1 or 0) counts.
 func synthesizeChapter(
 	ctx context.Context,
 	ch chapters.Chapter,
@@ -177,8 +173,7 @@ func synthesizeChapter(
 }
 
 // synthesizeAudio runs the TTS engine and converts the output to the target
-// synthesizeAudio synthesizes chapter audio in the requested format, converting the engine's WAV output when necessary.
-// Errors include the chapter identifier and, for conversion failures, the target audio format.
+// format if needed.
 func synthesizeAudio(
 	ctx context.Context,
 	engine tts.Engine,
@@ -241,7 +236,7 @@ func audioPath(audioDir string, chapterID int, ext string) string {
 }
 
 // tempWAVPath returns a temporary WAV path for intermediate engine output
-// tempWAVPath returns the temporary WAV file path for a chapter before audio format conversion.
+// before format conversion.
 func tempWAVPath(audioDir string, chapterID int) string {
 	return filepath.Join(audioDir, fmt.Sprintf(".chapter_%03d.tmp.wav", chapterID))
 }
@@ -250,7 +245,7 @@ func tempWAVPath(audioDir string, chapterID int) string {
 // ffmpeg. The output is mono, at the given bitrate for lossy formats. The
 // conversion writes to a temporary file in the same directory and renames
 // atomically on success, so a cancelled or failed conversion never leaves a
-// convertAudio converts WAV input to the requested audio format and writes the result to output. It returns an error if conversion or output finalization fails.
+// partially-written output file that would cause later runs to skip the chapter.
 func convertAudio(ctx context.Context, input, output, format, bitrate string) error {
 	// Build a temp name that preserves the real extension (so ffmpeg can
 	// infer the muxer) but is clearly temporary and hidden from countFiles.
