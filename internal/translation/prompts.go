@@ -214,10 +214,8 @@ The "role" field for characters should be one of: "protagonist", "antagonist", "
 // GlossaryMergeUser builds a prompt that merges per-chapter extraction results with existing vocabulary.
 // Locked translations are supplied as mandatory mappings, and existing characters and glossary terms are
 // retained when appropriate. It returns the resulting merge prompt.
-func? No, only docstring, but function name in comment and no signature. Need comment itself. Should not include func. Standard comment can multiline. Could mention params? Requirements parameters only if meaningful. Names self explanatory. Return value docs not @. We can say returns prompt. Summary must not start Returns. Good. 
 // GlossaryMergeUser builds a prompt for merging per-chapter glossary extraction results into a unified glossary and character list.
 // The prompt may include locked translations and existing vocabulary for the merge.
-But return sentence perhaps observable. concise.
 func GlossaryMergeUser(
 	perChapterResults string,
 	lockedTerms string,
