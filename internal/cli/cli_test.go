@@ -521,3 +521,22 @@ func TestSaveBatchState_UnwritableDir(t *testing.T) {
 		t.Fatal("expected error from SaveBatchState with non-directory ai path, got nil")
 	}
 }
+
+func TestCountFiles_SkipsTempFiles(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Create a real audio file and a temp file sharing the same extension.
+	if err := os.WriteFile(filepath.Join(dir, "chapter_001.mp3"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".chapter_002.tmp.mp3"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n, ok := countFiles(dir, ".mp3")
+	if !ok {
+		t.Fatal("expected directory to exist")
+	}
+	if n != 1 {
+		t.Errorf("expected 1 file (temp excluded), got %d", n)
+	}
+}

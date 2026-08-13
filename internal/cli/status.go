@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -81,6 +82,11 @@ func countFiles(dir, ext string) (int, bool) {
 			return nil
 		}
 		if d.IsDir() {
+			return nil
+		}
+		// Skip temp/hidden files (e.g. .chapter_001.tmp.mp3 from convertAudio).
+		base := filepath.Base(path)
+		if strings.HasPrefix(base, ".") {
 			return nil
 		}
 		if ext == "" || filepath.Ext(path) == ext {
