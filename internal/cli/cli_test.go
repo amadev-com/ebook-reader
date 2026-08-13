@@ -1,13 +1,16 @@
-package cli
+package cli //nolint:testpackage // needs access to unexported CLI internals
 
 import (
 	"archive/zip"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"ebook-reader/internal/project"
+	"ebook-reader/internal/translation"
 	"ebook-reader/internal/tts"
 )
 
@@ -90,15 +93,15 @@ func writeZip(path string, files map[string]string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := mw.Write([]byte("application/epub+zip")); err != nil {
+	if _, err = mw.Write([]byte("application/epub+zip")); err != nil {
 		return err
 	}
+	var w io.Writer
 	for name, content := range files {
-		w, err := zw.Create(name)
-		if err != nil {
+		if w, err = zw.Create(name); err != nil {
 			return err
 		}
-		if _, err := w.Write([]byte(content)); err != nil {
+		if _, err = w.Write([]byte(content)); err != nil {
 			return err
 		}
 	}
@@ -117,12 +120,12 @@ func TestRunImportAndAnalyzeChapters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New project: %v", err)
 	}
-	if err := proj.EnsureDirs(); err != nil {
+	if err = proj.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
 
 	// Import.
-	if err := runImport(t.Context(), proj, epubPath, false); err != nil {
+	if err = runImport(t.Context(), proj, epubPath, false); err != nil {
 		t.Fatalf("runImport: %v", err)
 	}
 	// Verify expected artifacts.
@@ -140,7 +143,7 @@ func TestRunImportAndAnalyzeChapters(t *testing.T) {
 	}
 
 	// Analyze chapters.
-	if err := runAnalyzeChapters(t.Context(), proj, true, 0, "", "", nil); err != nil {
+	if err = runAnalyzeChapters(t.Context(), proj, true, 0, "", "", nil); err != nil {
 		t.Fatalf("runAnalyzeChapters: %v", err)
 	}
 	// Expect 2 chapters (cover skipped).
@@ -164,7 +167,7 @@ func TestRunImportAndAnalyzeChapters(t *testing.T) {
 		ChapterCount int    `json:"chapter_count"`
 		Strategy     string `json:"strategy"`
 	}
-	if err := project.LoadJSON(filepath.Join(proj.ChaptersDir(), "_index.json"), &idx); err != nil {
+	if err = project.LoadJSON(filepath.Join(proj.ChaptersDir(), "_index.json"), &idx); err != nil {
 		t.Fatalf("load index: %v", err)
 	}
 	if idx.ChapterCount != 2 {
@@ -183,18 +186,18 @@ func TestRunImportIdempotentWithoutForce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := proj.EnsureDirs(); err != nil {
+	if err = proj.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
-	if err := runImport(t.Context(), proj, epubPath, false); err != nil {
+	if err = runImport(t.Context(), proj, epubPath, false); err != nil {
 		t.Fatalf("first import: %v", err)
 	}
 	// Second import without --force must fail.
-	if err := runImport(t.Context(), proj, epubPath, false); err == nil {
+	if err = runImport(t.Context(), proj, epubPath, false); err == nil {
 		t.Fatal("second import without --force succeeded, want error")
 	}
 	// Second import with --force must succeed.
-	if err := runImport(t.Context(), proj, epubPath, true); err != nil {
+	if err = runImport(t.Context(), proj, epubPath, true); err != nil {
 		t.Fatalf("second import with --force: %v", err)
 	}
 }
@@ -206,7 +209,7 @@ func TestRunAnalyzeChaptersRequiresImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := proj.EnsureDirs(); err != nil {
+	if err = proj.EnsureDirs(); err != nil {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
 	// No import done yet -> analyze-chapters should fail with a clear message.
@@ -218,22 +221,20 @@ func TestRunAnalyzeChaptersRequiresImport(t *testing.T) {
 
 func TestParseChapterFilter(t *testing.T) {
 	t.Parallel()
-	// No filter -> nil (write all).
+	// No filter -> errNoChapterFilter (write all).
 	got, err := parseChapterFilter(0, "", 10)
-	if err != nil || got != nil {
-		t.Errorf("no filter: got %v, %v; want nil, nil", got, err)
+	if !errors.Is(err, errNoChapterFilter) || got != nil {
+		t.Errorf("no filter: got %v, %v; want nil, errNoChapterFilter", got, err)
 	}
 	// Single chapter.
-	got, err = parseChapterFilter(3, "", 10)
-	if err != nil {
+	if got, err = parseChapterFilter(3, "", 10); err != nil {
 		t.Fatalf("chapter 3: %v", err)
 	}
 	if len(got) != 1 || !got[3] {
 		t.Errorf("chapter 3: got %v, want {3:true}", got)
 	}
 	// Range.
-	got, err = parseChapterFilter(0, "2-5", 10)
-	if err != nil {
+	if got, err = parseChapterFilter(0, "2-5", 10); err != nil {
 		t.Fatalf("range 2-5: %v", err)
 	}
 	for i := 2; i <= 5; i++ {
@@ -245,14 +246,14 @@ func TestParseChapterFilter(t *testing.T) {
 		t.Errorf("range 2-5: ids outside range set: %v", got)
 	}
 	// Out of range.
-	if _, err := parseChapterFilter(11, "", 10); err == nil {
+	if _, err = parseChapterFilter(11, "", 10); err == nil {
 		t.Error("chapter 11 with max 10 should error")
 	}
-	if _, err := parseChapterFilter(0, "1-11", 10); err == nil {
+	if _, err = parseChapterFilter(0, "1-11", 10); err == nil {
 		t.Error("range 1-11 with max 10 should error")
 	}
 	// Bad range format.
-	if _, err := parseChapterFilter(0, "abc", 10); err == nil {
+	if _, err = parseChapterFilter(0, "abc", 10); err == nil {
 		t.Error("range 'abc' should error")
 	}
 }
@@ -281,20 +282,13 @@ func TestSlugify(t *testing.T) {
 	}
 }
 
-func TestImportCreatesProjectDir(t *testing.T) {
-	// Not parallel — uses global flagProject and os.Chdir.
+func TestImportCreatesProjectDir(t *testing.T) { //nolint:paralleltest // mutates global flagProject and os.Chdir
+	// Uses global flagProject and os.Chdir — not safe to parallelize.
 	epubPath := buildTestEPUB(t)
 	parentDir := t.TempDir()
 
 	// Change to parent dir so the project is created there.
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	defer func() { _ = os.Chdir(oldWd) }()
-	if err := os.Chdir(parentDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
+	t.Chdir(parentDir)
 
 	// Reset the global flagProject to default for this test.
 	flagProject = "."
@@ -319,8 +313,8 @@ func TestImportCreatesProjectDir(t *testing.T) {
 	}
 }
 
-func TestImportWithExplicitProjectFlag(t *testing.T) {
-	// Not parallel — uses global flagProject.
+func TestImportWithExplicitProjectFlag(t *testing.T) { //nolint:paralleltest // mutates global flagProject
+	// Uses global flagProject — not safe to parallelize.
 	epubPath := buildTestEPUB(t)
 	projDir := t.TempDir()
 
@@ -502,5 +496,47 @@ func TestStripTrailer_TriggerNotInTail(t *testing.T) {
 	result := stripTrailer(text, "PROMO")
 	if result != text {
 		t.Errorf("text should be unchanged when trigger not in tail")
+	}
+}
+
+func TestSaveBatchState_UnwritableDir(t *testing.T) {
+	t.Parallel()
+	// Verify that SaveBatchState returns an error when the ai path is not
+	// a directory. Using a regular file instead of restrictive permissions
+	// ensures a deterministic ENOTDIR error on all platforms (including root,
+	// which bypasses directory permission checks).
+	dir := t.TempDir()
+	aiDir := filepath.Join(dir, "ai")
+	if err := os.WriteFile(aiDir, []byte("not a dir"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	state := &translation.BatchState{
+		Type:    translation.BatchTypeAnalyze,
+		BatchID: "batch_test",
+		Status:  "in_progress",
+	}
+	err := translation.SaveBatchState(aiDir, state)
+	if err == nil {
+		t.Fatal("expected error from SaveBatchState with non-directory ai path, got nil")
+	}
+}
+
+func TestCountFiles_SkipsTempFiles(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Create a real audio file and a temp file sharing the same extension.
+	if err := os.WriteFile(filepath.Join(dir, "chapter_001.mp3"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".chapter_002.tmp.mp3"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n, ok := countFiles(dir, ".mp3")
+	if !ok {
+		t.Fatal("expected directory to exist")
+	}
+	if n != 1 {
+		t.Errorf("expected 1 file (temp excluded), got %d", n)
 	}
 }

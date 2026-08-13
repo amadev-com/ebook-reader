@@ -1,8 +1,9 @@
-package epub
+package epub //nolint:testpackage // needs access to unexported parseContainer, splitAnchor, collapseWS
 
 import (
 	"archive/zip"
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,19 +32,19 @@ func writeEPUB(t *testing.T, files map[string]string) string {
 	if err != nil {
 		t.Fatalf("create mimetype: %v", err)
 	}
-	if _, err := mw.Write([]byte("application/epub+zip")); err != nil {
+	if _, err = mw.Write([]byte("application/epub+zip")); err != nil {
 		t.Fatalf("write mimetype: %v", err)
 	}
+	var w io.Writer
 	for name, content := range files {
-		w, err := zw.Create(name)
-		if err != nil {
+		if w, err = zw.Create(name); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
-		if _, err := w.Write([]byte(content)); err != nil {
+		if _, err = w.Write([]byte(content)); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	if err := zw.Close(); err != nil {
+	if err = zw.Close(); err != nil {
 		t.Fatalf("close zip: %v", err)
 	}
 	return path

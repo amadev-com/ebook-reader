@@ -3,9 +3,24 @@ package chapters
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"ebook-reader/internal/epub"
+)
+
+// minTOCEntries is the minimum number of chapters a strategy must produce to
+// be considered successful (otherwise the next strategy is tried).
+const minTOCEntries = 2
+
+// minHeadingLength is the maximum snippet length (in bytes) returned by
+// blocksSnippet when the full text exceeds it.
+const minHeadingLength = 200
+
+// Chapter status and skip reason constants.
+const (
+	chapterStatusRaw    = "raw"
+	reasonAmbiguousSkip = "ambiguous-default-skip"
 )
 
 // Strategy is the detection strategy used by the splitter.
@@ -99,17 +114,20 @@ func Split(in SplitInput) (*SplitResult, error) {
 		}
 		res.Index.Strategy = s
 		last = res
-		if res.Index.ChapterCount >= 2 {
+		if res.Index.ChapterCount >= minTOCEntries {
 			// Per-item is a last resort; even when it "succeeds" it likely
 			// produces poor chapter boundaries, so warn the user.
 			if s == StrategyPerItem {
-				res.Index.Warnings = append(res.Index.Warnings,
-					"used per-item fallback (no TOC or chapter headings detected); chapter boundaries may be poor. Review _skipped.json and chapters/ manually.")
+				res.Index.Warnings = append(
+					res.Index.Warnings,
+					"used per-item fallback (no TOC or chapter headings detected); chapter boundaries may be poor. Review _skipped.json and chapters/ manually.",
+				)
 			}
-			slog.Info("chapter detection succeeded", "strategy", s, "chapters", res.Index.ChapterCount)
+			slog.Default().Info("chapter detection succeeded", "strategy", s, "chapters", res.Index.ChapterCount)
 			return res, nil
 		}
-		slog.Info("strategy yielded too few chapters, trying next", "strategy", s, "chapters", res.Index.ChapterCount)
+		slog.Default().
+			Info("strategy yielded too few chapters, trying next", "strategy", s, "chapters", res.Index.ChapterCount)
 	}
 	last.Index.Warnings = append(last.Index.Warnings,
 		"no strategy found 2+ chapters; using per-item fallback. Review _skipped.json and chapters/ manually.")
@@ -148,7 +166,7 @@ func SplitByTOC(in SplitInput) (*SplitResult, error) {
 			if ch != nil {
 				ch.ID = keptEntries
 				ch.DetectionStrategy = StrategyTOC
-				ch.Status = "raw"
+				ch.Status = chapterStatusRaw
 				res.Chapters = append(res.Chapters, *ch)
 			}
 		case DecisionSkip:
@@ -164,7 +182,17 @@ func SplitByTOC(in SplitInput) (*SplitResult, error) {
 			// human (or future AI fallback) can review.
 			res.Skipped = append(res.Skipped, SkippedSection{
 				Title:    entry.Title,
-				Reason:   "ambiguous-default-skip",
+				Reason:   reasonAmbiguousSkip,
+				SrcFile:  entry.SrcFile,
+				Snippet:  snippetForTOC(in, entry),
+				Strategy: StrategyTOC,
+			})
+		case DecisionUnknown:
+			// DecisionUnknown should not appear in classification results;
+			// treat it as a skip for safety.
+			res.Skipped = append(res.Skipped, SkippedSection{
+				Title:    entry.Title,
+				Reason:   "unknown-decision-skip",
 				SrcFile:  entry.SrcFile,
 				Snippet:  snippetForTOC(in, entry),
 				Strategy: StrategyTOC,
@@ -189,7 +217,7 @@ func buildChapterFromTOC(in SplitInput, tocIdx int, entry epub.TOCEntry) *Chapte
 		}
 	}
 	if len(items) == 0 {
-		slog.Warn("TOC entry has no matching spine item", "title", entry.Title, "src", entry.SrcFile)
+		slog.Default().Warn("TOC entry has no matching spine item", "title", entry.Title, "src", entry.SrcFile)
 		return nil
 	}
 
@@ -202,39 +230,47 @@ func buildChapterFromTOC(in SplitInput, tocIdx int, entry epub.TOCEntry) *Chapte
 	// there to the end (or to the next heading with an id). This handles the
 	// "one XHTML file, many chapters" pattern.
 	if entry.SrcAnchor != "" {
-		blocks := items[0].Blocks
-		start := -1
-		for i, b := range blocks {
-			if b.Kind == "heading" && b.Anchor == entry.SrcAnchor {
-				start = i
-				break
-			}
-		}
-		if start < 0 {
-			// Anchor not found; fall back to all blocks of the item.
-			slog.Warn("TOC anchor not found in blocks, using whole item",
-				"title", entry.Title, "anchor", entry.SrcAnchor)
-			return chapterFromBlocks(entry.Title, items, tocIdx, StrategyTOC)
-		}
-		// Find the next heading with a different anchor (chapter boundary).
-		end := len(blocks)
-		for i := start + 1; i < len(blocks); i++ {
-			if blocks[i].Kind == "heading" && blocks[i].Anchor != "" && blocks[i].Anchor != entry.SrcAnchor {
-				end = i
-				break
-			}
-		}
-		text := blocksToText(blocks[start:end])
-		return &Chapter{
-			Title:             entry.Title,
-			Source:            text,
-			SectionIDs:        []string{items[0].ID},
-			TOCEntryIndex:     tocIdx,
-			DetectionStrategy: StrategyTOC,
-		}
+		return chapterFromAnchor(entry, items, tocIdx)
 	}
 
 	return chapterFromBlocks(entry.Title, items, tocIdx, StrategyTOC)
+}
+
+// chapterFromAnchor builds a Chapter from the blocks between the heading with
+// the TOC entry's anchor and the next heading with a different anchor. If the
+// anchor is not found, it falls back to all blocks of the first matching item.
+func chapterFromAnchor(entry epub.TOCEntry, items []SpineItem, tocIdx int) *Chapter {
+	blocks := items[0].Blocks
+	start := -1
+	for i, b := range blocks {
+		if b.Kind == epub.BlockKindHeading && b.Anchor == entry.SrcAnchor {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		// Anchor not found; fall back to all blocks of the item.
+		slog.Default().Warn("TOC anchor not found in blocks, using whole item",
+			"title", entry.Title, "anchor", entry.SrcAnchor)
+		return chapterFromBlocks(entry.Title, items, tocIdx, StrategyTOC)
+	}
+	// Find the next heading with a different anchor (chapter boundary).
+	end := len(blocks)
+	for i := start + 1; i < len(blocks); i++ {
+		if blocks[i].Kind == epub.BlockKindHeading && blocks[i].Anchor != "" &&
+			blocks[i].Anchor != entry.SrcAnchor {
+			end = i
+			break
+		}
+	}
+	text := blocksToText(blocks[start:end])
+	return &Chapter{
+		Title:             entry.Title,
+		Source:            text,
+		SectionIDs:        []string{items[0].ID},
+		TOCEntryIndex:     tocIdx,
+		DetectionStrategy: StrategyTOC,
+	}
 }
 
 // chapterFromBlocks builds a Chapter from one or more whole spine items.
@@ -260,13 +296,7 @@ func chapterFromBlocks(title string, items []SpineItem, tocIdx int, strategy Str
 // Exported so the CLI can force this strategy via --strategy heading.
 func SplitByHeadings(in SplitInput) (*SplitResult, error) {
 	res := &SplitResult{}
-	type pending struct {
-		title  string
-		ids    []string
-		blocks []epub.Block
-		tocIdx int
-	}
-	var cur *pending
+	var cur *headingPending
 	flush := func() {
 		if cur == nil || len(cur.blocks) == 0 {
 			return
@@ -277,46 +307,16 @@ func SplitByHeadings(in SplitInput) (*SplitResult, error) {
 			SectionIDs:        cur.ids,
 			TOCEntryIndex:     cur.tocIdx,
 			DetectionStrategy: StrategyHeading,
-			Status:            "raw",
+			Status:            chapterStatusRaw,
 		})
 	}
 
 	for _, si := range in.Spine {
-		hasKeptHeading := false
-		for _, b := range si.Blocks {
-			if b.Kind == "heading" && (b.Level == 1 || b.Level == 2) && IsKeep(b.Text) {
-				flush()
-				cur = &pending{title: b.Text, ids: []string{si.ID}, tocIdx: -1}
-				hasKeptHeading = true
-				continue
-			}
-			if cur != nil {
-				cur.blocks = append(cur.blocks, b)
-				// Accumulate section ids without duplicating.
-				if !contains(cur.ids, si.ID) {
-					cur.ids = append(cur.ids, si.ID)
-				}
-			}
-		}
+		hasKeptHeading := processHeadingBlocks(si, &cur, flush)
 		// If a spine item had no kept heading and nothing is pending, it's
 		// front/back matter — record as skipped.
 		if !hasKeptHeading && cur == nil && len(si.Blocks) > 0 {
-			title := firstHeadingText(si.Blocks)
-			if title == "" {
-				title = si.ID
-			}
-			reason := ClassifyTitle(title)
-			rule := reason.Rule
-			if reason.Decision == DecisionAmbiguous {
-				rule = "ambiguous-default-skip"
-			}
-			res.Skipped = append(res.Skipped, SkippedSection{
-				Title:    title,
-				Reason:   rule,
-				SrcFile:  si.Href,
-				Snippet:  blocksSnippet(si.Blocks),
-				Strategy: StrategyHeading,
-			})
+			res.Skipped = append(res.Skipped, skipSectionFromSpineItem(si))
 		}
 	}
 	flush()
@@ -327,6 +327,60 @@ func SplitByHeadings(in SplitInput) (*SplitResult, error) {
 	}
 	res.Index = Index{ChapterCount: len(res.Chapters)}
 	return res, nil
+}
+
+// headingPending accumulates blocks for the chapter currently being built by
+// SplitByHeadings.
+type headingPending struct {
+	title  string
+	ids    []string
+	blocks []epub.Block
+	tocIdx int
+}
+
+// processHeadingBlocks scans one spine item's blocks for kept h1/h2 headings.
+// Each kept heading flushes the current pending chapter and starts a new one.
+// Non-heading blocks are appended to the current pending chapter (if any).
+// Returns true if at least one kept heading was found.
+func processHeadingBlocks(si SpineItem, cur **headingPending, flush func()) bool {
+	hasKeptHeading := false
+	for _, b := range si.Blocks {
+		if b.Kind == epub.BlockKindHeading && (b.Level == 1 || b.Level == 2) && IsKeep(b.Text) {
+			flush()
+			*cur = &headingPending{title: b.Text, ids: []string{si.ID}, tocIdx: -1}
+			hasKeptHeading = true
+			continue
+		}
+		if *cur != nil {
+			(*cur).blocks = append((*cur).blocks, b)
+			// Accumulate section ids without duplicating.
+			if !contains((*cur).ids, si.ID) {
+				(*cur).ids = append((*cur).ids, si.ID)
+			}
+		}
+	}
+	return hasKeptHeading
+}
+
+// skipSectionFromSpineItem classifies a spine item with no kept heading as a
+// SkippedSection, using the first heading text (or the item id) as the title.
+func skipSectionFromSpineItem(si SpineItem) SkippedSection {
+	title := firstHeadingText(si.Blocks)
+	if title == "" {
+		title = si.ID
+	}
+	reason := ClassifyTitle(title)
+	rule := reason.Rule
+	if reason.Decision == DecisionAmbiguous {
+		rule = reasonAmbiguousSkip
+	}
+	return SkippedSection{
+		Title:    title,
+		Reason:   rule,
+		SrcFile:  si.Href,
+		Snippet:  blocksSnippet(si.Blocks),
+		Strategy: StrategyHeading,
+	}
 }
 
 // SplitPerItem is the last-resort strategy: every spine item with text becomes
@@ -351,7 +405,7 @@ func SplitPerItem(in SplitInput) (*SplitResult, error) {
 			SectionIDs:        []string{si.ID},
 			TOCEntryIndex:     -1,
 			DetectionStrategy: StrategyPerItem,
-			Status:            "raw",
+			Status:            chapterStatusRaw,
 		})
 	}
 	res.Index = Index{ChapterCount: len(res.Chapters)}
@@ -367,7 +421,7 @@ func blocksToText(blocks []epub.Block) string {
 	var parts []string
 	for _, b := range blocks {
 		switch b.Kind {
-		case "heading", "paragraph", "list_item", "pre", "blockquote":
+		case epub.BlockKindHeading, "paragraph", "list_item", "pre", "blockquote":
 			if b.Text != "" {
 				parts = append(parts, b.Text)
 			}
@@ -380,10 +434,11 @@ func blocksToText(blocks []epub.Block) string {
 	return strings.Join(parts, "\n\n")
 }
 
+// blocksSnippet returns the text from the provided blocks, truncated to the configured snippet length when necessary.
 func blocksSnippet(blocks []epub.Block) string {
 	text := blocksToText(blocks)
-	if len(text) > 200 {
-		return text[:200] + "..."
+	if len(text) > minHeadingLength {
+		return text[:minHeadingLength] + "..."
 	}
 	return text
 }
@@ -397,15 +452,17 @@ func snippetForTOC(in SplitInput, entry epub.TOCEntry) string {
 	return ""
 }
 
+// firstHeadingText returns the text of the first heading block, or an empty string if no heading is present.
 func firstHeadingText(blocks []epub.Block) string {
 	for _, b := range blocks {
-		if b.Kind == "heading" {
+		if b.Kind == epub.BlockKindHeading {
 			return b.Text
 		}
 	}
 	return ""
 }
 
+// basename returns the final component of a path after normalizing directory separators.
 func basename(path string) string {
 	// Strip directory, keep filename. Works for both / and \ separators.
 	path = strings.ReplaceAll(path, "\\", "/")
@@ -416,10 +473,5 @@ func basename(path string) string {
 }
 
 func contains(slice []string, s string) bool {
-	for _, x := range slice {
-		if x == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, s)
 }

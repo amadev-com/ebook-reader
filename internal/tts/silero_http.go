@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,18 @@ import (
 	"sync"
 	"time"
 )
+
+// sileroTimeoutMinutes is the HTTP client timeout (in minutes) for Silero
+// TTS requests, accommodating long chapter synthesis and first model load.
+const sileroTimeoutMinutes = 10
+
+// chunkHeaderSize is the size (in bytes) of a WAV chunk header (4-byte ID +
+// 4-byte size).
+const chunkHeaderSize = 8
+
+// minWAVHeaderSize is the minimum number of bytes required for a valid WAV
+// header (RIFF + WAVE + fmt + data chunk headers).
+const minWAVHeaderSize = 44
 
 // maxChunkLen is the maximum SSML text length sent to Silero in a single
 // request. Silero warns at 1000 symbols and fails at longer text, so we
@@ -50,22 +63,19 @@ func NewSileroEngine(cfg EngineConfig) (Engine, error) {
 		return nil, fmt.Errorf("tts.silero: voice is required (e.g. \"silero:v5_5_ru#xenia\")")
 	}
 	serverURL := strings.TrimRight(cfg.ServerURL, "/")
-	parallel := cfg.Parallel
-	if parallel < 1 {
-		parallel = 1
-	}
+	parallel := max(cfg.Parallel, 1)
 	return &SileroEngine{
 		cfg:       cfg,
 		serverURL: serverURL,
 		parallel:  parallel,
 		client: &http.Client{
-			Timeout: 10 * time.Minute,
+			Timeout: time.Duration(sileroTimeoutMinutes) * time.Minute,
 		},
 	}, nil
 }
 
 // Name returns "silero-http".
-func (e *SileroEngine) Name() string { return "silero-http" }
+func (e *SileroEngine) Name() string { return engineSileroHTTP }
 
 // sileroRequestBody is the JSON body sent to the POST /api/tts endpoint.
 type sileroRequestBody struct {
@@ -89,8 +99,8 @@ func (e *SileroEngine) Synthesize(ctx context.Context, text string, outPath stri
 		return fmt.Errorf("tts.silero: no text to synthesize")
 	}
 
-	chunks := splitSSML(text, maxChunkLen)
-	slog.Info("tts.silero: synthesizing",
+	chunks := splitSSML(text)
+	slog.Default().InfoContext(ctx, "tts.silero: synthesizing",
 		"total_len", len(text), "chunks", len(chunks), "max_chunk_len", maxChunkLen,
 		"parallel", e.parallel)
 
@@ -99,7 +109,7 @@ func (e *SileroEngine) Synthesize(ctx context.Context, text string, outPath stri
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+	if err = os.MkdirAll(filepath.Dir(outPath), 0o750); err != nil {
 		return fmt.Errorf("tts.silero: create output dir: %w", err)
 	}
 
@@ -108,12 +118,19 @@ func (e *SileroEngine) Synthesize(ctx context.Context, text string, outPath stri
 		return fmt.Errorf("tts.silero: concat WAVs: %w", err)
 	}
 
-	if err := os.WriteFile(outPath, combined, 0o644); err != nil {
+	if err = os.WriteFile(outPath, combined, 0o600); err != nil {
 		return fmt.Errorf("tts.silero: write output: %w", err)
 	}
 
-	slog.Debug("tts.silero: synthesis complete", "output", outPath, "bytes", len(combined))
+	slog.Default().DebugContext(ctx, "tts.silero: synthesis complete", "output", outPath, "bytes", len(combined))
 	return nil
+}
+
+// chunkJob is a unit of work for parallel chunk synthesis: the chunk's index
+// in the original slice (so results can be placed in order) and its SSML text.
+type chunkJob struct {
+	idx   int
+	chunk string
 }
 
 // synthesizeChunks sends chunk requests to the server, optionally in parallel.
@@ -132,7 +149,7 @@ func (e *SileroEngine) synthesizeChunks(ctx context.Context, chunks []string) ([
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			slog.Debug("tts.silero: synthesizing chunk",
+			slog.Default().DebugContext(ctx, "tts.silero: synthesizing chunk",
 				"chunk", i+1, "of", n, "len", len(chunk))
 			wav, err := e.synthesizeOne(ctx, chunk)
 			if err != nil {
@@ -147,11 +164,6 @@ func (e *SileroEngine) synthesizeChunks(ctx context.Context, chunks []string) ([
 	wavData := make([][]byte, n)
 	errs := make([]error, n)
 
-	type chunkJob struct {
-		idx   int
-		chunk string
-	}
-
 	jobs := make(chan chunkJob, n)
 	for i, chunk := range chunks {
 		jobs <- chunkJob{idx: i, chunk: chunk}
@@ -159,33 +171,46 @@ func (e *SileroEngine) synthesizeChunks(ctx context.Context, chunks []string) ([
 	close(jobs)
 
 	var wg sync.WaitGroup
-	workers := e.parallel
-	if workers > n {
-		workers = n
-	}
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for job := range jobs {
-				if ctx.Err() != nil {
-					errs[job.idx] = ctx.Err()
-					return
-				}
-				slog.Debug("tts.silero: synthesizing chunk",
-					"chunk", job.idx+1, "of", n, "len", len(job.chunk))
-				wav, err := e.synthesizeOne(ctx, job.chunk)
-				if err != nil {
-					errs[job.idx] = fmt.Errorf("tts.silero: chunk %d/%d: %w", job.idx+1, n, err)
-					return
-				}
-				wavData[job.idx] = wav
-			}
-		}()
+	workers := min(e.parallel, n)
+	for range workers {
+		wg.Go(func() {
+			e.synthesizeChunkWorker(ctx, jobs, wavData, errs, n)
+		})
 	}
 	wg.Wait()
 
-	// Check for errors — return the first one in chunk order.
+	return collectChunkResults(wavData, errs, n)
+}
+
+// synthesizeChunkWorker is the worker goroutine for parallel chunk synthesis.
+// It reads jobs from the channel, synthesizes each chunk, and stores the
+// result or error in the provided slices.
+func (e *SileroEngine) synthesizeChunkWorker(
+	ctx context.Context,
+	jobs <-chan chunkJob,
+	wavData [][]byte,
+	errs []error,
+	n int,
+) {
+	for job := range jobs {
+		if ctx.Err() != nil {
+			errs[job.idx] = ctx.Err()
+			return
+		}
+		slog.Default().DebugContext(ctx, "tts.silero: synthesizing chunk",
+			"chunk", job.idx+1, "of", n, "len", len(job.chunk))
+		wav, err := e.synthesizeOne(ctx, job.chunk)
+		if err != nil {
+			errs[job.idx] = fmt.Errorf("tts.silero: chunk %d/%d: %w", job.idx+1, n, err)
+			return
+		}
+		wavData[job.idx] = wav
+	}
+}
+
+// collectChunkResults checks for errors and missing data in chunk order,
+// returning the first error found or the complete wavData slice.
+func collectChunkResults(wavData [][]byte, errs []error, n int) ([][]byte, error) {
 	for i, err := range errs {
 		if err != nil {
 			return nil, err
@@ -194,7 +219,6 @@ func (e *SileroEngine) synthesizeChunks(ctx context.Context, chunks []string) ([
 			return nil, fmt.Errorf("tts.silero: chunk %d/%d: no data", i+1, n)
 		}
 	}
-
 	return wavData, nil
 }
 
@@ -254,12 +278,12 @@ func (e *SileroEngine) synthesizeOne(ctx context.Context, text string) ([]byte, 
 // The input is expected to be <speak>...</speak> with <p> and <s> tags.
 // The output chunks are <speak><s>...</s><s>...</s></speak> (paragraph
 // structure is flattened — pauses are preserved by sentence breaks).
-func splitSSML(ssml string, maxLen int) []string {
+func splitSSML(ssml string) []string {
 	// Extract all <s>...</s> sentence blocks.
 	sentences := extractSentences(ssml)
 	if len(sentences) == 0 {
 		// No sentence tags found — fall back to splitting the raw text.
-		return splitRaw(ssml, maxLen)
+		return splitRaw(ssml, maxChunkLen)
 	}
 
 	var chunks []string
@@ -268,20 +292,20 @@ func splitSSML(ssml string, maxLen int) []string {
 
 	for _, s := range sentences {
 		sLen := len(s)
-		// If a single sentence exceeds maxLen, split it on word boundaries.
-		if sLen > maxLen-len("<speak></speak>") {
+		// If a single sentence exceeds maxChunkLen, split it on word boundaries.
+		if sLen > maxChunkLen-len("<speak></speak>") {
 			if len(current) > 0 {
 				chunks = append(chunks, wrapChunk(current))
 				current = nil
 				currentLen = len("<speak></speak>")
 			}
-			for _, piece := range splitSentenceOnWords(s, maxLen-len("<speak></speak>")) {
+			for _, piece := range splitSentenceOnWords(s, maxChunkLen-len("<speak></speak>")) {
 				chunks = append(chunks, "<speak>"+piece+"</speak>")
 			}
 			continue
 		}
 
-		if currentLen+sLen > maxLen && len(current) > 0 {
+		if currentLen+sLen > maxChunkLen && len(current) > 0 {
 			chunks = append(chunks, wrapChunk(current))
 			current = nil
 			currentLen = len("<speak></speak>")
@@ -366,7 +390,7 @@ func splitRaw(text string, maxLen int) []string {
 	// Split on sentence-ending punctuation.
 	var sentences []string
 	start := 0
-	for i := 0; i < len(text); i++ {
+	for i := range len(text) {
 		if text[i] == '.' || text[i] == '!' || text[i] == '?' {
 			sentences = append(sentences, text[start:i+1])
 			start = i + 1
@@ -403,28 +427,35 @@ func concatWAVs(wavs [][]byte) ([]byte, error) {
 	}
 
 	// Parse the first WAV's header to get format info.
-	header, dataOffset, fmtInfo, err := parseWAVHeader(wavs[0])
+	header, dataOffset, err := parseWAVHeader(wavs[0])
 	if err != nil {
 		return nil, fmt.Errorf("parse first WAV: %w", err)
 	}
 
 	// Extract PCM data from all WAVs.
 	var allData []byte
+	var data []byte
 	for i, wav := range wavs {
-		data, err := extractWAVData(wav, dataOffset)
-		if err != nil {
+		if data, err = extractWAVData(wav, dataOffset); err != nil {
 			return nil, fmt.Errorf("extract data from WAV %d: %w", i+1, err)
 		}
 		allData = append(allData, data...)
 	}
 
 	// Build the output WAV: original header with updated sizes.
-	totalDataLen := uint32(len(allData))
-	out := make([]byte, 0, len(header)+len(allData))
+	totalLen := len(header) + len(allData)
+	if totalLen > math.MaxUint32 {
+		return nil, fmt.Errorf("concatenated WAV too large: %d bytes", totalLen)
+	}
+	if len(allData) > math.MaxUint32 {
+		return nil, fmt.Errorf("WAV data too large: %d bytes", len(allData))
+	}
+	totalDataLen := uint32(len(allData)) //nolint:gosec // bounds-checked above
+	out := make([]byte, 0, totalLen)
 	out = append(out, header...)
 
 	// Fix RIFF chunk size (file size - 8).
-	binary.LittleEndian.PutUint32(out[4:8], uint32(len(header)+len(allData))-8)
+	binary.LittleEndian.PutUint32(out[4:8], uint32(totalLen)-chunkHeaderSize)
 	// Fix data chunk size.
 	dataChunkIdx := bytes.Index(out, []byte("data"))
 	if dataChunkIdx >= 0 {
@@ -432,93 +463,73 @@ func concatWAVs(wavs [][]byte) ([]byte, error) {
 	}
 
 	out = append(out, allData...)
-	_ = fmtInfo // format info is preserved from the first WAV's header
 	return out, nil
 }
 
 // parseWAVHeader returns the header bytes (up to and including the "data"
-// chunk header), the offset where PCM data starts, and the format info.
-func parseWAVHeader(wav []byte) (header []byte, dataOffset int, fmtInfo wavFmt, err error) {
-	if len(wav) < 44 {
-		return nil, 0, wavFmt{}, fmt.Errorf("WAV too short: %d bytes", len(wav))
+// chunk header) and the offset where PCM data starts.
+func parseWAVHeader(wav []byte) ([]byte, int, error) {
+	if len(wav) < minWAVHeaderSize {
+		return nil, 0, fmt.Errorf("WAV too short: %d bytes", len(wav))
 	}
-	if string(wav[0:4]) != "RIFF" {
-		return nil, 0, wavFmt{}, fmt.Errorf("not a WAV: missing RIFF header")
+	if string(wav[0:4]) != wavRIFF {
+		return nil, 0, fmt.Errorf("not a WAV: missing RIFF header")
 	}
-	if string(wav[8:12]) != "WAVE" {
-		return nil, 0, wavFmt{}, fmt.Errorf("not a WAV: missing WAVE")
+	if string(wav[8:12]) != wavWAVE {
+		return nil, 0, fmt.Errorf("not a WAV: missing WAVE")
 	}
+
+	var dataOffset int
 
 	// Find the "data" chunk by scanning chunks.
 	offset := 12
-	for offset+8 <= len(wav) {
+	for offset+chunkHeaderSize <= len(wav) {
 		chunkID := string(wav[offset : offset+4])
-		chunkSize := binary.LittleEndian.Uint32(wav[offset+4 : offset+8])
-		if chunkID == "data" {
-			dataOffset = offset + 8
-			return wav[:dataOffset], dataOffset, fmtInfo, nil
+		chunkSize := binary.LittleEndian.Uint32(wav[offset+4 : offset+chunkHeaderSize])
+		if chunkSize > math.MaxInt32 {
+			return nil, 0, fmt.Errorf("WAV chunk size too large: %d", chunkSize)
 		}
-		if chunkID == "fmt " {
-			if offset+8+int(chunkSize) <= len(wav) {
-				fmtInfo = parseFmtChunk(wav[offset+8 : offset+8+int(chunkSize)])
-			}
+		chunkSizeInt := int(chunkSize)
+		if chunkID == "data" {
+			dataOffset = offset + chunkHeaderSize
+			return wav[:dataOffset], dataOffset, nil
 		}
 		// Chunks are word-aligned (padded to even size).
-		nextOffset := offset + 8 + int(chunkSize)
+		nextOffset := offset + chunkHeaderSize + chunkSizeInt
 		if chunkSize%2 != 0 {
 			nextOffset++
 		}
 		offset = nextOffset
 	}
 
-	return nil, 0, wavFmt{}, fmt.Errorf("data chunk not found in WAV")
-}
-
-// wavFmt holds the audio format from the fmt chunk.
-type wavFmt struct {
-	AudioFormat   uint16
-	NumChannels   uint16
-	SampleRate    uint32
-	BitsPerSample uint16
-}
-
-// parseFmtChunk extracts format info from the fmt chunk data.
-func parseFmtChunk(data []byte) wavFmt {
-	if len(data) < 16 {
-		return wavFmt{}
-	}
-	return wavFmt{
-		AudioFormat:   binary.LittleEndian.Uint16(data[0:2]),
-		NumChannels:   binary.LittleEndian.Uint16(data[2:4]),
-		SampleRate:    binary.LittleEndian.Uint32(data[4:8]),
-		BitsPerSample: binary.LittleEndian.Uint16(data[14:16]),
-	}
+	return nil, 0, fmt.Errorf("data chunk not found in WAV")
 }
 
 // extractWAVData returns the PCM data from a WAV file, starting at the given
 // data offset (from the first WAV's header). Falls back to parsing if the
-// offset doesn't match.
+// offset doesn't match. A declared data size larger than the bytes actually
+// received is clamped to the available data.
 func extractWAVData(wav []byte, expectedOffset int) ([]byte, error) {
 	// Try the expected offset first (fast path — all WAVs have same header).
 	if expectedOffset < len(wav) && string(wav[expectedOffset-4:expectedOffset]) == "data" {
 		dataSize := binary.LittleEndian.Uint32(wav[expectedOffset-8 : expectedOffset-4])
-		end := expectedOffset + int(dataSize)
-		if end > len(wav) {
-			end = len(wav)
+		if dataSize > math.MaxInt32 {
+			return nil, fmt.Errorf("WAV data chunk size too large: %d", dataSize)
 		}
+		end := min(expectedOffset+int(dataSize), len(wav))
 		return wav[expectedOffset:end], nil
 	}
 
 	// Fallback: parse the header to find the data chunk.
-	_, dataOffset, _, err := parseWAVHeader(wav)
+	_, dataOffset, err := parseWAVHeader(wav)
 	if err != nil {
 		return nil, err
 	}
 	dataSize := binary.LittleEndian.Uint32(wav[dataOffset-4 : dataOffset])
-	end := dataOffset + int(dataSize)
-	if end > len(wav) {
-		end = len(wav)
+	if dataSize > math.MaxInt32 {
+		return nil, fmt.Errorf("WAV data chunk size too large: %d", dataSize)
 	}
+	end := min(dataOffset+int(dataSize), len(wav))
 	return wav[dataOffset:end], nil
 }
 
@@ -538,8 +549,4 @@ func (e *SileroEngine) CheckHealth(ctx context.Context) error {
 		return fmt.Errorf("tts.silero: health check returned %d", resp.StatusCode)
 	}
 	return nil
-}
-
-func init() {
-	Register("silero-http", NewSileroEngine)
 }

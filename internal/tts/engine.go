@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -73,13 +74,32 @@ type EngineConfig struct {
 }
 
 var (
-	registryMu sync.RWMutex
-	registry   = make(map[string]EngineFactory)
+	registryMu sync.RWMutex                     //nolint:gochecknoglobals // engine registry state
+	registry   = make(map[string]EngineFactory) //nolint:gochecknoglobals // engine registry state
+
+	registerBuiltinsOnce sync.Once //nolint:gochecknoglobals // guards one-time registration of built-in engines
 )
 
-// Register adds an EngineFactory under the given name. Called by engine
-// implementations in init(). Panics if the name is already registered (a
-// programming error, not a runtime condition).
+// RegisterEngines registers all built-in engine factories. Safe to call
+// multiple times; subsequent calls are no-ops. Also called automatically by
+// NewEngine and AvailableEngines so that consumers outside the bookai binary
+// (tests, future entry points) never observe an empty registry.
+func RegisterEngines() {
+	registerBuiltinsOnce.Do(func() {
+		Register(engineNoop, NewNoopEngine)
+		Register(engineSileroHTTP, NewSileroEngine)
+	})
+}
+
+// ensureRegistered makes sure built-in engines are in the registry. Called
+// by NewEngine and AvailableEngines so callers don't need to call
+// RegisterEngines explicitly.
+func ensureRegistered() {
+	RegisterEngines()
+}
+
+// Register adds an EngineFactory under the given name. Panics if the name is
+// already registered (a programming error, not a runtime condition).
 func Register(name string, factory EngineFactory) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -93,6 +113,7 @@ func Register(name string, factory EngineFactory) {
 // Engine. Returns a descriptive error if the engine is unknown or
 // initialization fails.
 func NewEngine(cfg EngineConfig) (Engine, error) {
+	ensureRegistered()
 	registryMu.RLock()
 	factory, ok := registry[cfg.Engine]
 	registryMu.RUnlock()
@@ -108,6 +129,7 @@ func NewEngine(cfg EngineConfig) (Engine, error) {
 
 // AvailableEngines returns the sorted list of registered engine names.
 func AvailableEngines() string {
+	ensureRegistered()
 	registryMu.RLock()
 	names := make([]string, 0, len(registry))
 	for name := range registry {
@@ -124,11 +146,13 @@ func joinNames(names []string) string {
 		return "(none)"
 	}
 	result := ""
+	var resultSb127 strings.Builder
 	for i, n := range names {
 		if i > 0 {
-			result += ", "
+			resultSb127.WriteString(", ")
 		}
-		result += n
+		resultSb127.WriteString(n)
 	}
+	result += resultSb127.String()
 	return result
 }

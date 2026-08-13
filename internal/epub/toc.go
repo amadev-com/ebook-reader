@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"slices"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -38,8 +39,8 @@ func (r *Reader) ReadTOC() ([]TOCEntry, error) {
 func (r *Reader) readNavTOC() ([]TOCEntry, error) {
 	var navItem *ManifestItem
 	for id, it := range r.opf.Manifest {
-		if hasProperty(it.Properties, "nav") {
-			navItem = ptr(r.opf.Manifest[id])
+		if hasProperty(it.Properties, navElement) {
+			navItem = new(r.opf.Manifest[id])
 			break
 		}
 	}
@@ -89,16 +90,10 @@ func (r *Reader) readNCXTOC() ([]TOCEntry, error) {
 	return entries, nil
 }
 
+// hasProperty reports whether the specified property is present in a list of properties.
 func hasProperty(props []string, want string) bool {
-	for _, p := range props {
-		if p == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(props, want)
 }
-
-func ptr[T any](v T) *T { return &v }
 
 // --- NCX parsing ---
 
@@ -149,9 +144,9 @@ func parseNCX(data []byte) ([]TOCEntry, error) {
 }
 
 // splitAnchor splits "file.html#anchor" into ("file.html", "anchor").
-func splitAnchor(src string) (file, anchor string) {
-	if i := strings.IndexByte(src, '#'); i >= 0 {
-		return src[:i], src[i+1:]
+func splitAnchor(src string) (string, string) {
+	if before, after, ok := strings.Cut(src, "#"); ok {
+		return before, after
 	}
 	return src, ""
 }
@@ -193,7 +188,7 @@ func parseNav(data []byte) ([]TOCEntry, error) {
 				SrcAnchor:  anchor,
 				Order:      order,
 				Depth:      depth,
-				SourceKind: "nav",
+				SourceKind: navElement,
 			})
 			// A nested <ol> inside this <li> represents children.
 			if nested := findFirst(li, "ol"); nested != nil {
@@ -217,7 +212,7 @@ func findTOCNav(root *html.Node) *html.Node {
 	var first, typed *html.Node
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "nav" {
+		if n.Type == html.ElementNode && n.Data == navElement {
 			if first == nil {
 				first = n
 			}

@@ -17,6 +17,14 @@ import (
 	"ebook-reader/internal/project"
 )
 
+// minImportArgs is the minimum number of positional arguments for the import
+// command (the EPUB path).
+const minImportArgs = 1
+
+// maxImportArgs is the maximum number of positional arguments for the import
+// command (EPUB path + optional book name).
+const maxImportArgs = 2
+
 // newImportCmd implements `bookai import <epub> [name]`. It creates a project
 // directory (named after the EPUB filename or the optional name argument),
 // copies the EPUB into it, writes a default config.yaml, and extracts the
@@ -29,15 +37,14 @@ func newImportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "import <epub> [name]",
 		Short: "Create a project, copy the EPUB into it, and extract spine, TOC, and per-item blocks",
-		Args:  cobra.RangeArgs(1, 2),
+		Args:  cobra.RangeArgs(minImportArgs, maxImportArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			setupLogger()
-			ctx, cancel := rootContext()
-			defer cancel()
+			ctx := cmd.Context()
 
 			epubPath := args[0]
 			bookName := ""
-			if len(args) >= 2 {
+			if len(args) >= maxImportArgs {
 				bookName = args[1]
 			}
 
@@ -80,18 +87,19 @@ func resolveProjectDir(cmd *cobra.Command, epubPath, bookName string) (string, e
 	}
 	projDir := filepath.Join(cwd, dirName)
 
-	if err := os.MkdirAll(projDir, 0o755); err != nil {
+	if err = os.MkdirAll(projDir, 0o750); err != nil {
 		return "", fmt.Errorf("create project directory %s: %w", projDir, err)
 	}
 
 	// Write a default config.yaml if one doesn't exist.
 	cfgPath := filepath.Join(projDir, "config.yaml")
-	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+	_, err = os.Stat(cfgPath)
+	if os.IsNotExist(err) {
 		cfg := config.Default(dirName)
-		if err := config.Save(projDir, cfg); err != nil {
+		if err = config.Save(projDir, cfg); err != nil {
 			return "", fmt.Errorf("write config: %w", err)
 		}
-		slog.Info("created project", "dir", projDir, "config", cfgPath)
+		slog.Default().Info("created project", "dir", projDir, "config", cfgPath)
 	}
 
 	return projDir, nil
@@ -126,7 +134,7 @@ func slugify(s string) string {
 //
 // It is idempotent: if source/original.epub already exists and --force is not
 // set, it returns an error pointing the user at --force.
-func runImport(_ context.Context, proj *project.Project, epubPath string, force bool) error {
+func runImport(ctx context.Context, proj *project.Project, epubPath string, force bool) error {
 	if err := proj.EnsureDirs(); err != nil {
 		return err
 	}
@@ -139,10 +147,10 @@ func runImport(_ context.Context, proj *project.Project, epubPath string, force 
 	if err != nil {
 		return fmt.Errorf("resolve epub path: %w", err)
 	}
-	if err := copyFile(abs, dst); err != nil {
+	if err = copyFile(abs, dst); err != nil {
 		return err
 	}
-	slog.Info("imported epub", "source", abs, "dest", dst)
+	slog.Default().InfoContext(ctx, "imported epub", "source", abs, "dest", dst)
 
 	r, err := epub.Open(dst)
 	if err != nil {
@@ -153,32 +161,20 @@ func runImport(_ context.Context, proj *project.Project, epubPath string, force 
 	opf := r.OPF()
 
 	// metadata.json
-	if err := project.SaveJSON(
+	err = project.SaveJSON(
 		filepath.Join(proj.ExtractedDir(), "metadata.json"),
 		buildExtractedMetadata(opf),
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
 
 	// spine.json: ordered list of {id, href, media_type, linear}.
-	spine := make([]spineEntry, 0, len(opf.Spine))
-	for _, ref := range opf.Spine {
-		item, ok := opf.Manifest[ref.IDRef]
-		if !ok {
-			slog.Warn("spine itemref references missing manifest item", "idref", ref.IDRef)
-			continue
-		}
-		spine = append(spine, spineEntry{
-			ID:        item.ID,
-			Href:      item.Href,
-			MediaType: item.MediaType,
-			Linear:    ref.Linear,
-		})
-	}
-	if err := project.SaveJSON(filepath.Join(proj.ExtractedDir(), "spine.json"), spine); err != nil {
+	spine := buildSpineEntries(opf)
+	if err = project.SaveJSON(filepath.Join(proj.ExtractedDir(), "spine.json"), spine); err != nil {
 		return err
 	}
-	slog.Info("wrote spine", "items", len(spine))
+	slog.Default().InfoContext(ctx, "wrote spine", "items", len(spine))
 
 	// toc.json
 	toc, err := r.ReadTOC()
@@ -188,16 +184,42 @@ func runImport(_ context.Context, proj *project.Project, epubPath string, force 
 	if toc == nil {
 		toc = []epub.TOCEntry{}
 	}
-	if err := project.SaveJSON(filepath.Join(proj.ExtractedDir(), "toc.json"), toc); err != nil {
+	if err = project.SaveJSON(filepath.Join(proj.ExtractedDir(), "toc.json"), toc); err != nil {
 		return err
 	}
-	slog.Info("wrote toc", "entries", len(toc))
+	slog.Default().InfoContext(ctx, "wrote toc", "entries", len(toc))
 
 	// Per-spine-item raw + blocks. Only xhtml/html items are extracted; other
 	// media types (images, css) are skipped.
+	return extractSpineItems(r, spine, proj.ExtractedDir())
+}
+
+// buildSpineEntries assembles the ordered spine entry list from the OPF
+// manifest and spine references.
+func buildSpineEntries(opf *epub.OPF) []spineEntry {
+	spine := make([]spineEntry, 0, len(opf.Spine))
+	for _, ref := range opf.Spine {
+		item, ok := opf.Manifest[ref.IDRef]
+		if !ok {
+			slog.Default().Warn("spine itemref references missing manifest item", "idref", ref.IDRef)
+			continue
+		}
+		spine = append(spine, spineEntry{
+			ID:        item.ID,
+			Href:      item.Href,
+			MediaType: item.MediaType,
+			Linear:    ref.Linear,
+		})
+	}
+	return spine
+}
+
+// extractSpineItems reads each HTML spine item from the EPUB, saves the raw
+// bytes and extracted blocks to the extracted directory.
+func extractSpineItems(r *epub.Reader, spine []spineEntry, extractedDir string) error {
 	for i, entry := range spine {
 		if !isHTMLMediaType(entry.MediaType) {
-			slog.Debug("skip non-html spine item", "id", entry.ID, "media_type", entry.MediaType)
+			slog.Default().Debug("skip non-html spine item", "id", entry.ID, "media_type", entry.MediaType)
 			continue
 		}
 		zipPath := r.ResolveHref(entry.Href)
@@ -207,7 +229,7 @@ func runImport(_ context.Context, proj *project.Project, epubPath string, force 
 		}
 		// raw with stable filename based on spine position.
 		rawName := fmt.Sprintf("item%03d%s", i, filepath.Ext(entry.Href))
-		if err := project.SaveBytes(filepath.Join(proj.ExtractedDir(), "raw", rawName), raw); err != nil {
+		if err = project.SaveBytes(filepath.Join(extractedDir, "raw", rawName), raw); err != nil {
 			return err
 		}
 		blocks, err := epub.ExtractBlocks(raw)
@@ -223,10 +245,10 @@ func runImport(_ context.Context, proj *project.Project, epubPath string, force 
 			Blocks:     blocks,
 		}
 		blockName := fmt.Sprintf("item%03d.json", i)
-		if err := project.SaveJSON(filepath.Join(proj.ExtractedDir(), "blocks", blockName), blockDoc); err != nil {
+		if err = project.SaveJSON(filepath.Join(extractedDir, "blocks", blockName), blockDoc); err != nil {
 			return err
 		}
-		slog.Info("extracted spine item", "index", i, "id", entry.ID, "blocks", len(blocks))
+		slog.Default().Info("extracted spine item", "index", i, "id", entry.ID, "blocks", len(blocks))
 	}
 	return nil
 }
@@ -282,6 +304,7 @@ func isHTMLMediaType(mt string) bool {
 	return false
 }
 
+// copyFile copies the contents of the source file to the destination file.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -293,7 +316,7 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("create dest %s: %w", dst, err)
 	}
 	defer func() { _ = out.Close() }()
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err = io.Copy(out, in); err != nil {
 		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
 	}
 	return nil

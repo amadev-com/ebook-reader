@@ -3,10 +3,19 @@ package translation
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	"ebook-reader/internal/project"
+)
+
+// Glossary term type constants used in GlossaryTerm.Type and the prompt
+// formatting typeOrder slice.
+const (
+	typeCharacter    = "character"
+	typeOrganization = "organization"
+	TypeTerm         = "term"
 )
 
 // Glossary is the persistent terminology store (ai/glossary.json). It maps
@@ -41,8 +50,7 @@ func LoadGlossary(aiDir string) (*Glossary, error) {
 	return &g, nil
 }
 
-// Save writes the glossary to ai/glossary.json with terms sorted by source
-// for stable diffs.
+// Save writes characters to ai/characters.json, sorted by name.
 func (g *Glossary) Save(aiDir string) error {
 	g.Sort()
 	return project.SaveJSON(aiDir+"/glossary.json", g)
@@ -64,9 +72,9 @@ type glossaryTermForPrompt struct {
 	Type   string `json:"type"`
 }
 
-// MarshalForPrompt serializes the glossary terms as JSON without internal
-// bookkeeping fields (Chapters, FirstSeenChapter). Used for AI merge prompts
-// where those fields are meaningless and waste tokens.
+// MarshalForPrompt serializes the characters as JSON without the internal
+// Chapters field. Used for AI merge prompts where chapter tracking is
+// meaningless and wastes tokens.
 func (g *Glossary) MarshalForPrompt() (string, error) {
 	projected := make([]glossaryTermForPrompt, len(g.Terms))
 	for i, t := range g.Terms {
@@ -83,8 +91,8 @@ func (g *Glossary) MarshalForPrompt() (string, error) {
 	return string(data), nil
 }
 
-// Find looks up a term by its source text (case-insensitive). Returns the
-// term and true if found.
+// Find looks up a character by name (case-insensitive). Returns the character
+// and true if found.
 func (g *Glossary) Find(source string) (GlossaryTerm, bool) {
 	lower := strings.ToLower(source)
 	for _, t := range g.Terms {
@@ -111,12 +119,12 @@ func (g *Glossary) WithCharacters(chars *Characters) *Glossary {
 		merged.Terms = append(merged.Terms, GlossaryTerm{
 			Source: c.Name,
 			Target: c.Translation,
-			Type:   "character",
+			Type:   typeCharacter,
 		})
 	}
 	// Add non-character terms, skipping any that duplicate a character entry.
 	for _, t := range g.Terms {
-		if t.Type == "character" {
+		if t.Type == typeCharacter {
 			continue // characters come from chars, not glossary
 		}
 		if _, exists := merged.Find(t.Source); exists {
@@ -127,9 +135,10 @@ func (g *Glossary) WithCharacters(chars *Characters) *Glossary {
 	return merged
 }
 
-// Merge adds or updates terms from newTerms. If a term with the same source
-// (case-insensitive) already exists, its target is updated only if the
-// existing target is empty. Returns the number of terms actually added.
+// Merge adds or updates characters from newChars. If a character with the same
+// name (case-insensitive) already exists, its fields are updated only if the
+// new values are more complete (non-empty where existing is empty). New
+// characters are appended. Returns the number of characters actually added.
 func (g *Glossary) Merge(newTerms []GlossaryTerm) int {
 	added := 0
 	for _, nt := range newTerms {
@@ -175,7 +184,7 @@ func (g *Glossary) promptBlockForTerms(terms []GlossaryTerm) string {
 		return ""
 	}
 	// Group by type, preserving a stable type order.
-	typeOrder := []string{"character", "place", "organization", "title", "term"}
+	typeOrder := []string{typeCharacter, "place", typeOrganization, "title", TypeTerm}
 	byType := make(map[string][]GlossaryTerm)
 	for _, t := range terms {
 		byType[t.Type] = append(byType[t.Type], t)
@@ -194,13 +203,7 @@ func (g *Glossary) promptBlockForTerms(terms []GlossaryTerm) string {
 	}
 	// Any types not in typeOrder.
 	for ty, ts := range byType {
-		known := false
-		for _, k := range typeOrder {
-			if k == ty {
-				known = true
-				break
-			}
-		}
+		known := slices.Contains(typeOrder, ty)
 		if known {
 			continue
 		}
@@ -214,12 +217,7 @@ func (g *Glossary) promptBlockForTerms(terms []GlossaryTerm) string {
 
 // containsInt reports whether s contains v.
 func containsInt(s []int, v int) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, v)
 }
 
 // Characters is the persistent character store (ai/characters.json). It is a

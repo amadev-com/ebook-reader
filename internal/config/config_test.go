@@ -1,4 +1,4 @@
-package config
+package config //nolint:testpackage // needs access to unexported defaultModel constant
 
 import (
 	"os"
@@ -15,11 +15,11 @@ func TestDefault(t *testing.T) {
 	if cfg.Languages.Source != "en" || cfg.Languages.Target != "ru" {
 		t.Errorf("Languages = %+v, want en->ru", cfg.Languages)
 	}
-	if cfg.OpenAI.TranslationModel != "gpt-5.6-luna" {
-		t.Errorf("TranslationModel = %q, want gpt-5.6-luna", cfg.OpenAI.TranslationModel)
+	if cfg.OpenAI.TranslationModel != defaultModel {
+		t.Errorf("TranslationModel = %q, want %s", cfg.OpenAI.TranslationModel, defaultModel)
 	}
-	if cfg.OpenAI.HelperModel != "gpt-5.6-luna" {
-		t.Errorf("HelperModel = %q, want gpt-5.6-luna", cfg.OpenAI.HelperModel)
+	if cfg.OpenAI.HelperModel != defaultModel {
+		t.Errorf("HelperModel = %q, want %s", cfg.OpenAI.HelperModel, defaultModel)
 	}
 }
 

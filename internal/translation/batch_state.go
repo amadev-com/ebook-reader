@@ -1,12 +1,17 @@
 package translation
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
 
 	"ebook-reader/internal/project"
 )
+
+// ErrBatchStateNotFound is returned by LoadBatchState when no batch state file
+// exists for the given batch type.
+var ErrBatchStateNotFound = errors.New("batch state not found")
 
 // BatchState is the locally persisted state of a submitted batch. It is stored
 // in the project's batch directory (ai/batch_<type>.json) so that polling can
@@ -22,7 +27,7 @@ type BatchState struct {
 	Status       string    `json:"status"`      // last known batch status
 	ChapterIDs   []int     `json:"chapter_ids"` // chapters included in this batch
 	CreatedAt    time.Time `json:"created_at"`
-	CompletedAt  time.Time `json:"completed_at,omitempty"`
+	CompletedAt  time.Time `json:"completed_at,omitzero"`
 	Total        int64     `json:"total,omitempty"`
 	Completed    int64     `json:"completed,omitempty"`
 	Failed       int64     `json:"failed,omitempty"`
@@ -40,7 +45,7 @@ func SaveBatchState(aiDir string, state *BatchState) error {
 func LoadBatchState(aiDir, batchType string) (*BatchState, error) {
 	path := fmt.Sprintf("%s/batch_%s.json", aiDir, batchType)
 	if !project.Exists(path) {
-		return nil, nil
+		return nil, ErrBatchStateNotFound
 	}
 	var state BatchState
 	if err := project.LoadJSON(path, &state); err != nil {

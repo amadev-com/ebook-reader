@@ -7,12 +7,9 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -21,9 +18,23 @@ import (
 )
 
 var (
-	flagProject string
-	flagVerbose bool
+	flagProject string //nolint:gochecknoglobals // cobra flag binding requires package-level var
+	flagVerbose bool   //nolint:gochecknoglobals // cobra flag binding requires package-level var
 )
+
+// Shared CLI constants used by multiple batch-based commands (analyze,
+// pronounce, translate).
+
+// defaultPollInterval is the default seconds between batch status polls.
+const defaultPollInterval = 60
+
+// minPollInterval is the minimum allowed poll interval; smaller values are
+// clamped up to defaultPollInterval.
+const minPollInterval = 10
+
+// truncateLength is the maximum number of characters shown when truncating
+// content in log/warning messages.
+const truncateLength = 200
 
 // NewRoot builds the cobra root command with all subcommands attached.
 func NewRoot() *cobra.Command {
@@ -34,7 +45,8 @@ func NewRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().StringVarP(&flagProject, "project", "p", ".", "path to the bookai project directory (default: current dir)")
+	root.PersistentFlags().
+		StringVarP(&flagProject, "project", "p", ".", "path to the bookai project directory (default: current dir)")
 	root.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "enable debug logging")
 
 	root.AddCommand(
@@ -56,12 +68,6 @@ func NewRoot() *cobra.Command {
 // openProject loads the project at flagProject, applying defaults.
 func openProject() (*project.Project, error) {
 	return project.New(flagProject)
-}
-
-// rootContext returns a context cancelled on SIGINT/SIGTERM.
-func rootContext() (context.Context, context.CancelFunc) {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	return ctx, cancel
 }
 
 // setupLogger configures slog to stderr at the requested level.
@@ -86,13 +92,14 @@ func Fail(err error) int {
 	return 1
 }
 
+// newVersionCmd creates the command that prints the application version and current milestone.
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print bookai version and current milestone",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Printf("bookai %s (%s)\n", version.Version, version.Milestone)
+			fmt.Fprintf(os.Stdout, "bookai %s (%s)\n", version.Version, version.Milestone)
 			return nil
 		},
 	}

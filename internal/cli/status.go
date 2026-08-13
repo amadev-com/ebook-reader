@@ -1,12 +1,18 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// jsonExt is the file extension for JSON artifacts counted by runStatus.
+const jsonExt = ".json"
 
 // newStatusCmd implements `bookai status`: a quick tree of the project
 // directory with per-stage counts so the user can see pipeline progress.
@@ -26,9 +32,10 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
+// runStatus reports the project and configuration paths and the file counts for each pipeline stage.
 func runStatus(proj statusProject) error {
-	fmt.Printf("project: %s\n", proj.RootPath())
-	fmt.Printf("config:  %s\n", proj.ConfigPath())
+	fmt.Fprintf(os.Stdout, "project: %s\n", proj.RootPath())
+	fmt.Fprintf(os.Stdout, "config:  %s\n", proj.ConfigPath())
 
 	type stage struct {
 		name string
@@ -37,9 +44,9 @@ func runStatus(proj statusProject) error {
 	}
 	stages := []stage{
 		{"source (epub)", proj.SourceDir(), ".epub"},
-		{"extracted", proj.ExtractedDir(), ".json"},
-		{"chapters", proj.ChaptersDir(), ".json"},
-		{"ai", proj.AIDir(), ".json"},
+		{"extracted", proj.ExtractedDir(), jsonExt},
+		{"chapters", proj.ChaptersDir(), jsonExt},
+		{"ai", proj.AIDir(), jsonExt},
 		{"translation", proj.TranslationDir(), ".txt"},
 		{"memory", proj.MemoryDir(), ".txt"},
 		{"tts (ssml)", proj.TTSDir(), ".ssml"},
@@ -51,22 +58,37 @@ func runStatus(proj statusProject) error {
 		if exists {
 			mark = "x"
 		}
-		fmt.Printf("[%s] %-16s %3d file(s)  %s\n", mark, s.name, count, s.dir)
+		fmt.Fprintf(os.Stdout, "[%s] %-16s %3d file(s)  %s\n", mark, s.name, count, s.dir)
 	}
 	return nil
 }
 
-// countFiles returns the number of files (recursively) under dir whose name
-// ends with ext (if ext != ""). The boolean reports whether the directory
-// exists at all.
+// countFiles returns the number of visible files (recursively) under dir
+// whose name ends with ext (if ext != ""). Hidden files (dot-prefixed, e.g.
+// temp files from convertAudio) are skipped. The boolean reports whether
+// the directory exists at all.
 func countFiles(dir, ext string) (int, bool) {
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		return 0, false
 	}
 	n := 0
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	walkErr := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			// Log the unreadable entry but continue traversing the rest
+			// of the tree so the count is best-effort, not aborted.
+			slog.Default().Warn("status: skipping unreadable entry", "path", path, "error", err)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		// Skip temp/hidden files (e.g. .chapter_001.tmp.mp3 from convertAudio).
+		base := filepath.Base(path)
+		if strings.HasPrefix(base, ".") {
 			return nil
 		}
 		if ext == "" || filepath.Ext(path) == ext {
@@ -74,6 +96,9 @@ func countFiles(dir, ext string) (int, bool) {
 		}
 		return nil
 	})
+	if walkErr != nil && !errors.Is(walkErr, filepath.SkipDir) {
+		slog.Default().Warn("status: directory walk failed", "dir", dir, "error", walkErr)
+	}
 	return n, true
 }
 

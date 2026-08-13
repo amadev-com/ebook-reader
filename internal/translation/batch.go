@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -13,6 +14,32 @@ import (
 	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
+)
+
+// Batch metadata keys used when submitting batches via the OpenAI API.
+const (
+	BatchMetadataKeyType    = "type"
+	BatchMetadataKeyProject = "project"
+)
+
+// BatchEndpoint is the OpenAI API endpoint used for batch processing.
+const BatchEndpoint = "/v1/responses"
+
+// Batch status strings returned by the OpenAI Batch API.
+const (
+	BatchStatusValidating = "validating"
+	BatchStatusCompleted  = "completed"
+	BatchStatusFailed     = "failed"
+	BatchStatusExpired    = "expired"
+	BatchStatusCancelled  = "cancelled"
+)
+
+// Batch type strings identifying which pipeline stage a batch belongs to.
+const (
+	BatchTypeAnalyze      = "analyze"
+	BatchTypeAnalyzeMerge = "analyze-merge"
+	BatchTypePronounce    = "pronounce"
+	BatchTypeTranslate    = "translate"
 )
 
 // BatchRequest is a single request within a batch. Each request corresponds to
@@ -69,9 +96,13 @@ func NewBatchClient(baseURL string, maxRetries int) (*BatchClient, error) {
 // Reasoning effort is set to "none" by default — our tasks (translation,
 // glossary extraction, summaries, pronunciation) are straightforward and don't
 // benefit from chain-of-thought reasoning, which would add latency and cost.
-func BuildResponseParams(model, instructions, userInput string, jsonMode bool, maxTokens int64) responses.ResponseNewParams {
+func BuildResponseParams(
+	model, instructions, userInput string,
+	jsonMode bool,
+	maxTokens int64,
+) responses.ResponseNewParams {
 	params := responses.ResponseNewParams{
-		Model:        shared.ResponsesModel(model),
+		Model:        model,
 		Instructions: param.NewOpt(instructions),
 		Reasoning:    shared.ReasoningParam{Effort: shared.ReasoningEffortNone},
 		Input: responses.ResponseNewParamsInputUnion{
@@ -102,7 +133,7 @@ func BuildResponseParams(model, instructions, userInput string, jsonMode bool, m
 
 // batchInputLine is one line in the JSONL input file for the Batch API. Each
 // line represents a single request to the /v1/responses endpoint. The body is
-// a marshaled responses.ResponseNewParams (via json.RawMessage so the SDK's own
+// a marshaled responses.ResponseNewParams (via [json.RawMessage] so the SDK's own
 // MarshalJSON is used).
 type batchInputLine struct {
 	CustomID string          `json:"custom_id"`
@@ -127,10 +158,10 @@ func BuildJSONL(reqs []BatchRequest) ([]byte, error) {
 		line := batchInputLine{
 			CustomID: req.CustomID,
 			Method:   "POST",
-			URL:      "/v1/responses",
+			URL:      BatchEndpoint,
 			Body:     bodyJSON,
 		}
-		if err := enc.Encode(line); err != nil {
+		if err = enc.Encode(line); err != nil {
 			return nil, fmt.Errorf("encode batch line %s: %w", req.CustomID, err)
 		}
 	}
@@ -140,7 +171,11 @@ func BuildJSONL(reqs []BatchRequest) ([]byte, error) {
 // SubmitBatch uploads the JSONL input file and creates a batch. Returns the
 // batch ID and input file ID. The batch processes via the /v1/responses
 // endpoint with a 24h completion window.
-func (bc *BatchClient) SubmitBatch(ctx context.Context, jsonlData []byte, metadata map[string]string) (batchID, inputFileID string, err error) {
+func (bc *BatchClient) SubmitBatch(
+	ctx context.Context,
+	jsonlData []byte,
+	metadata map[string]string,
+) (string, string, error) {
 	// Upload the JSONL file with purpose "batch".
 	fileResp, err := bc.sdk.Files.New(ctx, openai.FileNewParams{
 		File:    bytes.NewReader(jsonlData),
@@ -220,7 +255,7 @@ func (bc *BatchClient) DownloadResults(ctx context.Context, outputFileID string)
 }
 
 // batchOutputLine is one line from the batch output JSONL file. The response
-// body is a json.RawMessage that gets unmarshaled into responses.Response (the
+// body is a [json.RawMessage] that gets unmarshaled into responses.Response (the
 // SDK type) to extract output text via Response.OutputText().
 type batchOutputLine struct {
 	CustomID string `json:"custom_id"`
@@ -260,7 +295,7 @@ func ParseBatchOutput(data []byte) ([]BatchRequestResult, error) {
 			results = append(results, result)
 			continue
 		}
-		if out.Response.StatusCode != 200 {
+		if out.Response.StatusCode != http.StatusOK {
 			result.Error = fmt.Sprintf("HTTP %d: %s", out.Response.StatusCode, string(out.Response.Body))
 			results = append(results, result)
 			continue
@@ -295,7 +330,7 @@ func (bc *BatchClient) CancelBatch(ctx context.Context, batchID string) error {
 // polling needed).
 func IsTerminalStatus(status string) bool {
 	switch status {
-	case "completed", "failed", "expired", "cancelled":
+	case BatchStatusCompleted, BatchStatusFailed, BatchStatusExpired, BatchStatusCancelled:
 		return true
 	default:
 		return false

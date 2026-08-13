@@ -23,10 +23,9 @@ func newVerifyGlossaryCmd() *cobra.Command {
 		Use:   "verify-glossary",
 		Short: "Check translations for untranslated or inconsistent glossary terms",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			setupLogger()
-			ctx, cancel := rootContext()
-			defer cancel()
+			ctx := cmd.Context()
 			proj, err := openProject()
 			if err != nil {
 				return err
@@ -45,21 +44,24 @@ type GlossaryViolation struct {
 	FoundInTranslation string `json:"found_in_translation,omitempty"`
 }
 
-func runVerifyGlossary(_ context.Context, proj *project.Project) error {
+// runVerifyGlossary checks translated chapters for glossary source terms that remain untranslated and reports any violations.
+// It writes detected violations to the project's glossary violations file for review.
+func runVerifyGlossary(ctx context.Context, proj *project.Project) error {
 	glossary, err := translation.LoadGlossary(proj.AIDir())
 	if err != nil {
 		return err
 	}
 	characters, err := translation.LoadCharacters(proj.AIDir())
 	if err != nil {
-		slog.Warn("failed to load characters", "error", err)
+		slog.Default().WarnContext(ctx, "failed to load characters", "error", err)
 		characters = &translation.Characters{}
 	}
 	glossary = glossary.WithCharacters(characters)
 	if len(glossary.Terms) == 0 {
 		return fmt.Errorf("no glossary found — run `bookai analyze` first")
 	}
-	slog.Info("loaded glossary", "terms", len(glossary.Terms), "characters", len(characters.Characters))
+	slog.Default().
+		InfoContext(ctx, "loaded glossary", "terms", len(glossary.Terms), "characters", len(characters.Characters))
 
 	translatedIDs, err := loadTranslatedChapters(proj)
 	if err != nil {
@@ -68,15 +70,15 @@ func runVerifyGlossary(_ context.Context, proj *project.Project) error {
 	if len(translatedIDs) == 0 {
 		return fmt.Errorf("no translated chapters found — run `bookai translate` first")
 	}
-	slog.Info("found translated chapters", "count", len(translatedIDs))
+	slog.Default().InfoContext(ctx, "found translated chapters", "count", len(translatedIDs))
 
 	targetLang := proj.Cfg.Languages.Target
 	var violations []GlossaryViolation
 
+	var data []byte
 	for _, chID := range translatedIDs {
 		path := translationPath(proj.TranslationDir(), chID, targetLang)
-		data, err := os.ReadFile(path)
-		if err != nil {
+		if data, err = os.ReadFile(path); err != nil {
 			return fmt.Errorf("read translation for chapter %d: %w", chID, err)
 		}
 		translationText := string(data)
@@ -101,24 +103,28 @@ func runVerifyGlossary(_ context.Context, proj *project.Project) error {
 
 	// Report.
 	if len(violations) == 0 {
-		fmt.Printf("No violations found. All %d glossary terms are consistently translated across %d chapters.\n",
-			len(glossary.Terms), len(translatedIDs))
+		fmt.Fprintf(
+			os.Stdout,
+			"No violations found. All %d glossary terms are consistently translated across %d chapters.\n",
+			len(glossary.Terms),
+			len(translatedIDs),
+		)
 		return nil
 	}
 
-	fmt.Printf("Found %d glossary violation(s) across %d translated chapters:\n\n",
+	fmt.Fprintf(os.Stdout, "Found %d glossary violation(s) across %d translated chapters:\n\n",
 		len(violations), len(translatedIDs))
 	for _, v := range violations {
-		fmt.Printf("  Chapter %d: %q appears untranslated (should be %q)\n",
+		fmt.Fprintf(os.Stdout, "  Chapter %d: %q appears untranslated (should be %q)\n",
 			v.ChapterID, v.SourceTerm, v.ExpectedTarget)
 	}
 
 	// Write violations to ai/glossary_violations.json for review.
 	violationsPath := filepath.Join(proj.AIDir(), "glossary_violations.json")
-	if err := project.SaveJSON(violationsPath, violations); err != nil {
+	if err = project.SaveJSON(violationsPath, violations); err != nil {
 		return fmt.Errorf("write violations: %w", err)
 	}
-	fmt.Printf("\nViolations written to %s\n", violationsPath)
+	fmt.Fprintf(os.Stdout, "\nViolations written to %s\n", violationsPath)
 	return nil
 }
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"ebook-reader/internal/chapters"
 	"ebook-reader/internal/project"
 	"ebook-reader/internal/tts"
 )
@@ -30,10 +32,9 @@ func newTTSCmd() *cobra.Command {
 		Use:   "tts",
 		Short: "Synthesize audio from SSML via the configured TTS engine",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			setupLogger()
-			ctx, cancel := rootContext()
-			defer cancel()
+			ctx := cmd.Context()
 			proj, err := openProject()
 			if err != nil {
 				return err
@@ -47,6 +48,7 @@ func newTTSCmd() *cobra.Command {
 	return cmd
 }
 
+// runTTS synthesizes speech for the project's chapters, optionally filtering by chapter or range. It respects cancellation and can force regeneration of existing audio.
 func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int, chRange string) error {
 	chs, err := loadAllChapters(proj)
 	if err != nil {
@@ -57,95 +59,145 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 	}
 
 	ids, err := parseChapterFilter(chapter, chRange, len(chs))
-	if err != nil {
+	if err != nil && !errors.Is(err, errNoChapterFilter) {
 		return err
 	}
-	writeAll := ids == nil
+	writeAll := errors.Is(err, errNoChapterFilter)
 
-	if err := proj.EnsureDirs(); err != nil {
+	if err = proj.EnsureDirs(); err != nil {
 		return err
 	}
 
 	// Build the engine config from project config.
 	engineCfg := buildEngineConfig(proj)
-	slog.Info("initializing TTS engine", "engine", engineCfg.Engine)
+	slog.Default().InfoContext(ctx, "initializing TTS engine", "engine", engineCfg.Engine)
 	engine, err := tts.NewEngine(engineCfg)
 	if err != nil {
 		return err
 	}
-	slog.Info("TTS engine ready", "name", engine.Name())
+	slog.Default().InfoContext(ctx, "TTS engine ready", "name", engine.Name())
 
 	// Determine output format and extension.
-	audioFormat := proj.Cfg.TTS.AudioFormat
-	if audioFormat == "" {
-		audioFormat = "mp3"
-	}
+	audioFormat := resolveAudioFormat(proj.Cfg.TTS.AudioFormat)
 	audioExt := audioExtension(audioFormat)
-	slog.Info("audio output", "format", audioFormat, "extension", audioExt)
+	slog.Default().InfoContext(ctx, "audio output", "format", audioFormat, "extension", audioExt)
 
 	synthesized := 0
 	skipped := 0
-
+	var s, sk int
 	for _, ch := range chs {
 		if ctx.Err() != nil {
-			slog.Info("interrupted by signal", "completed", synthesized)
+			slog.Default().InfoContext(ctx, "interrupted by signal", "completed", synthesized)
 			return ctx.Err()
 		}
 
-		ssmlPath := ssmlFilePath(proj.TTSDir(), ch.ID)
-		if !project.Exists(ssmlPath) {
-			slog.Debug("skip chapter without SSML", "chapter", ch.ID)
-			skipped++
-			continue
+		if s, sk, err = synthesizeChapter(
+			ctx,
+			ch,
+			proj,
+			ids,
+			writeAll,
+			force,
+			engine,
+			audioFormat,
+			audioExt,
+		); err != nil {
+			return err
 		}
-
-		if !writeAll && !ids[ch.ID] {
-			continue
-		}
-
-		outPath := audioPath(proj.AudioDir(), ch.ID, audioExt)
-		if project.Exists(outPath) && !force {
-			slog.Debug("skip existing audio", "chapter", ch.ID)
-			skipped++
-			continue
-		}
-
-		ssmlContent, err := os.ReadFile(ssmlPath)
-		if err != nil {
-			return fmt.Errorf("read SSML for chapter %d: %w", ch.ID, err)
-		}
-
-		slog.Info("synthesizing chapter", "id", ch.ID, "title", ch.Title)
-
-		if audioFormat == "wav" {
-			// Engine writes WAV directly to the output path.
-			if err := engine.Synthesize(ctx, string(ssmlContent), outPath); err != nil {
-				return fmt.Errorf("synthesize chapter %d: %w", ch.ID, err)
-			}
-		} else {
-			// Engine writes WAV to a temp file, then we convert to the target format.
-			wavPath := tempWAVPath(proj.AudioDir(), ch.ID)
-			if err := engine.Synthesize(ctx, string(ssmlContent), wavPath); err != nil {
-				return fmt.Errorf("synthesize chapter %d: %w", ch.ID, err)
-			}
-			if err := convertAudio(wavPath, outPath, audioFormat, proj.Cfg.TTS.AudioBitrate); err != nil {
-				_ = os.Remove(wavPath)
-				return fmt.Errorf("convert chapter %d to %s: %w", ch.ID, audioFormat, err)
-			}
-			_ = os.Remove(wavPath)
-		}
-
-		// Update chapter status.
-		ch.Status = "audio"
-		if err := project.SaveJSON(filepath.Join(proj.ChaptersDir(), fmt.Sprintf("chapter_%03d.json", ch.ID)), ch); err != nil {
-			slog.Warn("failed to update chapter status", "chapter", ch.ID, "error", err)
-		}
-
-		slog.Info("audio synthesized", "chapter", ch.ID, "file", outPath)
-		synthesized++
+		synthesized += s
+		skipped += sk
 	}
 
-	slog.Info("TTS run complete", "synthesized", synthesized, "skipped", skipped)
+	slog.Default().InfoContext(ctx, "TTS run complete", "synthesized", synthesized, "skipped", skipped)
+	return nil
+}
+
+// resolveAudioFormat returns the configured audio format, defaulting to MP3.
+func resolveAudioFormat(format string) string {
+	if format == "" {
+		return audioFormatMP3
+	}
+	return format
+}
+
+// synthesizeChapter synthesizes a single chapter's audio from its SSML file.
+// Returns the synthesized (1 or 0) and skipped (1 or 0) counts.
+func synthesizeChapter(
+	ctx context.Context,
+	ch chapters.Chapter,
+	proj *project.Project,
+	ids map[int]bool,
+	writeAll, force bool,
+	engine tts.Engine,
+	audioFormat, audioExt string,
+) (int, int, error) {
+	if !writeAll && !ids[ch.ID] {
+		return 0, 0, nil
+	}
+
+	ssmlPath := ssmlFilePath(proj.TTSDir(), ch.ID)
+	if !project.Exists(ssmlPath) {
+		slog.Default().DebugContext(ctx, "skip chapter without SSML", "chapter", ch.ID)
+		return 0, 1, nil
+	}
+
+	outPath := audioPath(proj.AudioDir(), ch.ID, audioExt)
+	if project.Exists(outPath) && !force {
+		slog.Default().DebugContext(ctx, "skip existing audio", "chapter", ch.ID)
+		return 0, 1, nil
+	}
+
+	ssmlContent, err := os.ReadFile(ssmlPath)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read SSML for chapter %d: %w", ch.ID, err)
+	}
+
+	slog.Default().InfoContext(ctx, "synthesizing chapter", "id", ch.ID, "title", ch.Title)
+
+	if err = synthesizeAudio(ctx, engine, string(ssmlContent), outPath, audioFormat, proj, ch.ID); err != nil {
+		return 0, 0, err
+	}
+
+	// Update chapter status.
+	ch.Status = "audio"
+	err = project.SaveJSON(
+		filepath.Join(proj.ChaptersDir(), fmt.Sprintf("chapter_%03d.json", ch.ID)),
+		ch,
+	)
+	if err != nil {
+		slog.Default().WarnContext(ctx, "failed to update chapter status", "chapter", ch.ID, "error", err)
+	}
+
+	slog.Default().InfoContext(ctx, "audio synthesized", "chapter", ch.ID, "file", outPath)
+	return 1, 0, nil
+}
+
+// synthesizeAudio runs the TTS engine and converts the output to the target
+// format if needed.
+func synthesizeAudio(
+	ctx context.Context,
+	engine tts.Engine,
+	ssmlContent, outPath, audioFormat string,
+	proj *project.Project,
+	chID int,
+) error {
+	if audioFormat == "wav" {
+		// Engine writes WAV directly to the output path.
+		if err := engine.Synthesize(ctx, ssmlContent, outPath); err != nil {
+			return fmt.Errorf("synthesize chapter %d: %w", chID, err)
+		}
+		return nil
+	}
+	// Engine writes WAV to a temp file, then we convert to the target format.
+	wavPath := tempWAVPath(proj.AudioDir(), chID)
+	if err := engine.Synthesize(ctx, ssmlContent, wavPath); err != nil {
+		return fmt.Errorf("synthesize chapter %d: %w", chID, err)
+	}
+	if err := convertAudio(ctx, wavPath, outPath, audioFormat, proj.Cfg.TTS.AudioBitrate); err != nil {
+		_ = os.Remove(wavPath)
+		return fmt.Errorf("convert chapter %d to %s: %w", chID, audioFormat, err)
+	}
+	_ = os.Remove(wavPath)
 	return nil
 }
 
@@ -190,12 +242,22 @@ func tempWAVPath(audioDir string, chapterID int) string {
 }
 
 // convertAudio converts a WAV file to the target format (e.g. MP3) using
-// ffmpeg. The output is mono, at the given bitrate for lossy formats.
-func convertAudio(input, output, format, bitrate string) error {
+// ffmpeg. The output is mono, at the given bitrate for lossy formats. The
+// conversion writes to a temporary file in the same directory and renames
+// atomically on success, so a cancelled or failed conversion never leaves a
+// partially-written output file that would cause later runs to skip the chapter.
+func convertAudio(ctx context.Context, input, output, format, bitrate string) error {
+	// Build a temp name that preserves the real extension (so ffmpeg can
+	// infer the muxer) but is clearly temporary and hidden from countFiles.
+	// e.g. "chapter_001.mp3" → ".chapter_001.tmp.mp3"
+	dir, base := filepath.Split(output)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	tmpOut := filepath.Join(dir, "."+stem+".tmp"+ext)
 	args := []string{"-y", "-i", input}
 
 	switch strings.ToLower(format) {
-	case "mp3":
+	case audioFormatMP3:
 		args = append(args,
 			"-ac", "1", // mono
 			"-c:a", "libmp3lame",
@@ -212,12 +274,17 @@ func convertAudio(input, output, format, bitrate string) error {
 		args = append(args, "-ac", "1")
 	}
 
-	args = append(args, output)
+	args = append(args, tmpOut)
 
 	// #nosec G204 -- ffmpeg is a known binary, args are controlled.
-	cmd := exec.Command("ffmpeg", args...)
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(tmpOut)
 		return fmt.Errorf("ffmpeg: %w (output: %s)", err, strings.TrimSpace(string(out)))
+	}
+	if err := os.Rename(tmpOut, output); err != nil {
+		_ = os.Remove(tmpOut)
+		return fmt.Errorf("rename temp output to %s: %w", output, err)
 	}
 	return nil
 }

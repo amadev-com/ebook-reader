@@ -11,6 +11,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// defaultModel is the default OpenAI model used for translation and helper tasks.
+const defaultModel = "gpt-5.6-luna"
+
 // Config is the in-memory representation of config.yaml.
 type Config struct {
 	// Project is the human-readable project name. Defaults to the project
@@ -132,6 +135,12 @@ type Paths struct {
 	Audio       string `yaml:"audio"`
 }
 
+// defaultMaxRetries is the default number of retries for OpenAI API calls.
+const defaultMaxRetries = 3
+
+// defaultSampleRate is the default audio sample rate (Hz) for TTS output.
+const defaultSampleRate = 48000
+
 // Default returns a Config populated with sensible defaults for an
 // English-to-Russian pipeline using gpt-4.1.
 func Default(projectName string) Config {
@@ -146,16 +155,16 @@ func Default(projectName string) Config {
 		},
 		OpenAI: OpenAI{
 			BaseURL:          "",
-			TranslationModel: "gpt-5.6-luna",
-			HelperModel:      "gpt-5.6-luna",
-			MaxRetries:       3,
+			TranslationModel: defaultModel,
+			HelperModel:      defaultModel,
+			MaxRetries:       defaultMaxRetries,
 		},
 		TTS: TTS{
 			Engine:       "noop",
 			Language:     "ru",
 			Speed:        1.0,
 			Pitch:        1.0,
-			SampleRate:   48000,
+			SampleRate:   defaultSampleRate,
 			AudioFormat:  "mp3",
 			AudioBitrate: "128k",
 		},
@@ -186,10 +195,10 @@ func Load(projectRoot string) (Config, error) {
 		}
 		return Config{}, fmt.Errorf("read config %s: %w", path, err)
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
-	if err := cfg.validate(); err != nil {
+	if err = cfg.validate(); err != nil {
 		return Config{}, fmt.Errorf("invalid config %s: %w", path, err)
 	}
 	return cfg, nil
@@ -202,7 +211,7 @@ func Save(projectRoot string, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err = os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil

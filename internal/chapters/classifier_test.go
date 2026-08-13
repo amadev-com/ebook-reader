@@ -1,4 +1,4 @@
-package chapters
+package chapters //nolint:testpackage // needs access to unexported rule/decision constants
 
 import "testing"
 
@@ -8,14 +8,14 @@ func TestClassifyTitleKeep(t *testing.T) {
 		title string
 		rule  string
 	}{
-		{"Chapter 1", "chapter-num"},
-		{"Chapter 42", "chapter-num"},
-		{"Chapter IV", "chapter-num"}, // roman numeral
-		{"chapter 1: Beginnings", "chapter-num"},
+		{"Chapter 1", ruleChapterNum},
+		{"Chapter 42", ruleChapterNum},
+		{"Chapter IV", ruleChapterNum}, // roman numeral
+		{"chapter 1: Beginnings", ruleChapterNum},
 		{"Chapter One", "chapter-any"},
-		{"Chapter 1: Just an old Book", "chapter-num"},
-		{"Part 1", "part"},
-		{"Part II", "part"},
+		{"Chapter 1: Just an old Book", ruleChapterNum},
+		{"Part 1", rulePart},
+		{"Part II", rulePart},
 		{"Book 1", "book-num"},
 		{"Volume 3", "volume"},
 		{"Prologue", "prologue"},
@@ -44,14 +44,14 @@ func TestClassifyTitleSkip(t *testing.T) {
 		rule  string
 	}{
 		{"Cover", "cover"},
-		{"Copyright", "copyright"},
-		{"Copyright Page", "copyright"},
+		{"Copyright", ruleCopyright},
+		{"Copyright Page", ruleCopyright},
 		{"Title Page", "title-page"},
-		{"Contents", "contents"},
-		{"Table of Contents", "contents"},
+		{"Contents", ruleContents},
+		{"Table of Contents", ruleContents},
 		{"TOC", "toc"},
-		{"Acknowledgements", "acknowledgements"},
-		{"Acknowledgments", "acknowledgements"},
+		{"Acknowledgements", ruleAcknowledgements},
+		{"Acknowledgments", ruleAcknowledgements},
 		{"About the Author", "about-author"},
 		{"Dedication", "dedication"},
 		{"Also by the Author", "also-by"},
@@ -121,7 +121,7 @@ func TestDecisionString(t *testing.T) {
 		{DecisionKeep, "KEEP"},
 		{DecisionSkip, "SKIP"},
 		{DecisionAmbiguous, "AMBIGUOUS"},
-		{DecisionUnknown, "UNKNOWN"},
+		{DecisionUnknown, decisionLabelUnknown},
 	}
 	for _, c := range cases {
 		if got := c.d.String(); got != c.want {
