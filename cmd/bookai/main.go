@@ -15,6 +15,7 @@ func main() {
 	os.Exit(run())
 }
 
+// run initializes the text-to-speech engines, executes the root CLI command, and returns its exit status.
 func run() int {
 	tts.RegisterEngines()
 	root := cli.NewRoot()

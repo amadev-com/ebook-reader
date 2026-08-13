@@ -35,7 +35,10 @@ var errMergeInputNotFound = errors.New("analyze merge input not found")
 // fresh (ignores existing files and replaces them).
 //
 // The command supports a --continue flag to resume polling an interrupted
-// batch. Batch state is persisted locally in ai/batch_analyze.json.
+// newAnalyzeCmd creates the analyze command for extracting glossary terms and
+// characters, with options for fresh or resumed analysis, chapter selection,
+// and batch polling interval. Batch state is persisted locally in
+// ai/batch_analyze.json.
 func newAnalyzeCmd() *cobra.Command {
 	var (
 		force   bool
@@ -70,7 +73,8 @@ func newAnalyzeCmd() *cobra.Command {
 //  1. If --continue: load existing batch state and jump to polling.
 //  2. Otherwise: build JSONL with one request per chapter, upload, create batch.
 //  3. Poll batch status every pollInt seconds until terminal.
-//  4. Download results, send a live merge/unify request, apply overrides, save.
+// runAnalyze orchestrates chapter analysis, batch submission and resumption, and glossary and character merging.
+// It returns an error if chapter loading, batch preparation, submission, or processing fails.
 func runAnalyze(
 	ctx context.Context,
 	proj *project.Project,
@@ -173,7 +177,9 @@ func runAnalyze(
 }
 
 // buildAnalyzeBatchRequests builds one batch request per chapter. Each request
-// extracts the glossary AND generates a chapter summary in a single pass.
+// buildAnalyzeBatchRequests creates one JSON batch request for each chapter and
+// collects the corresponding chapter IDs. Each request extracts glossary and
+// character data and generates a chapter summary.
 func buildAnalyzeBatchRequests(
 	chs []chapters.Chapter,
 	lockedTerms string,
@@ -199,7 +205,7 @@ func buildAnalyzeBatchRequests(
 }
 
 // submitAnalyzeBatch creates the batch client, submits the JSONL, saves the
-// batch state, and returns the state for polling.
+// submitAnalyzeBatch submits chapter analysis requests as a batch, persists its polling state, and returns that state.
 func submitAnalyzeBatch(
 	ctx context.Context,
 	proj *project.Project,
@@ -238,7 +244,7 @@ func submitAnalyzeBatch(
 }
 
 // filterChapters applies the --chapter/--range filter to the chapter list.
-// If no filter is set, all chapters are returned unchanged.
+// It returns an error when the filter is invalid.
 func filterChapters(chs []chapters.Chapter, chapter int, chRange string) ([]chapters.Chapter, error) {
 	ids, err := parseChapterFilter(chapter, chRange, len(chs))
 	if err != nil && !errors.Is(err, errNoChapterFilter) {
@@ -258,7 +264,7 @@ func filterChapters(chs []chapters.Chapter, chapter int, chRange string) ([]chap
 
 // resumeAnalyzeBatch loads the persisted batch state and resumes polling. It
 // checks for a merge batch first (the second phase), then falls back to the
-// extraction batch (the first phase).
+// resumeAnalyzeBatch resumes a pending analysis batch and processes completed results.
 func resumeAnalyzeBatch(ctx context.Context, proj *project.Project, pollInt int) error {
 	// Check for a pending merge batch first (second phase).
 	mergeState, err := translation.LoadBatchState(proj.AIDir(), translation.BatchTypeAnalyzeMerge)
@@ -313,7 +319,9 @@ func resumeAnalyzeBatch(ctx context.Context, proj *project.Project, pollInt int)
 // reaches a terminal status, it downloads results and processes them.
 // existingGlossary and existingCharacters are passed to the merge step so new
 // results can be merged with existing vocabulary (nil for --force or --continue
-// without existing files).
+// pollAnalyzeBatch waits for an analysis batch to reach a terminal state and processes
+// its results when completed. It returns an error if polling fails or the batch does not
+// complete successfully.
 func pollAnalyzeBatch(
 	ctx context.Context,
 	proj *project.Project,
@@ -337,7 +345,8 @@ func pollAnalyzeBatch(
 // summaries to memory/, then submits the merge/unify step as a second batch
 // (for 50% cost discount). The per-chapter results and existing vocabulary are
 // persisted to ai/analyze_merge_input.json so the merge batch can be resumed
-// with --continue if interrupted.
+// processAnalyzeResults processes batch extraction results, saves chapter summaries,
+// persists merge input, and submits the glossary and character merge batch.
 func processAnalyzeResults(
 	ctx context.Context,
 	proj *project.Project,
@@ -455,7 +464,8 @@ func deleteAnalyzeMergeInput(aiDir string) {
 
 // submitAnalyzeMergeBatch builds a single-item batch for the merge/unify step
 // and submits it. The per-chapter results and existing vocabulary are serialized
-// into the merge prompt.
+// submitAnalyzeMergeBatch submits the merged analysis results for glossary and character
+// consolidation, persists the batch state, and polls the batch until completion.
 func submitAnalyzeMergeBatch(ctx context.Context, proj *project.Project, input *analyzeMergeInput) error {
 	// Serialize just the results (without chapter IDs) for the merge prompt.
 	perChapter := make([]glossaryExtractionResult, len(input.ChapterResults))
@@ -549,7 +559,8 @@ func submitAnalyzeMergeBatch(ctx context.Context, proj *project.Project, input *
 }
 
 // pollAnalyzeMergeBatch polls the merge batch until completion, then processes
-// the result and saves the final glossary.json + characters.json.
+// pollAnalyzeMergeBatch polls the merge batch until it reaches a terminal status and
+// processes the completed results to save the final glossary and character data.
 func pollAnalyzeMergeBatch(ctx context.Context, proj *project.Project, state *translation.BatchState) error {
 	batchClient, err := pollBatchUntilTerminal(ctx, proj, state, defaultPollInterval, "merge batch")
 	if err != nil {
@@ -563,7 +574,7 @@ func pollAnalyzeMergeBatch(ctx context.Context, proj *project.Project, state *tr
 
 // processAnalyzeMergeResults downloads the merge batch result, parses the
 // unified glossary + characters, applies config overrides, and saves the
-// final glossary.json + characters.json.
+// processAnalyzeMergeResults finalizes the analysis merge by applying overrides, restoring chapter associations, and saving the unified glossary and character data.
 func processAnalyzeMergeResults(
 	ctx context.Context,
 	proj *project.Project,
@@ -671,7 +682,8 @@ type chapterResult struct {
 // tagChapters fills the Chapters field on each unified term and character by
 // matching source/name back to the per-chapter results. It also preserves
 // existing chapter tags from the existing glossary/characters (for entries
-// that were already tagged in previous analyze runs).
+// tagChapters assigns chapter IDs to unified glossary terms and characters using
+// extracted chapter results and tags from previously analyzed data.
 func tagChapters(
 	unified *glossaryExtractionResult,
 	chapterResults []chapterResult,
@@ -686,7 +698,8 @@ func tagChapters(
 }
 
 // buildTermChapterMap builds a lower(source)→[]chapterID map from per-chapter
-// results and existing glossary terms (for entries tagged in previous runs).
+// buildTermChapterMap maps glossary sources to unique chapter IDs from current
+// extraction results and previously saved glossary entries, using case-insensitive keys.
 func buildTermChapterMap(chapterResults []chapterResult, existingGlossary *translation.Glossary) map[string][]int {
 	termChapters := make(map[string][]int) // lower(source) → chapter IDs
 	for _, cr := range chapterResults {
@@ -711,7 +724,7 @@ func buildTermChapterMap(chapterResults []chapterResult, existingGlossary *trans
 }
 
 // buildCharacterChapterMap builds a lower(name)→[]chapterID map from per-chapter
-// results and existing characters (for entries tagged in previous runs).
+// buildCharacterChapterMap maps character names to the unique chapter IDs in which they appear, including existing chapter tags.
 func buildCharacterChapterMap(
 	chapterResults []chapterResult,
 	existingCharacters *translation.Characters,
@@ -739,7 +752,7 @@ func buildCharacterChapterMap(
 }
 
 // tagTermsWithChapters sets the Chapters field on each term by looking up its
-// lowercased source in the provided map.
+// tagTermsWithChapters assigns chapter IDs to glossary terms using their source names.
 func tagTermsWithChapters(terms []translation.GlossaryTerm, termChapters map[string][]int) {
 	for i := range terms {
 		if terms[i].Source == "" {
@@ -753,7 +766,7 @@ func tagTermsWithChapters(terms []translation.GlossaryTerm, termChapters map[str
 }
 
 // tagCharactersWithChapters sets the Chapters field on each character by
-// looking up its lowercased name in the provided map.
+// tagCharactersWithChapters assigns chapter IDs to characters with matching names.
 func tagCharactersWithChapters(characters []translation.Character, characterChapters map[string][]int) {
 	for i := range characters {
 		if characters[i].Name == "" {
@@ -766,7 +779,7 @@ func tagCharactersWithChapters(characters []translation.Character, characterChap
 	}
 }
 
-// appendUniqueInt appends v to s if not already present. Returns the result.
+// appendUniqueInt appends v to s when v is not already present and returns the resulting slice.
 func appendUniqueInt(s []int, v int) []int {
 	if slices.Contains(s, v) {
 		return s
@@ -836,7 +849,7 @@ func buildLockedTerms(overrides config.GlossaryOverrides) string {
 // applyGlossaryOverrides forces the translation/target of any extracted
 // character or term that matches a config override. The AI-extracted values
 // for other fields (role, description, type) are preserved. If a config
-// override has no match in the extracted results, it is added as a new entry.
+// applyGlossaryOverrides applies configured character and glossary-term overrides to the extracted result, adding configured entries that are absent.
 func applyGlossaryOverrides(result *glossaryExtractionResult, overrides config.GlossaryOverrides) {
 	result.Characters = applyCharacterOverrides(result.Characters, overrides.Characters)
 	result.Terms = applyTermOverrides(result.Terms, overrides.Terms)
@@ -844,7 +857,7 @@ func applyGlossaryOverrides(result *glossaryExtractionResult, overrides config.G
 
 // applyCharacterOverrides overrides the translation of any extracted character
 // that matches a config override, then adds config characters not found by the
-// model as new entries.
+// applyCharacterOverrides applies configured character translations and adds configured characters absent from the model output. Empty source or target overrides are ignored.
 func applyCharacterOverrides(
 	characters []translation.Character,
 	configChars []config.GlossaryOverride,
@@ -879,7 +892,8 @@ func applyCharacterOverrides(
 
 // applyTermOverrides overrides the target (and optionally type) of any extracted
 // term that matches a config override, then adds config terms not found by the
-// model as new entries.
+// applyTermOverrides applies configured translations and types to matching glossary terms
+// and adds configured terms that are absent from the existing entries.
 func applyTermOverrides(
 	terms []translation.GlossaryTerm,
 	configTerms []config.GlossaryOverride,
@@ -900,7 +914,9 @@ func applyTermOverrides(
 }
 
 // addMissingTerms appends config terms that were not found in the extracted
-// results as new glossary entries.
+// addMissingTerms appends configured glossary terms that are absent from the existing terms.
+// Source matching is case-insensitive, and entries with an empty source or target are ignored.
+// Configured terms without a type use the default term type.
 func addMissingTerms(
 	terms []translation.GlossaryTerm,
 	configTerms []config.GlossaryOverride,

@@ -41,7 +41,9 @@ func SaveBatchState(aiDir string, state *BatchState) error {
 
 // LoadBatchState reads the batch state for the given type ("analyze" or
 // "translate") from ai/batch_<type>.json. Returns nil, nil if no state file
-// exists.
+// LoadBatchState loads the persisted batch state for the specified batch type.
+// It returns ErrBatchStateNotFound when the state file does not exist. JSON
+// loading errors are returned with additional context.
 func LoadBatchState(aiDir, batchType string) (*BatchState, error) {
 	path := fmt.Sprintf("%s/batch_%s.json", aiDir, batchType)
 	if !project.Exists(path) {

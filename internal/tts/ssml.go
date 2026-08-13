@@ -78,7 +78,9 @@ func splitParagraphs(text string) []string {
 }
 
 // splitSentences splits a paragraph into sentences by sentence-ending
-// punctuation (. ! ? …). The punctuation is kept as part of the sentence.
+// splitSentences separates a paragraph into sentences at terminal punctuation,
+// retaining the punctuation and following closing quotes or brackets. Any
+// remaining text is returned as a final sentence.
 func splitSentences(para string) []string {
 	runes := []rune(para)
 	n := len(runes)
@@ -172,7 +174,7 @@ func HasValidStressMark(s string) bool {
 
 // escapeXML escapes the five special XML characters, replaces Latin letters
 // with their Cyrillic visual equivalents (Silero's Russian SSML parser crashes
-// on Latin characters), and preserves stress marks (+) as-is.
+// escapeXML escapes XML-sensitive characters and converts mapped Latin characters to their Cyrillic equivalents, preserving all other characters.
 func escapeXML(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -237,7 +239,7 @@ var latinToCyrillicMap = map[rune]rune{
 // equivalents. Silero's Russian TTS model cannot handle Latin characters in
 // SSML — it crashes with "'NoneType' object has no attribute 'keys'" and
 // returns silence. This maps Latin letters to their Cyrillic look-alikes
-// so the text is all-Cyrillic before sending to the server.
+// latinToCyrillic converts a mapped Latin rune to its Cyrillic equivalent and leaves other runes unchanged.
 func latinToCyrillic(r rune) rune {
 	if cyr, ok := latinToCyrillicMap[r]; ok {
 		return cyr

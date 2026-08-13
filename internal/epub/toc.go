@@ -90,6 +90,7 @@ func (r *Reader) readNCXTOC() ([]TOCEntry, error) {
 	return entries, nil
 }
 
+// hasProperty reports whether the specified property is present in a list of properties.
 func hasProperty(props []string, want string) bool {
 	return slices.Contains(props, want)
 }
@@ -114,7 +115,8 @@ type ncxDoc struct {
 }
 
 // parseNCX parses toc.ncx into a flat, ordered list of TOCEntry. Nested
-// navPoints are flattened with their Depth recorded.
+// parseNCX parses NCX data into ordered, depth-aware table-of-contents entries.
+// It returns an error if the data is not valid NCX XML.
 func parseNCX(data []byte) ([]TOCEntry, error) {
 	var ncx ncxDoc
 	if err := xml.Unmarshal(data, &ncx); err != nil {
@@ -154,7 +156,8 @@ func splitAnchor(src string) (string, string) {
 
 // parseNav parses an EPUB3 nav document. The nav element with epub:type="toc"
 // (or the first nav element if none is typed) is walked. Anchors are taken
-// from <a href="..."> inside <li>.
+// parseNav parses an EPUB navigation document and returns its table-of-contents entries in document order.
+// Each entry includes its title, target file, fragment, and nesting depth.
 func parseNav(data []byte) ([]TOCEntry, error) {
 	doc, err := html.Parse(bytes.NewReader(data))
 	if err != nil {
@@ -206,7 +209,7 @@ func parseNav(data []byte) ([]TOCEntry, error) {
 	return out, nil
 }
 
-// findTOCNav locates the <nav> element representing the table of contents.
+// findTOCNav locates the table-of-contents navigation element, preferring one marked with epub:type="toc" and otherwise returning the first nav element.
 func findTOCNav(root *html.Node) *html.Node {
 	var first, typed *html.Node
 	var walk func(*html.Node)

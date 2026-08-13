@@ -26,7 +26,7 @@ func LoadSummary(memoryDir string, chapterID int) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// SaveSummary writes a chapter's summary to memory/chapter_NNN.summary.txt.
+// SaveSummary writes a trimmed chapter summary to a zero-padded summary file in memoryDir, creating the directory if needed.
 func SaveSummary(memoryDir string, chapterID int, summary string) error {
 	path := summaryPath(memoryDir, chapterID)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
@@ -40,7 +40,7 @@ func SaveSummary(memoryDir string, chapterID int, summary string) error {
 
 // PreviousSummaries returns the summaries for the N chapters before
 // chapterID, joined into a single context block for the translation prompt.
-// Returns "" if there are no previous summaries.
+// encountered while loading summaries are returned.
 func PreviousSummaries(memoryDir string, chapterID, count int) (string, error) {
 	if chapterID <= 1 || count <= 0 {
 		return "", nil

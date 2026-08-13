@@ -14,7 +14,9 @@ import (
 // terminal status is reached. It updates and persists the batch state on each
 // poll. The label is used in log messages to distinguish batch types (e.g.
 // "batch", "merge batch"). Returns the batch client for downstream result
-// processing.
+// pollBatchUntilTerminal polls a batch until it reaches a terminal status, updating
+// and persisting its state after each poll. It returns the batch client when polling
+// completes, or an error if client creation, polling, or context cancellation fails.
 func pollBatchUntilTerminal(
 	ctx context.Context,
 	proj *project.Project,
@@ -75,7 +77,7 @@ func pollBatchUntilTerminal(
 }
 
 // batchTerminalError returns an error describing the terminal status of the
-// batch, or nil if the batch completed successfully.
+// batchTerminalError creates a descriptive error for a batch that ended without success. It includes the batch label, ID, and terminal status.
 func batchTerminalError(state *translation.BatchState, label string) error {
 	switch state.Status {
 	case translation.BatchStatusFailed:

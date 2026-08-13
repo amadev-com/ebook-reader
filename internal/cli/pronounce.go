@@ -32,7 +32,8 @@ import (
 //
 // The command supports a --continue flag to resume polling an interrupted
 // batch. Batch state is persisted locally in ai/batch_pronounce.json.
-// The --reset flag erases the existing ai/stress.json before merging.
+// newPronounceCmd creates the command for generating Silero stress marks for translated chapters.
+// The command supports filtering chapters, resuming or forcing batch processing, and resetting the existing stress vocabulary before merging results.
 func newPronounceCmd() *cobra.Command {
 	var (
 		force   bool
@@ -69,7 +70,9 @@ func newPronounceCmd() *cobra.Command {
 //  1. If --continue: load existing batch state and jump to polling.
 //  2. Otherwise: build JSONL with one request per chapter, upload, create batch.
 //  3. Poll batch status every pollInt seconds until terminal.
-//  4. Download results, save per-chapter stress files, merge into global vocabulary.
+// runPronounce generates pronunciation stress marks for selected translated chapters,
+// submits them as a batch, and processes the completed results into the project's
+// global stress vocabulary. It resumes pending batches when applicable.
 func runPronounce(
 	ctx context.Context,
 	proj *project.Project,
@@ -181,7 +184,9 @@ func runPronounce(
 
 // filterPronounceChapters selects chapters that have translations and have
 // not already been processed into the global vocabulary (unless force is set).
-// Returns the chapters to process and the number skipped.
+// filterPronounceChapters selects chapters with translations for the target language
+// that match the requested IDs and have not already been processed. It returns the
+// selected chapters and the number skipped.
 func filterPronounceChapters(
 	chs []chapters.Chapter,
 	proj *project.Project,
@@ -218,7 +223,9 @@ func filterPronounceChapters(
 }
 
 // buildPronounceRequests builds batch requests (one per chapter) and the
-// corresponding chapter ID list.
+// buildPronounceRequests creates pronunciation batch requests for translated chapters
+// and returns their corresponding chapter IDs. It returns an error if a translation
+// cannot be read.
 func buildPronounceRequests(
 	toProcess []chapters.Chapter,
 	proj *project.Project,
@@ -246,7 +253,7 @@ func buildPronounceRequests(
 	return reqs, chapterIDs, nil
 }
 
-// resumePronounceBatch loads the persisted batch state and resumes polling.
+// It returns an error when no pending batch exists or the state cannot be loaded.
 func resumePronounceBatch(ctx context.Context, proj *project.Project, reset bool, pollInt int) error {
 	state, err := translation.LoadBatchState(proj.AIDir(), translation.BatchTypePronounce)
 	if err != nil {
@@ -262,7 +269,9 @@ func resumePronounceBatch(ctx context.Context, proj *project.Project, reset bool
 }
 
 // pollPronounceBatch polls the batch status every pollInt seconds. When the
-// batch reaches a terminal status, it downloads results and processes them.
+// pollPronounceBatch polls a pronunciation batch until it reaches a terminal status
+// and processes its results when completed. It returns an error for failed or
+// otherwise incomplete batches.
 func pollPronounceBatch(
 	ctx context.Context,
 	proj *project.Project,
@@ -284,7 +293,11 @@ func pollPronounceBatch(
 // chapter's stress marks directly into the global ai/stress.json
 // vocabulary. Conflicts (same term, different stressed forms) are resolved
 // interactively in the CLI. Per-chapter stress files are never written to
-// disk — results are merged in memory as they're parsed.
+// processPronounceResults downloads and processes pronunciation batch results, merges
+// them into the global stress vocabulary, resolves conflicts, and saves the result.
+// When reset is true, it replaces the existing vocabulary. It returns an error if
+// results cannot be downloaded, the vocabulary cannot be loaded or saved, or
+// conflicts cannot be resolved.
 func processPronounceResults(
 	ctx context.Context,
 	proj *project.Project,
@@ -430,7 +443,8 @@ func containsVariant(variants []string, v string) bool {
 	return false
 }
 
-// resolveStressConflicts prompts the user to resolve each conflict one by one.
+// resolveStressConflicts prompts the user to select a stress variant or skip each conflict.
+// It updates global with the selected resolutions and returns an input error if reading a choice fails.
 func resolveStressConflicts(global *tts.Stress, conflicts []tts.StressConflict) error {
 	reader := bufio.NewReader(os.Stdin)
 	resolved := 0
@@ -536,7 +550,8 @@ func stripUnicodeStress(s string) string {
 
 // applyStressOverrides forces the stress of any entry that matches a config
 // pronunciation override. Config entries not found by the model are added as
-// new entries.
+// applyStressOverrides applies configured pronunciation overrides to stress entries,
+// replacing matching terms and adding configured terms with both term and phoneme values.
 func applyStressOverrides(result *stressResult, overrides []config.PronunciationOverride) {
 	if len(overrides) == 0 {
 		return

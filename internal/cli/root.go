@@ -36,7 +36,7 @@ const minPollInterval = 10
 // content in log/warning messages.
 const truncateLength = 200
 
-// NewRoot builds the cobra root command with all subcommands attached.
+// NewRoot builds and configures the root command with its persistent flags and subcommands.
 func NewRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "bookai",
@@ -70,7 +70,7 @@ func openProject() (*project.Project, error) {
 	return project.New(flagProject)
 }
 
-// setupLogger configures slog to stderr at the requested level.
+// setupLogger configures the default logger to write text-formatted messages to standard error at info level, or debug level when verbose mode is enabled.
 func setupLogger() {
 	level := slog.LevelInfo
 	if flagVerbose {
@@ -92,6 +92,7 @@ func Fail(err error) int {
 	return 1
 }
 
+// newVersionCmd creates the command that prints the application version and current milestone.
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",

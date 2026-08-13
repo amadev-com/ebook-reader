@@ -83,7 +83,7 @@ var (
 // RegisterEngines registers all built-in engine factories. Safe to call
 // multiple times; subsequent calls are no-ops. Also called automatically by
 // NewEngine and AvailableEngines so that consumers outside the bookai binary
-// (tests, future entry points) never observe an empty registry.
+// RegisterEngines registers the built-in text-to-speech engines once. Subsequent calls have no effect.
 func RegisterEngines() {
 	registerBuiltinsOnce.Do(func() {
 		Register(engineNoop, NewNoopEngine)
@@ -93,13 +93,13 @@ func RegisterEngines() {
 
 // ensureRegistered makes sure built-in engines are in the registry. Called
 // by NewEngine and AvailableEngines so callers don't need to call
-// RegisterEngines explicitly.
+// ensureRegistered ensures that the built-in text-to-speech engines are registered.
 func ensureRegistered() {
 	RegisterEngines()
 }
 
 // Register adds an EngineFactory under the given name. Panics if the name is
-// already registered (a programming error, not a runtime condition).
+// Register adds an engine factory under the specified name and panics if the name is already registered.
 func Register(name string, factory EngineFactory) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -111,7 +111,7 @@ func Register(name string, factory EngineFactory) {
 
 // NewEngine looks up the registered factory for cfg.Engine and constructs an
 // Engine. Returns a descriptive error if the engine is unknown or
-// initialization fails.
+// It returns an error if the configured engine is unknown or initialization fails.
 func NewEngine(cfg EngineConfig) (Engine, error) {
 	ensureRegistered()
 	registryMu.RLock()

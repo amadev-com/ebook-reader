@@ -47,7 +47,8 @@ func ExtractBlocks(xhtml []byte) ([]Block, error) {
 
 // walkBody recursively walks the DOM, emitting a Block for each block-level
 // element. currentAnchor is the id of the nearest ancestor element that had an
-// id attribute; headings inherit it unless they have their own id.
+// walkBody recursively traverses a body node and extracts semantic blocks into out,
+// propagating the current anchor through nested elements.
 func walkBody(n *html.Node, currentAnchor string, out *[]Block) {
 	if n.Type == html.ElementNode {
 		walkElement(n, currentAnchor, out)
@@ -68,7 +69,7 @@ func walkBody(n *html.Node, currentAnchor string, out *[]Block) {
 }
 
 // walkElement handles a single element node, dispatching on the tag name to
-// emit the appropriate Block or recurse into children.
+// walkElement emits a block for supported content elements or recursively processes their children.
 func walkElement(n *html.Node, currentAnchor string, out *[]Block) {
 	switch n.Data {
 	case "script", "style", "head", navElement, "svg":
@@ -117,7 +118,8 @@ func walkElement(n *html.Node, currentAnchor string, out *[]Block) {
 }
 
 // handleHeadingBlock emits a heading Block for h1-h6 elements, using the
-// element's own id as the anchor (falling back to the inherited anchor).
+// handleHeadingBlock appends a heading block with collapsed text and its own anchor ID,
+// falling back to the inherited anchor when the heading has no ID.
 func handleHeadingBlock(n *html.Node, currentAnchor string, out *[]Block) {
 	level := int(n.Data[1] - '0')
 	anchor := getAttr(n, "id")
@@ -133,7 +135,8 @@ func handleHeadingBlock(n *html.Node, currentAnchor string, out *[]Block) {
 }
 
 // handleTextBlock emits a text Block (paragraph, list_item, or pre) if the
-// element's collapsed text is non-empty.
+// handleTextBlock appends a text block with collapsed whitespace when the node contains text.
+// currentAnchor identifies the block's anchor, and kind specifies its semantic block type.
 func handleTextBlock(n *html.Node, currentAnchor string, out *[]Block, kind string) {
 	text := collapseWS(textOf(n))
 	if text != "" {
@@ -143,7 +146,7 @@ func handleTextBlock(n *html.Node, currentAnchor string, out *[]Block, kind stri
 
 // handleContainerBlock descends into an element's children, propagating any id
 // as the anchor context. Used for container elements (div, section, blockquote,
-// etc.) and unknown elements.
+// handleContainerBlock processes a container's children while propagating its ID as the active anchor.
 func handleContainerBlock(n *html.Node, currentAnchor string, out *[]Block) {
 	anchor := getAttr(n, "id")
 	if anchor == "" {

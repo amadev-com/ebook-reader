@@ -15,7 +15,7 @@ import (
 const jsonExt = ".json"
 
 // newStatusCmd implements `bookai status`: a quick tree of the project
-// directory with per-stage counts so the user can see pipeline progress.
+// newStatusCmd creates the status command, which reports the project directory tree and per-stage artifact counts.
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -32,6 +32,7 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
+// runStatus reports the project and configuration paths and the file counts for each pipeline stage.
 func runStatus(proj statusProject) error {
 	fmt.Fprintf(os.Stdout, "project: %s\n", proj.RootPath())
 	fmt.Fprintf(os.Stdout, "config:  %s\n", proj.ConfigPath())
@@ -64,7 +65,9 @@ func runStatus(proj statusProject) error {
 
 // countFiles returns the number of files (recursively) under dir whose name
 // ends with ext (if ext != ""). The boolean reports whether the directory
-// exists at all.
+// countFiles counts visible files with the specified extension under dir.
+// An empty extension counts all visible files. It returns the count and whether
+// dir exists and is a directory.
 func countFiles(dir, ext string) (int, bool) {
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {

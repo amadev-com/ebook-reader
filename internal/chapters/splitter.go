@@ -94,7 +94,10 @@ type SplitResult struct {
 // Split detects chapters from the extracted spine + TOC. It tries strategies in
 // order: TOC-driven, then heading-driven, then per-item. The first strategy
 // that yields at least minChapters (2) chapters wins; otherwise the last
-// strategy's output is returned with a warning.
+// Split selects the first chapter-detection strategy that produces at least two chapters.
+// It tries TOC, heading, and per-item detection in that order, using the per-item result
+// with a warning when no earlier strategy succeeds. It returns an error if a strategy
+// fails.
 func Split(in SplitInput) (*SplitResult, error) {
 	strategies := []Strategy{StrategyTOC, StrategyHeading, StrategyPerItem}
 	var last *SplitResult
@@ -137,7 +140,8 @@ func Split(in SplitInput) (*SplitResult, error) {
 // SplitByTOC builds chapters from TOC entries classified as Keep. Each kept
 // entry's content is the blocks from its source file (and anchor, if present)
 // up to the next kept entry. Non-kept entries become SkippedSection records.
-// Exported so the CLI can force this strategy via --strategy toc.
+// SplitByTOC creates chapters from table-of-contents entries and matching spine items.
+// Entries classified as skipped, ambiguous, or unknown are recorded in the result's skipped sections.
 func SplitByTOC(in SplitInput) (*SplitResult, error) {
 	res := &SplitResult{}
 	if len(in.TOC) == 0 {
@@ -206,7 +210,9 @@ func SplitByTOC(in SplitInput) (*SplitResult, error) {
 // buildChapterFromTOC collects the text blocks belonging to one TOC entry.
 // In the common case (one spine item per TOC entry, no anchor), this is just
 // that spine item's blocks. With anchors, we split the item's blocks at the
-// heading whose anchor matches.
+// buildChapterFromTOC constructs a chapter from the spine items matching a TOC entry.
+// When the entry specifies an anchor, extracts content starting at the anchored heading;
+// otherwise, includes the matching spine content. Returns nil when no spine item matches.
 func buildChapterFromTOC(in SplitInput, tocIdx int, entry epub.TOCEntry) *Chapter {
 	// Find the spine item(s) whose href basename matches the TOC src file.
 	target := basename(entry.SrcFile)
@@ -238,7 +244,10 @@ func buildChapterFromTOC(in SplitInput, tocIdx int, entry epub.TOCEntry) *Chapte
 
 // chapterFromAnchor builds a Chapter from the blocks between the heading with
 // the TOC entry's anchor and the next heading with a different anchor. If the
-// anchor is not found, it falls back to all blocks of the first matching item.
+// chapterFromAnchor creates a chapter from the TOC entry's anchored section.
+// It includes content from the matching heading through the next heading with a
+// different nonempty anchor, or all blocks from the first matching item when the
+// anchor is not found.
 func chapterFromAnchor(entry epub.TOCEntry, items []SpineItem, tocIdx int) *Chapter {
 	blocks := items[0].Blocks
 	start := -1
@@ -273,7 +282,7 @@ func chapterFromAnchor(entry epub.TOCEntry, items []SpineItem, tocIdx int) *Chap
 	}
 }
 
-// chapterFromBlocks builds a Chapter from one or more whole spine items.
+// chapterFromBlocks builds a Chapter from one or more complete spine items.
 func chapterFromBlocks(title string, items []SpineItem, tocIdx int, strategy Strategy) *Chapter {
 	var allBlocks []epub.Block
 	var ids []string
@@ -293,7 +302,7 @@ func chapterFromBlocks(title string, items []SpineItem, tocIdx int, strategy Str
 // SplitByHeadings scans all spine blocks for h1/h2 headings that classify as
 // Keep. Each such heading starts a new chapter; content runs until the next
 // kept heading. Spine items with no kept heading are skipped (recorded).
-// Exported so the CLI can force this strategy via --strategy heading.
+// SplitByHeadings creates chapters from level-one and level-two headings in the spine, recording unassociated spine items as skipped sections.
 func SplitByHeadings(in SplitInput) (*SplitResult, error) {
 	res := &SplitResult{}
 	var cur *headingPending
@@ -341,7 +350,9 @@ type headingPending struct {
 // processHeadingBlocks scans one spine item's blocks for kept h1/h2 headings.
 // Each kept heading flushes the current pending chapter and starts a new one.
 // Non-heading blocks are appended to the current pending chapter (if any).
-// Returns true if at least one kept heading was found.
+// processHeadingBlocks processes a spine item's blocks, starting a pending
+// chapter for each kept level-one or level-two heading and adding other blocks
+// to the current chapter. It returns whether the item contains a kept heading.
 func processHeadingBlocks(si SpineItem, cur **headingPending, flush func()) bool {
 	hasKeptHeading := false
 	for _, b := range si.Blocks {
@@ -363,7 +374,9 @@ func processHeadingBlocks(si SpineItem, cur **headingPending, flush func()) bool
 }
 
 // skipSectionFromSpineItem classifies a spine item with no kept heading as a
-// SkippedSection, using the first heading text (or the item id) as the title.
+// skipSectionFromSpineItem creates skipped-section metadata for a spine item.
+// It uses the first heading as the title, or the item ID when no heading is present,
+// and records ambiguous classifications with the dedicated ambiguous-skip reason.
 func skipSectionFromSpineItem(si SpineItem) SkippedSection {
 	title := firstHeadingText(si.Blocks)
 	if title == "" {
@@ -385,7 +398,9 @@ func skipSectionFromSpineItem(si SpineItem) SkippedSection {
 
 // SplitPerItem is the last-resort strategy: every spine item with text becomes
 // a chapter. This guarantees output but produces poor results for multi-file
-// chapters or single-file multi-chapter books. Exported for --strategy per-item.
+// SplitPerItem creates one raw chapter for each nonempty spine item, using its
+// first heading as the title or the item ID when no heading is present. It is
+// intended for per-item splitting of single-file multi-chapter books.
 func SplitPerItem(in SplitInput) (*SplitResult, error) {
 	res := &SplitResult{}
 	id := 0
@@ -416,7 +431,8 @@ func SplitPerItem(in SplitInput) (*SplitResult, error) {
 
 // blocksToText joins block texts into a single string, paragraphs separated
 // by blank lines. Headings are included as their text (the chapter title is
-// captured separately, but a heading inside the body is still content).
+// blocksToText converts supported content blocks to text, including image alt text.
+// It separates each included block with a blank line.
 func blocksToText(blocks []epub.Block) string {
 	var parts []string
 	for _, b := range blocks {
@@ -434,6 +450,7 @@ func blocksToText(blocks []epub.Block) string {
 	return strings.Join(parts, "\n\n")
 }
 
+// blocksSnippet returns the text from the provided blocks, truncated to the configured snippet length when necessary.
 func blocksSnippet(blocks []epub.Block) string {
 	text := blocksToText(blocks)
 	if len(text) > minHeadingLength {
@@ -451,6 +468,7 @@ func snippetForTOC(in SplitInput, entry epub.TOCEntry) string {
 	return ""
 }
 
+// firstHeadingText returns the text of the first heading block, or an empty string if no heading is present.
 func firstHeadingText(blocks []epub.Block) string {
 	for _, b := range blocks {
 		if b.Kind == epub.BlockKindHeading {
@@ -460,6 +478,7 @@ func firstHeadingText(blocks []epub.Block) string {
 	return ""
 }
 
+// basename returns the final component of a path after normalizing directory separators.
 func basename(path string) string {
 	// Strip directory, keep filename. Works for both / and \ separators.
 	path = strings.ReplaceAll(path, "\\", "/")

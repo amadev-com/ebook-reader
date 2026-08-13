@@ -95,7 +95,9 @@ func NewBatchClient(baseURL string, maxRetries int) (*BatchClient, error) {
 //
 // Reasoning effort is set to "none" by default — our tasks (translation,
 // glossary extraction, summaries, pronunciation) are straightforward and don't
-// benefit from chain-of-thought reasoning, which would add latency and cost.
+// BuildResponseParams creates Responses API parameters for a user request.
+// It disables reasoning, optionally requests a JSON-object response format, and
+// applies a maximum output token limit when maxTokens is greater than zero.
 func BuildResponseParams(
 	model, instructions, userInput string,
 	jsonMode bool,
@@ -145,7 +147,8 @@ type batchInputLine struct {
 // BuildJSONL serializes a list of BatchRequests into the JSONL format expected
 // by the OpenAI Batch API. Each request becomes one line targeting
 // /v1/responses. The body of each line is a marshaled
-// responses.ResponseNewParams, using the SDK's own serialization.
+// BuildJSONL serializes batch requests as newline-delimited JSON for the Responses API.
+// It returns an error if a request cannot be marshaled or encoded.
 func BuildJSONL(reqs []BatchRequest) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -272,7 +275,9 @@ type batchOutputLine struct {
 // ParseBatchOutput parses the JSONL output file from a completed batch. Each
 // line contains the custom_id, the response (with the full API response body),
 // or an error. The output text is extracted from the response body by
-// unmarshaling it into responses.Response and calling OutputText().
+// ParseBatchOutput parses newline-delimited batch responses into request results.
+// It records API and response errors on individual results and returns an error when
+// an output line cannot be parsed. Successful results contain the extracted output text.
 func ParseBatchOutput(data []byte) ([]BatchRequestResult, error) {
 	var results []BatchRequestResult
 	for lineNum, line := range bytes.Split(data, []byte("\n")) {
@@ -327,7 +332,7 @@ func (bc *BatchClient) CancelBatch(ctx context.Context, batchID string) error {
 }
 
 // IsTerminalStatus returns true if the batch status is terminal (no further
-// polling needed).
+// IsTerminalStatus reports whether a batch status indicates that processing is complete and no further polling is needed.
 func IsTerminalStatus(status string) bool {
 	switch status {
 	case BatchStatusCompleted, BatchStatusFailed, BatchStatusExpired, BatchStatusCancelled:

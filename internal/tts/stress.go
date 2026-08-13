@@ -52,7 +52,7 @@ type StressConflict struct {
 }
 
 // LoadStress reads the global ai/stress.json from the project's AI directory.
-// Returns an empty store if the file does not exist (stress marks are optional).
+// LoadStress loads the persistent stress store from the AI directory, returning an empty store when stress.json is absent.
 func LoadStress(aiDir string) (*Stress, error) {
 	path := aiDir + "/stress.json"
 	if !project.Exists(path) {
@@ -68,7 +68,7 @@ func LoadStress(aiDir string) (*Stress, error) {
 // NewStressFromOverrides builds a Stress store from pronunciation config
 // overrides. Each override becomes a StressEntry. This is used by the
 // --auto-stress flow to apply user-specified corrections on top of the
-// silero-stress model output.
+// NewStressFromOverrides creates a stress store from overrides with both a term and pronunciation.
 func NewStressFromOverrides(overrides []StressOverride) *Stress {
 	s := &Stress{}
 	for _, ov := range overrides {
@@ -222,7 +222,8 @@ func (s *Stress) findIndex(term string) (int, bool) {
 
 // MergeAll merges multiple per-chapter stress stores into a single global
 // vocabulary. Returns the merged store and a list of conflicts for terms with
-// disagreeing stress marks across chapters.
+// MergeAll combines stress data from multiple chapters, sorts the merged entries by
+// term length, and returns any conflicting stress forms.
 func MergeAll(chapters []*Stress) (*Stress, []StressConflict) {
 	merged := &Stress{}
 	var conflicts []StressConflict

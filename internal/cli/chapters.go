@@ -54,6 +54,8 @@ func newChaptersCmd() *cobra.Command {
 	}
 }
 
+// runChapters displays the per-chapter pipeline status table for a project.
+// It returns an error if chapters cannot be loaded or the project contains no chapters.
 func runChapters(proj *project.Project) error {
 	chs, err := loadAllChapters(proj)
 	if err != nil {
@@ -114,7 +116,7 @@ func printChaptersTableSummary(total int, stats *chaptersTableStats) {
 		total, stats.shortCount, stats.strippedCount, stats.translatedCount, stats.ssmlCount, stats.audioCount)
 }
 
-// printChapterRow renders a single chapter row and updates the stats counters.
+// printChapterRow renders a chapter's status and size information and updates aggregate statistics.
 func printChapterRow(
 	ch chapters.Chapter,
 	glossary *translation.Glossary,
@@ -151,7 +153,8 @@ func printChapterRow(
 		transLen, ssmlMark, audioMark, title)
 }
 
-// chapterSizeColumns returns the raw and diff column strings for a chapter.
+// chapterSizeColumns formats a chapter's raw size and the difference between its raw and current sizes.
+// It marks large size reductions and updates the stripped-chapter count when applicable.
 func chapterSizeColumns(ch chapters.Chapter, size int, stats *chaptersTableStats) (string, string) {
 	rawStr := "-"
 	diffStr := "-"
@@ -172,7 +175,7 @@ func chapterSizeColumns(ch chapters.Chapter, size int, stats *chaptersTableStats
 }
 
 // countGlossaryTerms returns the number of glossary terms tagged with the
-// given chapter ID.
+// countGlossaryTerms counts glossary terms associated with the specified chapter.
 func countGlossaryTerms(glossary *translation.Glossary, id int) int {
 	terms := 0
 	for _, t := range glossary.Terms {
@@ -184,7 +187,7 @@ func countGlossaryTerms(glossary *translation.Glossary, id int) int {
 }
 
 // countCharacters returns the number of characters tagged with the given
-// chapter ID.
+// countCharacters counts the characters associated with a chapter ID.
 func countCharacters(chars *translation.Characters, id int) int {
 	charCount := 0
 	for _, c := range chars.Characters {
@@ -196,7 +199,9 @@ func countCharacters(chars *translation.Characters, id int) int {
 }
 
 // chapterTransLen returns the translation file length string ("-" if missing)
-// and increments the translated counter if the file exists and is readable.
+// chapterTransLen reports the byte length of a chapter translation file.
+// It returns "-" when the file is missing or unreadable and increments the
+// translated count when the file is readable.
 func chapterTransLen(proj *project.Project, id int, targetLang string, stats *chaptersTableStats) string {
 	transPath := translationPath(proj.TranslationDir(), id, targetLang)
 	if !project.Exists(transPath) {
@@ -211,7 +216,7 @@ func chapterTransLen(proj *project.Project, id int, targetLang string, stats *ch
 }
 
 // chapterFileMark returns "yes" if the file exists (incrementing the counter
-// via the pointer) or "-" otherwise.
+// chapterFileMark reports whether a file exists and increments count when it does.
 func chapterFileMark(_ *project.Project, path string, count *int) string {
 	if project.Exists(path) {
 		*count++

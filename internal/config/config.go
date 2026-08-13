@@ -142,7 +142,8 @@ const defaultMaxRetries = 3
 const defaultSampleRate = 48000
 
 // Default returns a Config populated with sensible defaults for an
-// English-to-Russian pipeline using gpt-4.1.
+// Default creates a configuration with English-to-Russian translation settings and standard project paths.
+// An empty project name is replaced with "book".
 func Default(projectName string) Config {
 	if projectName == "" {
 		projectName = "book"
@@ -183,7 +184,9 @@ func Default(projectName string) Config {
 
 // Load reads config.yaml from projectRoot. If the file does not exist, a
 // Default config is returned (the project is treated as freshly initialized).
-// If it exists but is malformed, an error is returned.
+// Load reads and validates the project configuration.
+// It returns default configuration when config.yaml is absent and an error when the
+// file cannot be read, parsed, or validated.
 func Load(projectRoot string) (Config, error) {
 	cfg := Default(filepath.Base(projectRoot))
 	path := filepath.Join(projectRoot, "config.yaml")
@@ -204,7 +207,7 @@ func Load(projectRoot string) (Config, error) {
 	return cfg, nil
 }
 
-// Save writes the config to <projectRoot>/config.yaml with stable formatting.
+// Save writes the configuration to <projectRoot>/config.yaml with owner-only permissions.
 func Save(projectRoot string, cfg Config) error {
 	path := filepath.Join(projectRoot, "config.yaml")
 	data, err := yaml.Marshal(cfg)
