@@ -114,10 +114,20 @@ func runPronounce(
 	// chapters are naturally selected. The backup is restored on failure
 	// or deleted on success. The entire new-batch flow runs inside the
 	// guard so any failure (filter, submit, poll) triggers restore.
-	return withResetGuard(ctx, proj, reset, func() error {
+	err = withResetGuard(ctx, proj, reset, func() error {
 		return runPronounceNewBatch(ctx, proj, force, chapter, chRange, pollInt)
 	})
+	if errors.Is(err, errNoPronounceWork) {
+		return nil
+	}
+	return err
 }
+
+// errNoPronounceWork is returned by runPronounceNewBatch when no chapter needs
+// stress marks. It is not a user-facing failure, but it must not look like
+// success to withResetGuard: a --reset run that submits nothing has to restore
+// the wiped vocabulary instead of discarding its backup.
+var errNoPronounceWork = errors.New("no chapters to process")
 
 // runPronounceNewBatch handles the new-batch path: filter chapters, build
 // requests, submit batch, and poll until completion.
@@ -152,7 +162,7 @@ func runPronounceNewBatch(
 	toProcess, skipped := filterPronounceChapters(chs, proj, ids, writeAll, targetLang, force)
 	if len(toProcess) == 0 {
 		slog.Default().InfoContext(ctx, "no chapters to process", "skipped", skipped)
-		return nil
+		return errNoPronounceWork
 	}
 	slog.Default().InfoContext(ctx, "chapters to process", "count", len(toProcess), "skipped", skipped)
 
