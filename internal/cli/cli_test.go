@@ -501,15 +501,15 @@ func TestStripTrailer_TriggerNotInTail(t *testing.T) {
 
 func TestSaveBatchState_UnwritableDir(t *testing.T) {
 	t.Parallel()
-	// Verify that SaveBatchState returns an error when the ai directory
-	// is unwritable. pollBatchUntilTerminal now checks this error and
-	// propagates it instead of discarding it.
+	// Verify that SaveBatchState returns an error when the ai path is not
+	// a directory. Using a regular file instead of restrictive permissions
+	// ensures a deterministic ENOTDIR error on all platforms (including root,
+	// which bypasses directory permission checks).
 	dir := t.TempDir()
 	aiDir := filepath.Join(dir, "ai")
-	if err := os.Mkdir(aiDir, 0o500); err != nil { // read+execute, no write
-		t.Fatalf("mkdir: %v", err)
+	if err := os.WriteFile(aiDir, []byte("not a dir"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(aiDir, 0o700) })
 
 	state := &translation.BatchState{
 		Type:    translation.BatchTypeAnalyze,
@@ -518,6 +518,6 @@ func TestSaveBatchState_UnwritableDir(t *testing.T) {
 	}
 	err := translation.SaveBatchState(aiDir, state)
 	if err == nil {
-		t.Fatal("expected error from SaveBatchState with unwritable dir, got nil")
+		t.Fatal("expected error from SaveBatchState with non-directory ai path, got nil")
 	}
 }

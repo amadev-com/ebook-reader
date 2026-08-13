@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"hash/fnv"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,17 @@ import (
 	"testing"
 	"time"
 )
+
+// chunkMarker returns a 4-byte marker derived from the complete chunk text
+// via FNV-1a. This ensures every chunk has a unique marker even when chunks
+// share a common prefix (e.g. all wrapped in <speak>...</speak>).
+func chunkMarker(text string) []byte {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(text))
+	marker := make([]byte, 4)
+	binary.LittleEndian.PutUint32(marker, h.Sum32())
+	return marker
+}
 
 func TestNewSileroEngine_RequiresServerURL(t *testing.T) {
 	t.Parallel()
@@ -65,9 +77,9 @@ func makeWAV(dataSize int) []byte {
 	binary.LittleEndian.PutUint16(wav[20:22], 1) // PCM
 	binary.LittleEndian.PutUint16(wav[22:24], 1) // mono
 	binary.LittleEndian.PutUint32(wav[24:28], 48000)
-	binary.LittleEndian.PutUint32(wav[28:32], 48000)
-	binary.LittleEndian.PutUint16(wav[32:34], 2)  // block align
-	binary.LittleEndian.PutUint16(wav[34:36], 16) // bits per sample
+	binary.LittleEndian.PutUint32(wav[28:32], 96000) // byte rate = 48000 * 2
+	binary.LittleEndian.PutUint16(wav[32:34], 2)     // block align
+	binary.LittleEndian.PutUint16(wav[34:36], 16)    // bits per sample
 	copy(wav[36:40], []byte("data"))
 	binary.LittleEndian.PutUint32(wav[40:44], uint32(dataSize))
 	return wav
@@ -84,9 +96,9 @@ func makeWAVWithPCM(pcm []byte) []byte {
 	binary.LittleEndian.PutUint16(wav[20:22], 1) // PCM
 	binary.LittleEndian.PutUint16(wav[22:24], 1) // mono
 	binary.LittleEndian.PutUint32(wav[24:28], 48000)
-	binary.LittleEndian.PutUint32(wav[28:32], 48000)
-	binary.LittleEndian.PutUint16(wav[32:34], 2)  // block align
-	binary.LittleEndian.PutUint16(wav[34:36], 16) // bits per sample
+	binary.LittleEndian.PutUint32(wav[28:32], 96000) // byte rate = 48000 * 2
+	binary.LittleEndian.PutUint16(wav[32:34], 2)     // block align
+	binary.LittleEndian.PutUint16(wav[34:36], 16)    // bits per sample
 	copy(wav[36:40], []byte("data"))
 	binary.LittleEndian.PutUint32(wav[40:44], uint32(len(pcm)))
 	copy(wav[44:], pcm)
@@ -569,12 +581,8 @@ func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Derive a marker from the text: first 4 bytes of the text as PCM.
-		marker := []byte(body.Text)
-		if len(marker) < 4 {
-			marker = append(marker, make([]byte, 4-len(marker))...)
-		}
-		marker = marker[:4]
+		// Derive a unique marker from the complete chunk text via FNV-1a.
+		marker := chunkMarker(body.Text)
 		// Delay based on text length so earlier chunks (shorter text from
 		// splitSSML ordering) finish after later chunks.
 		time.Sleep(time.Duration(50+len(body.Text)) * time.Millisecond)
@@ -610,11 +618,7 @@ func TestSileroEngine_ParallelPreservesOrder(t *testing.T) {
 	}
 	var expectedMarkers [][]byte
 	for _, chunk := range chunks {
-		marker := []byte(chunk)
-		if len(marker) < 4 {
-			marker = append(marker, make([]byte, 4-len(marker))...)
-		}
-		expectedMarkers = append(expectedMarkers, marker[:4])
+		expectedMarkers = append(expectedMarkers, chunkMarker(chunk))
 	}
 
 	tmpDir := t.TempDir()
