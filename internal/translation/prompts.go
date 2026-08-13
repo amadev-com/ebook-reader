@@ -208,14 +208,9 @@ Return a JSON object with this exact shape:
 The "type" field for terms must be one of: "place", "organization", "title", "term".
 The "role" field for characters should be one of: "protagonist", "antagonist", "supporting" (or empty if unclear).`
 
-// GlossaryMergeUser builds the user prompt for the merge step. It receives all
-// per-chapter extraction results serialized as JSON, plus the locked terms
-// from config overrides. If existing glossary/characters are provided, they
 // GlossaryMergeUser builds a prompt that merges per-chapter extraction results with existing vocabulary.
 // Locked translations are supplied as mandatory mappings, and existing characters and glossary terms are
 // retained when appropriate. It returns the resulting merge prompt.
-// GlossaryMergeUser builds a prompt for merging per-chapter glossary extraction results into a unified glossary and character list.
-// The prompt may include locked translations and existing vocabulary for the merge.
 func GlossaryMergeUser(
 	perChapterResults string,
 	lockedTerms string,
