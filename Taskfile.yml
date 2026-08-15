@@ -117,14 +117,14 @@ tasks:
       - bookai pronounce --project {{.PROJECT}} --continue
 
   ssml:
-    desc: Generate SSML from translations
+    desc: Generate SSML from translations (auto-stress by default)
     cmds:
       - bookai ssml --project {{.PROJECT}} {{.CLI_ARGS}}
 
-  ssml-auto:
-    desc: Generate SSML with auto-stress (silero-stress model)
+  ssml-stress-json:
+    desc: Generate SSML using ai/stress.json instead of auto-stress
     cmds:
-      - bookai ssml --project {{.PROJECT}} --auto-stress {{.CLI_ARGS}}
+      - bookai ssml --project {{.PROJECT}} --use-stress-json {{.CLI_ARGS}}
 
   tts:
     desc: Synthesize audio from SSML

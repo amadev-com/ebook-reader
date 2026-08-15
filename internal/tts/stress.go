@@ -67,8 +67,8 @@ func LoadStress(aiDir string) (*Stress, error) {
 
 // NewStressFromOverrides builds a Stress store from pronunciation config
 // overrides. Each override becomes a StressEntry. This is used by the
-// --auto-stress flow to apply user-specified corrections on top of the
-// silero-stress model output.
+// SSML flow to apply user-specified corrections on top of either the
+// silero-stress model output or the stress.json vocabulary.
 func NewStressFromOverrides(overrides []StressOverride) *Stress {
 	s := &Stress{}
 	for _, ov := range overrides {
