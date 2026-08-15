@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -98,6 +100,15 @@ func runSSML(
 
 	generated := 0
 	skipped := 0
+
+	// Pre-scan for Latin words in translations that will be processed.
+	// Silero TTS cannot handle Latin characters — they cause crashes or
+	// silence. If found, warn the user and offer to transliterate.
+	transliterate, err := scanLatinWords(ctx, chs, proj, targetLang, ids, writeAll, force)
+	if err != nil {
+		return err
+	}
+
 	var g, s int
 	for _, ch := range chs {
 		g, s, err = processSSMLChapter(
@@ -109,6 +120,7 @@ func runSSML(
 			writeAll,
 			force,
 			autoStress,
+			transliterate,
 			overrides,
 			stressClient,
 			stress,
@@ -122,6 +134,81 @@ func runSSML(
 
 	slog.Default().InfoContext(ctx, "ssml run complete", "generated", generated, "skipped", skipped)
 	return nil
+}
+
+// scanLatinWords pre-scans chapters that will be processed for Latin words.
+// If any are found, it lists them and prompts the user: transliterate (proceed)
+// or abort. Returns true if the user chose to transliterate, false if no Latin
+// words were found.
+func scanLatinWords(
+	ctx context.Context,
+	chs []chapters.Chapter,
+	proj *project.Project,
+	targetLang string,
+	ids map[int]bool,
+	writeAll, force bool,
+) (bool, error) {
+	type chapterLatin struct {
+		chID  int
+		words []string
+	}
+	var found []chapterLatin
+
+	for _, ch := range chs {
+		if !writeAll && !ids[ch.ID] {
+			continue
+		}
+		// Skip chapters that won't be regenerated.
+		ssmlPath := ssmlFilePath(proj.TTSDir(), ch.ID)
+		if project.Exists(ssmlPath) && !force {
+			continue
+		}
+		translationPath := translationPath(proj.TranslationDir(), ch.ID, targetLang)
+		if !project.Exists(translationPath) {
+			continue
+		}
+		data, err := os.ReadFile(translationPath)
+		if err != nil {
+			return false, fmt.Errorf("read translation for chapter %d: %w", ch.ID, err)
+		}
+		words := tts.FindLatinWords(string(data))
+		if len(words) > 0 {
+			found = append(found, chapterLatin{chID: ch.ID, words: words})
+		}
+	}
+
+	if len(found) == 0 {
+		return false, nil
+	}
+
+	// Report.
+	fmt.Fprintf(os.Stdout,
+		"\nFound Latin words in %d chapter(s) — Silero TTS cannot handle Latin characters:\n", len(found))
+	for _, c := range found {
+		fmt.Fprintf(os.Stdout, "  Chapter %d: %s\n", c.chID, strings.Join(c.words, ", "))
+	}
+	fmt.Fprintf(os.Stdout, "\nOptions:\n")
+	fmt.Fprintf(os.Stdout, "  [1] Transliterate Latin words to Cyrillic and proceed\n")
+	fmt.Fprintf(os.Stdout, "  [2] Abort (fix translations first)\n")
+
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Fprintf(os.Stdout, "Choose: ")
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return false, fmt.Errorf("read input: %w", err)
+		}
+		line = strings.TrimSpace(line)
+		switch line {
+		case "1":
+			slog.Default().InfoContext(ctx, "user chose to transliterate Latin words")
+			return true, nil
+		case "2":
+			return false, fmt.Errorf("aborted by user — fix Latin words in translations before proceeding")
+		default:
+			fmt.Fprintf(os.Stdout, "  invalid choice: enter 1 or 2\n")
+		}
+	}
 }
 
 // buildStressOverrides converts config pronunciation overrides into a
@@ -168,7 +255,7 @@ func processSSMLChapter(
 	proj *project.Project,
 	targetLang string,
 	ids map[int]bool,
-	writeAll, force, autoStress bool,
+	writeAll, force, autoStress, transliterate bool,
 	overrides *tts.Stress,
 	stressClient *tts.StressClient,
 	stress *tts.Stress,
@@ -194,7 +281,15 @@ func processSSMLChapter(
 		return 0, 0, fmt.Errorf("read translation for chapter %d: %w", ch.ID, err)
 	}
 
-	processed, err := applyStressToText(ctx, string(text), ch.ID, autoStress, overrides, stressClient, stress)
+	// Transliterate Latin words to Cyrillic if the user chose to proceed
+	// after the Latin word pre-scan.
+	textStr := string(text)
+	if transliterate && tts.HasLatinLetters(textStr) {
+		textStr = tts.TransliterateLatin(textStr)
+		slog.Default().WarnContext(ctx, "transliterated Latin words in translation", "chapter", ch.ID)
+	}
+
+	processed, err := applyStressToText(ctx, textStr, ch.ID, autoStress, overrides, stressClient, stress)
 	if err != nil {
 		return 0, 0, err
 	}

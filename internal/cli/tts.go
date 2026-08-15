@@ -152,6 +152,20 @@ func synthesizeChapter(
 		return 0, 0, fmt.Errorf("read SSML for chapter %d: %w", ch.ID, err)
 	}
 
+	// Hard fail if the SSML contains Latin letters — Silero TTS cannot
+	// handle them and will crash or produce silence. The SSML stage should
+	// have caught and transliterated these; reaching this point means the
+	// SSML was manually edited or the translation was modified after SSML
+	// generation.
+	if tts.HasLatinLetters(string(ssmlContent)) {
+		words := tts.FindLatinWords(string(ssmlContent))
+		return 0, 0, fmt.Errorf(
+			"chapter %d SSML contains Latin letters — Silero TTS cannot handle them: %s; "+
+				"run `bookai ssml --force` to regenerate with transliteration",
+			ch.ID, strings.Join(words, ", "),
+		)
+	}
+
 	slog.Default().InfoContext(ctx, "synthesizing chapter", "id", ch.ID, "title", ch.Title)
 
 	if err = synthesizeAudio(ctx, engine, string(ssmlContent), outPath, audioFormat, proj, ch.ID); err != nil {

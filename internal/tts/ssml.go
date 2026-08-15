@@ -1,6 +1,10 @@
 package tts
 
-import "strings"
+import (
+	"slices"
+	"strings"
+	"unicode"
+)
 
 // GenerateSSML takes plain Russian text (with stress marks already applied)
 // and wraps it in SSML tags for Silero TTS. The text is split into paragraphs
@@ -243,4 +247,96 @@ func latinToCyrillic(r rune) rune {
 		return cyr
 	}
 	return r
+}
+
+// latinToCyrillicPhoneticMap maps Latin letters without visual Cyrillic
+// equivalents to their phonetic equivalents. Used by TransliterateLatin for
+// interactive SSML correction — the user chose to transliterate rather than
+// abort, so we need a best-effort conversion for ALL Latin letters.
+//
+//nolint:gochecknoglobals // immutable lookup table, read-only after init
+var latinToCyrillicPhoneticMap = map[rune]string{
+	'F': "Ф", 'f': "ф",
+	'G': "Г", 'g': "г",
+	'I': "И", 'i': "и",
+	'J': "ДЖ", 'j': "дж",
+	'L': "Л", 'l': "л",
+	'N': "Н", 'n': "н",
+	'Q': "К", 'q': "к",
+	'U': "У", 'u': "у",
+	'W': "В", 'w': "в",
+}
+
+// TransliterateLatin replaces ALL Latin letters in text with Cyrillic
+// equivalents — visual look-alikes from latinToCyrillicMap plus phonetic
+// equivalents from latinToCyrillicPhoneticMap. This is a best-effort
+// conversion for the SSML stage when the user chooses to proceed despite
+// Latin words in the translation.
+func TransliterateLatin(text string) string {
+	var b strings.Builder
+	b.Grow(len(text))
+	for _, r := range text {
+		if cyr, ok := latinToCyrillicMap[r]; ok {
+			b.WriteRune(cyr)
+			continue
+		}
+		if phon, ok := latinToCyrillicPhoneticMap[r]; ok {
+			b.WriteString(phon)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// FindLatinWords returns words in text that contain at least one Latin letter.
+// Words are defined as maximal runs of letters (Unicode L category). Words
+// that are entirely uppercase (acronyms like "DNA", "GPS") are excluded since
+// they are typically intentional. The result is deduplicated and sorted.
+func FindLatinWords(text string) []string {
+	var words []string
+	seen := make(map[string]bool)
+	var current []rune
+
+	flush := func() {
+		if len(current) == 0 {
+			return
+		}
+		word := string(current)
+		current = current[:0]
+		// Skip words without any Latin letters.
+		if !HasLatinLetters(word) {
+			return
+		}
+		// Skip all-uppercase words (acronyms).
+		if word == strings.ToUpper(word) && len(word) > 1 {
+			return
+		}
+		if !seen[word] {
+			seen[word] = true
+			words = append(words, word)
+		}
+	}
+
+	for _, r := range text {
+		if unicode.IsLetter(r) {
+			current = append(current, r)
+		} else {
+			flush()
+		}
+	}
+	flush()
+
+	slices.Sort(words)
+	return words
+}
+
+// HasLatinLetters reports whether text contains any Latin letters (A-Z, a-z).
+func HasLatinLetters(text string) bool {
+	for _, r := range text {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			return true
+		}
+	}
+	return false
 }
