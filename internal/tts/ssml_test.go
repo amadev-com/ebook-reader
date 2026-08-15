@@ -139,3 +139,47 @@ func TestTransliterateLatin(t *testing.T) {
 		})
 	}
 }
+
+func TestStripSSMLTags(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		ssml string
+		want string
+	}{
+		{
+			name: "basic SSML",
+			ssml: "<speak><p><s>Привет мир.</s></p></speak>",
+			want: "Привет мир.",
+		},
+		{
+			name: "multiple paragraphs",
+			ssml: "<speak>\n<p><s>Первый.</s></p>\n<p><s>Второй.</s></p>\n</speak>",
+			want: "\nПервый.\nВторой.\n",
+		},
+		{
+			name: "empty tags",
+			ssml: emptySSML,
+			want: "",
+		},
+		{
+			name: "no tags",
+			ssml: "Простой текст.",
+			want: "Простой текст.",
+		},
+		{
+			name: "nested stress marks preserved",
+			ssml: "<speak><p><s>к+едров</s></p></speak>",
+			want: "к+едров",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := StripSSMLTags(tt.ssml)
+			if got != tt.want {
+				t.Errorf("StripSSMLTags(%q) = %q, want %q", tt.ssml, got, tt.want)
+			}
+		})
+	}
+}

@@ -6,6 +6,9 @@ import (
 	"unicode"
 )
 
+// emptySSML is the SSML output for empty text.
+const emptySSML = "<speak></speak>"
+
 // GenerateSSML takes plain Russian text (with stress marks already applied)
 // and wraps it in SSML tags for Silero TTS. The text is split into paragraphs
 // (by blank lines or single newlines) and sentences (by . ! ? …), then wrapped
@@ -16,7 +19,7 @@ import (
 func GenerateSSML(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return "<speak></speak>"
+		return emptySSML
 	}
 
 	// Sanitize stress marks: remove any + that is not immediately before a
@@ -47,6 +50,28 @@ func GenerateSSML(text string) string {
 		b.WriteString("</p>\n")
 	}
 	b.WriteString("</speak>")
+	return b.String()
+}
+
+// StripSSMLTags removes all XML/SSML tags from text, leaving only the text
+// content. Used to check for Latin letters in SSML without false positives
+// from tag names like <speak>, <p>, <s>.
+func StripSSMLTags(ssml string) string {
+	var b strings.Builder
+	b.Grow(len(ssml))
+	inTag := false
+	for _, r := range ssml {
+		switch r {
+		case '<':
+			inTag = true
+		case '>':
+			inTag = false
+		default:
+			if !inTag {
+				b.WriteRune(r)
+			}
+		}
+	}
 	return b.String()
 }
 
