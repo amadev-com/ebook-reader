@@ -152,12 +152,12 @@ func synthesizeChapter(
 		return 0, 0, fmt.Errorf("read SSML for chapter %d: %w", ch.ID, err)
 	}
 
-	// Hard fail if the SSML text content contains Latin letters — Silero
-	// TTS cannot handle them and will crash or produce silence. XML tags are
-	// stripped first to avoid false positives from tag names like <speak>.
-	// The SSML stage should have caught and transliterated these; reaching
-	// this point means the SSML was manually edited or the translation was
-	// modified after SSML generation.
+	// Hard fail if the SSML text content contains Latin letters or bad
+	// symbols (non-Cyrillic, non-Latin letters like CJK) — Silero TTS cannot
+	// handle them and will crash or produce silence. XML tags are stripped
+	// first to avoid false positives from tag names like <speak>. The SSML
+	// stage should have caught these; reaching this point means the SSML was
+	// manually edited or the translation was modified after SSML generation.
 	ssmlText := tts.StripSSMLTags(string(ssmlContent))
 	if tts.HasLatinLetters(ssmlText) {
 		words := tts.FindLatinWords(ssmlText)
@@ -165,6 +165,14 @@ func synthesizeChapter(
 			"chapter %d SSML contains Latin letters — Silero TTS cannot handle them: %s; "+
 				"run `bookai ssml --force` to regenerate with transliteration",
 			ch.ID, strings.Join(words, ", "),
+		)
+	}
+	if tts.HasBadSymbols(ssmlText) {
+		syms := tts.FindBadSymbols(ssmlText)
+		return 0, 0, fmt.Errorf(
+			"chapter %d SSML contains bad symbols (non-Cyrillic, non-Latin): %s; "+
+				"run `bookai ssml --force` to regenerate with stripping",
+			ch.ID, strings.Join(syms, ", "),
 		)
 	}
 

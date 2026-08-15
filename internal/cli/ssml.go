@@ -105,7 +105,7 @@ func runSSML(
 	// Pre-scan for Latin words in translations that will be processed.
 	// Silero TTS cannot handle Latin characters — they cause crashes or
 	// silence. If found, warn the user and offer to transliterate.
-	transliterate, err := scanLatinWords(ctx, chs, proj, targetLang, ids, writeAll, force)
+	transliterate, err := scanProblematicText(ctx, chs, proj, targetLang, ids, writeAll, force)
 	if err != nil {
 		return err
 	}
@@ -137,11 +137,19 @@ func runSSML(
 	return nil
 }
 
-// scanLatinWords pre-scans chapters that will be processed for Latin words.
-// If any are found, it lists them and prompts the user: transliterate (proceed)
-// or abort. Returns true if the user chose to transliterate, false if no Latin
-// words were found.
-func scanLatinWords(
+// chapterProblems holds Latin words and bad symbols found in one chapter.
+type chapterProblems struct {
+	chID       int
+	words      []string
+	badSymbols []string
+}
+
+// scanProblematicText pre-scans chapters that will be processed for Latin
+// words and bad symbols (non-Cyrillic, non-Latin letters like CJK characters).
+// If any are found, it lists them and prompts the user: transliterate/proceed
+// or abort. Returns true if the user chose to proceed, false if no problems
+// were found.
+func scanProblematicText(
 	ctx context.Context,
 	chs []chapters.Chapter,
 	proj *project.Project,
@@ -149,17 +157,66 @@ func scanLatinWords(
 	ids map[int]bool,
 	writeAll, force bool,
 ) (bool, error) {
-	type chapterLatin struct {
-		chID  int
-		words []string
+	found, err := scanChaptersForProblems(chs, proj, targetLang, ids, writeAll, force)
+	if err != nil {
+		return false, err
 	}
-	var found []chapterLatin
+	if len(found) == 0 {
+		return false, nil
+	}
 
+	// Report.
+	fmt.Fprintf(os.Stdout,
+		"\nFound problematic text in %d chapter(s) — Silero TTS cannot handle these:\n", len(found))
+	for _, c := range found {
+		var parts []string
+		if len(c.words) > 0 {
+			parts = append(parts, "Latin words: "+strings.Join(c.words, ", "))
+		}
+		if len(c.badSymbols) > 0 {
+			parts = append(parts, "bad symbols: "+strings.Join(c.badSymbols, ", "))
+		}
+		fmt.Fprintf(os.Stdout, "  Chapter %d: %s\n", c.chID, strings.Join(parts, "; "))
+	}
+	fmt.Fprintf(os.Stdout, "\nOptions:\n")
+	fmt.Fprintf(os.Stdout, "  [1] Transliterate Latin words and strip bad symbols, then proceed\n")
+	fmt.Fprintf(os.Stdout, "  [2] Abort (fix translations first)\n")
+
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Fprintf(os.Stdout, "Choose: ")
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			return false, fmt.Errorf("read input: %w", readErr)
+		}
+		line = strings.TrimSpace(line)
+		switch line {
+		case "1":
+			slog.Default().InfoContext(ctx, "user chose to transliterate and strip bad symbols")
+			return true, nil
+		case "2":
+			return false, fmt.Errorf("aborted by user — fix problematic text in translations before proceeding")
+		default:
+			fmt.Fprintf(os.Stdout, "  invalid choice: enter 1 or 2\n")
+		}
+	}
+}
+
+// scanChaptersForProblems scans chapters for Latin words and bad symbols.
+// Only chapters that will be processed (matching filter, will be regenerated)
+// are scanned.
+func scanChaptersForProblems(
+	chs []chapters.Chapter,
+	proj *project.Project,
+	targetLang string,
+	ids map[int]bool,
+	writeAll, force bool,
+) ([]chapterProblems, error) {
+	var found []chapterProblems
 	for _, ch := range chs {
 		if !writeAll && !ids[ch.ID] {
 			continue
 		}
-		// Skip chapters that won't be regenerated.
 		ssmlPath := ssmlFilePath(proj.TTSDir(), ch.ID)
 		if project.Exists(ssmlPath) && !force {
 			continue
@@ -170,46 +227,15 @@ func scanLatinWords(
 		}
 		data, err := os.ReadFile(translationPath)
 		if err != nil {
-			return false, fmt.Errorf("read translation for chapter %d: %w", ch.ID, err)
+			return nil, fmt.Errorf("read translation for chapter %d: %w", ch.ID, err)
 		}
 		words := tts.FindLatinWords(string(data))
-		if len(words) > 0 {
-			found = append(found, chapterLatin{chID: ch.ID, words: words})
+		badSyms := tts.FindBadSymbols(string(data))
+		if len(words) > 0 || len(badSyms) > 0 {
+			found = append(found, chapterProblems{chID: ch.ID, words: words, badSymbols: badSyms})
 		}
 	}
-
-	if len(found) == 0 {
-		return false, nil
-	}
-
-	// Report.
-	fmt.Fprintf(os.Stdout,
-		"\nFound Latin words in %d chapter(s) — Silero TTS cannot handle Latin characters:\n", len(found))
-	for _, c := range found {
-		fmt.Fprintf(os.Stdout, "  Chapter %d: %s\n", c.chID, strings.Join(c.words, ", "))
-	}
-	fmt.Fprintf(os.Stdout, "\nOptions:\n")
-	fmt.Fprintf(os.Stdout, "  [1] Transliterate Latin words to Cyrillic and proceed\n")
-	fmt.Fprintf(os.Stdout, "  [2] Abort (fix translations first)\n")
-
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Fprintf(os.Stdout, "Choose: ")
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return false, fmt.Errorf("read input: %w", err)
-		}
-		line = strings.TrimSpace(line)
-		switch line {
-		case "1":
-			slog.Default().InfoContext(ctx, "user chose to transliterate Latin words")
-			return true, nil
-		case "2":
-			return false, fmt.Errorf("aborted by user — fix Latin words in translations before proceeding")
-		default:
-			fmt.Fprintf(os.Stdout, "  invalid choice: enter 1 or 2\n")
-		}
-	}
+	return found, nil
 }
 
 // buildStressOverrides converts config pronunciation overrides into a
@@ -283,12 +309,18 @@ func processSSMLChapter(
 		return 0, 0, fmt.Errorf("read translation for chapter %d: %w", ch.ID, err)
 	}
 
-	// Transliterate Latin words to Cyrillic if the user chose to proceed
-	// after the Latin word pre-scan.
+	// Transliterate Latin words and strip bad symbols if the user chose
+	// to proceed after the problematic text pre-scan.
 	textStr := string(text)
-	if transliterate && tts.HasLatinLetters(textStr) {
-		textStr = tts.TransliterateLatin(textStr)
-		slog.Default().WarnContext(ctx, "transliterated Latin words in translation", "chapter", ch.ID)
+	if transliterate {
+		if tts.HasLatinLetters(textStr) {
+			textStr = tts.TransliterateLatin(textStr)
+			slog.Default().WarnContext(ctx, "transliterated Latin words in translation", "chapter", ch.ID)
+		}
+		if tts.HasBadSymbols(textStr) {
+			textStr = tts.StripBadSymbols(textStr)
+			slog.Default().WarnContext(ctx, "stripped bad symbols in translation", "chapter", ch.ID)
+		}
 	}
 
 	processed, err := applyStressToText(ctx, textStr, ch.ID, autoStress, overrides, stressClient, stress)

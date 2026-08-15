@@ -439,3 +439,67 @@ func HasLatinLetters(text string) bool {
 	}
 	return false
 }
+
+// isCyrillic reports whether r is a Cyrillic letter.
+func isCyrillic(r rune) bool {
+	return unicode.Is(unicode.Cyrillic, r)
+}
+
+// isBadSymbol reports whether r is a letter that is neither Cyrillic nor
+// Latin — e.g. CJK, Arabic, Hebrew, Greek. These characters break Silero TTS.
+func isBadSymbol(r rune) bool {
+	if !unicode.IsLetter(r) {
+		return false
+	}
+	if isCyrillic(r) {
+		return false
+	}
+	if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+		return false
+	}
+	return true
+}
+
+// HasBadSymbols reports whether text contains any letters that are neither
+// Cyrillic nor Latin (e.g. CJK, Arabic, Hebrew, Greek).
+func HasBadSymbols(text string) bool {
+	for _, r := range text {
+		if isBadSymbol(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// FindBadSymbols returns the non-Cyrillic, non-Latin letters found in text,
+// deduplicated and sorted. These are characters that break Silero TTS (e.g.
+// CJK characters accidentally inserted by the translation model).
+func FindBadSymbols(text string) []string {
+	seen := make(map[rune]bool)
+	var symbols []rune
+	for _, r := range text {
+		if isBadSymbol(r) && !seen[r] {
+			seen[r] = true
+			symbols = append(symbols, r)
+		}
+	}
+	slices.Sort(symbols)
+	result := make([]string, len(symbols))
+	for i, r := range symbols {
+		result[i] = string(r)
+	}
+	return result
+}
+
+// StripBadSymbols removes letters that are neither Cyrillic nor Latin from
+// text. Non-letter characters (punctuation, digits, whitespace) are preserved.
+func StripBadSymbols(text string) string {
+	var b strings.Builder
+	b.Grow(len(text))
+	for _, r := range text {
+		if !isBadSymbol(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}

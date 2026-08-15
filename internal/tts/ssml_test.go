@@ -183,3 +183,74 @@ func TestStripSSMLTags(t *testing.T) {
 		})
 	}
 }
+
+func TestHasBadSymbols(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"pure Cyrillic", "Привет мир", false},
+		{"Latin only", "Hello world", false},
+		{"Cyrillic + Latin", "Привет Hello", false},
+		{"CJK character", "тоже忙но", true},
+		{"punctuation only", "— ..., !?", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := HasBadSymbols(tt.text); got != tt.want {
+				t.Errorf("HasBadSymbols(%q) = %v, want %v", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFindBadSymbols(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"pure Cyrillic", "Привет мир", nil},
+		{"single CJK", "тоже忙но", []string{"忙"}},
+		{"multiple bad symbols", "test中 и 文", []string{"中", "文"}},
+		{"no bad symbols", "Hello мир", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := FindBadSymbols(tt.text)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("FindBadSymbols(%q) = %v, want %v", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStripBadSymbols(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"pure Cyrillic unchanged", "Привет мир", "Привет мир"},
+		{"CJK stripped", "тоже忙но", "тожено"},
+		{"multiple CJK stripped", "test中 и 文", "test и "},
+		{"no bad symbols", "Hello мир", "Hello мир"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := StripBadSymbols(tt.text)
+			if got != tt.want {
+				t.Errorf("StripBadSymbols(%q) = %q, want %q", tt.text, got, tt.want)
+			}
+		})
+	}
+}
