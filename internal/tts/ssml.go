@@ -267,15 +267,67 @@ var latinToCyrillicPhoneticMap = map[rune]string{
 	'W': "В", 'w': "в",
 }
 
+// latinLetterSpellingMap maps uppercase Latin letters to their Russian
+// spelling pronunciation — how the letter is read aloud when spelling an
+// acronym (e.g. "DNA" → "ДЭ Н А"). This ensures Silero pronounces acronyms
+// correctly instead of trying to read them as visual look-alikes.
+//
+//nolint:gochecknoglobals // immutable lookup table, read-only after init
+var latinLetterSpellingMap = map[rune]string{
+	'A': "А", 'B': "БЭ", 'C': "ЦЭ", 'D': "ДЭ",
+	'E': "Е", 'F': "ЭФ", 'G': "ГЭ", 'H': "АШ",
+	'I': "И", 'J': "ДЖИ", 'K': "КА", 'L': "ЭЛЬ",
+	'M': "ЭМ", 'N': "ЭН", 'O': "О", 'P': "ПЭ",
+	'Q': "КУ", 'R': "ЭР", 'S': "ЭС", 'T': "ТЭ",
+	'U': "У", 'V': "ВЭ", 'W': "ДАБЛЮ", 'X': "ИКС",
+	'Y': "УАЙ", 'Z': "ЗЭД",
+}
+
+// minAcronymLen is the minimum length for a word to be treated as an acronym
+// (all-uppercase Latin words shorter than this are transliterated normally).
+const minAcronymLen = 2
+
 // TransliterateLatin replaces ALL Latin letters in text with Cyrillic
-// equivalents — visual look-alikes from latinToCyrillicMap plus phonetic
-// equivalents from latinToCyrillicPhoneticMap. This is a best-effort
-// conversion for the SSML stage when the user chooses to proceed despite
-// Latin words in the translation.
+// equivalents. All-uppercase Latin words (acronyms like "DNA", "GPS") are
+// spelled out letter-by-letter using Russian letter pronunciations so Silero
+// reads them correctly. Other Latin words are converted via visual look-alikes
+// from latinToCyrillicMap plus phonetic equivalents from
+// latinToCyrillicPhoneticMap. This is a best-effort conversion for the SSML
+// stage when the user chooses to proceed despite Latin words in the translation.
 func TransliterateLatin(text string) string {
 	var b strings.Builder
 	b.Grow(len(text))
+	var current []rune
+
+	flushWord := func() {
+		if len(current) == 0 {
+			return
+		}
+		b.WriteString(transliterateWord(string(current)))
+		current = current[:0]
+	}
+
 	for _, r := range text {
+		if unicode.IsLetter(r) {
+			current = append(current, r)
+		} else {
+			flushWord()
+			b.WriteRune(r)
+		}
+	}
+	flushWord()
+	return b.String()
+}
+
+// transliterateWord converts a single word to Cyrillic. All-uppercase Latin
+// words (acronyms) are spelled out letter-by-letter; other words use visual
+// and phonetic look-alikes.
+func transliterateWord(word string) string {
+	if isLatinAcronym(word) {
+		return spellAcronym(word)
+	}
+	var b strings.Builder
+	for _, r := range word {
 		if cyr, ok := latinToCyrillicMap[r]; ok {
 			b.WriteRune(cyr)
 			continue
@@ -289,10 +341,36 @@ func TransliterateLatin(text string) string {
 	return b.String()
 }
 
+// spellAcronym spells out an all-uppercase Latin word letter-by-letter using
+// Russian letter pronunciations, separated by spaces.
+func spellAcronym(word string) string {
+	var b strings.Builder
+	for _, r := range word {
+		if spell, ok := latinLetterSpellingMap[r]; ok {
+			b.WriteString(spell)
+			b.WriteByte(' ')
+		}
+	}
+	return b.String()
+}
+
+// isLatinAcronym reports whether word is an all-uppercase Latin word with
+// length >= minAcronymLen (e.g. "DNA", "GPS", "HP").
+func isLatinAcronym(word string) bool {
+	if len(word) < minAcronymLen {
+		return false
+	}
+	for _, r := range word {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
 // FindLatinWords returns words in text that contain at least one Latin letter.
-// Words are defined as maximal runs of letters (Unicode L category). Words
-// that are entirely uppercase (acronyms like "DNA", "GPS") are excluded since
-// they are typically intentional. The result is deduplicated and sorted.
+// Words are defined as maximal runs of letters (Unicode L category). The result
+// is deduplicated and sorted.
 func FindLatinWords(text string) []string {
 	var words []string
 	seen := make(map[string]bool)
@@ -306,10 +384,6 @@ func FindLatinWords(text string) []string {
 		current = current[:0]
 		// Skip words without any Latin letters.
 		if !HasLatinLetters(word) {
-			return
-		}
-		// Skip all-uppercase words (acronyms).
-		if word == strings.ToUpper(word) && len(word) > 1 {
 			return
 		}
 		if !seen[word] {

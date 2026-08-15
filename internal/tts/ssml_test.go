@@ -28,9 +28,9 @@ func TestFindLatinWords(t *testing.T) {
 			want: []string{"Boneclaw", "troublemakerом"},
 		},
 		{
-			name: "acronym excluded",
+			name: "acronym included",
 			text: "ДНК и GPS — это акронимы.",
-			want: nil,
+			want: []string{"GPS"},
 		},
 		{
 			name: "mixed case Latin word",
@@ -112,6 +112,21 @@ func TestTransliterateLatin(t *testing.T) {
 			name: "preserves non-letter characters",
 			text: "test! 123",
 			want: "тест! 123",
+		},
+		{
+			name: "acronym spelled out",
+			text: "DNA",
+			want: "ДЭ ЭН А ",
+		},
+		{
+			name: "acronym in sentence",
+			text: "У него GPS навигатор.",
+			want: "У него ГЭ ПЭ ЭС  навигатор.",
+		},
+		{
+			name: "single Latin letter not acronym",
+			text: "класс A",
+			want: "класс А",
 		},
 	}
 	for _, tt := range tests {
