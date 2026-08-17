@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -84,6 +85,7 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 
 	synthesized := 0
 	skipped := 0
+	startTime := time.Now()
 	var s, sk int
 	for _, ch := range chs {
 		if ctx.Err() != nil {
@@ -109,6 +111,12 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 	}
 
 	slog.Default().InfoContext(ctx, "TTS run complete", "synthesized", synthesized, "skipped", skipped)
+
+	// Verify Docker logs for Silero warnings (best-effort, only for silero-http).
+	if engine.Name() == "silero-http" {
+		verifyDockerLogs(ctx, proj, chs, startTime, synthesized)
+	}
+
 	return nil
 }
 

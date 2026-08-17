@@ -2,8 +2,6 @@
 
 A local, file-based batch pipeline that turns an EPUB into a consistently-translated, glossary-backed audiobook.
 
-> **Status: Milestone 3 complete.** EPUB import, chapter detection, glossary extraction, translation, SSML generation with stress marks, and Silero text-to-speech are implemented.
-
 ## How it works
 
 Each book lives in its own **project directory**. The filesystem is the database — every stage reads the previous stage's files and writes its own. Stages are idempotent: rerunning skips existing artifacts unless `--force` is passed.
@@ -24,10 +22,10 @@ ai/          (glossary.json, characters.json)
 translation/ + memory/   (chapter_NNN.ru.txt, chapter_NNN.summary.txt)
         │  5. bookai verify-glossary    ← optional QA check
         ▼
-        │  6. bookai pronounce          ← requires OPENAI_API_KEY (Batch API)
+        │  6. bookai pronounce          ← optional, requires OPENAI_API_KEY (Batch API)
         ▼
-ai/          (stress_NNN.json per chapter → merged into stress.json)
-        │  7. bookai ssml               ← local: apply stress marks + wrap in SSML
+ai/          (stress.json)
+        │  7. bookai ssml               ← auto-stress by default (TTS server) or --use-stress-json
         ▼
 tts/         (chapter_NNN.ssml)
         │  8. bookai tts                ← requires Silero TTS server (Docker)
@@ -116,8 +114,8 @@ A `Taskfile.yml` is provided with all common commands. [Install task](https://ta
 | `task verify-glossary` | Scan for untranslated terms |
 | `task pronounce` | Generate stress marks (Batch API) |
 | `task pronounce-continue` | Resume interrupted pronounce batch |
-| `task ssml` | Generate SSML from translations |
-| `task ssml-auto` | Generate SSML with silero-stress auto-stress |
+| `task ssml` | Generate SSML from translations (auto-stress by default) |
+| `task ssml-stress-json` | Generate SSML using ai/stress.json instead of auto-stress |
 | `task tts` | Synthesize audio from SSML |
 
 Pass extra args to pipeline tasks with `--`:
@@ -240,11 +238,13 @@ bookai verify-glossary -p my-vampire-system
 
 Scans translations for untranslated English glossary terms. Writes `ai/glossary_violations.json`.
 
-### Step 6 — Generate stress marks
+### Step 6 — Generate stress marks (optional)
 
 ```bash
 bookai pronounce -p my-vampire-system
 ```
+
+> **Note:** This step is optional. By default, `bookai ssml` uses the silero-stress model on the TTS server for automatic stress placement. Only run `pronounce` if you want to use `--use-stress-json` with `bookai ssml`, or if you want to review and lock stress marks via the OpenAI Batch API.
 
 Scans each chapter's translation via the **OpenAI Batch API** for words with non-obvious or ambiguous stress. One batch item per chapter — the model sees the full chapter text and returns a list of {term, stressed} pairs using the Silero stress mark convention: a `+` before the stressed vowel (e.g., `кедров` → `к+едров`). Per-chapter results are saved to `ai/stress_NNN.json`, then merged into a single global `ai/stress.json` vocabulary. If the same term has different stress marks across chapters, you'll be prompted to resolve the conflict interactively. Config `pronunciation` overrides are passed to the model. Flags: `--force`, `--continue`, `--reset`, `--range M-N`, `--poll-interval N`.
 
@@ -256,13 +256,29 @@ Scans each chapter's translation via the **OpenAI Batch API** for words with non
 bookai ssml -p my-vampire-system
 ```
 
-Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (SSML with stress marks applied). Stress marks from the global `ai/stress.json` are applied to the text, then the text is wrapped in SSML tags (`<speak>`, `<p>`, `<s>`) for Silero TTS. This is local processing — no AI or network needed. Flags: `--force`, `--chapter N`, `--range M-N`.
+Converts each `translation/chapter_NNN.ru.txt` into `tts/chapter_NNN.ssml` (SSML with stress marks applied). By default, the **silero-stress model** on the TTS server applies stress marks — text is split into sentences and sent to `POST /api/stress`, which handles homograph disambiguation within sentence context. No `pronounce` step needed. Config `pronunciation` overrides are always applied on top. The text is then wrapped in SSML tags (`<speak>`, `<p>`, `<s>`) for Silero TTS. Requires `tts.server_url` in config and the TTS server to be running.
 
-**Auto-stress mode:** With `--auto-stress`, the silero-stress model on the TTS server is used instead of `ai/stress.json` — no `pronounce` step needed. The text is split into sentences and sent to the TTS server's `POST /api/stress` endpoint, which applies stress placement with homograph disambiguation. Config `pronunciation` overrides are always applied on top. Requires `tts.server_url` in config and the TTS server to be running.
+**Using ai/stress.json instead:** With `--use-stress-json`, stress marks from the global `ai/stress.json` (built by `bookai pronounce`) are applied via greedy longest-match text replacement instead of the silero-stress model. This is local processing — no network needed beyond loading the file.
 
 ```bash
-bookai ssml -p my-vampire-system --auto-stress    # use silero-stress model
+bookai ssml -p my-vampire-system --use-stress-json    # use ai/stress.json
 ```
+
+**Latin word detection:** Before processing, the command scans all chapters for Latin words or bad symbols (non-Cyrillic, non-Latin letters like CJK) that the translation model may have left behind (e.g. "infusedирована", "Boneclaw"). If any are found, it lists them per chapter and prompts:
+
+```
+Found problematic text in 2 chapter(s) — Silero TTS cannot handle these:
+  Chapter 557: Latin words: infusedирована
+  Chapter 659: bad symbols: 忙
+
+Options:
+  [1] Transliterate Latin words and strip bad symbols, then proceed
+  [2] Abort (fix translations first)
+```
+
+Option [1] transliterates Latin words to Cyrillic (visual look-alikes + phonetic equivalents; all-uppercase acronyms are spelled out letter-by-letter) and strips bad symbols. Option [2] aborts so you can fix the translations first.
+
+Flags: `--force`, `--chapter N`, `--range M-N`, `--use-stress-json`.
 
 ### Step 8 — Synthesize audio
 
@@ -271,6 +287,10 @@ bookai tts -p my-vampire-system
 ```
 
 Synthesizes each `tts/chapter_NNN.ssml` into `audio/chapter_NNN.mp3` (128kbps mono) via the Silero TTS server. The engine sends SSML text with `ssml: true` to the server's `POST /api/tts` endpoint. Long chapters are split into chunks under 900 characters; with `tts.parallel > 1` (default 1), chunks are synthesized concurrently and concatenated in order. Engines produce WAV internally; the CLI converts to MP3 via ffmpeg. To output WAV instead, set `tts.audio_format: wav` in `config.yaml`.
+
+**Pre-synthesis check:** Hard-fails if SSML text content contains Latin letters or bad symbols (non-Cyrillic, non-Latin) — Silero cannot handle them and would crash or produce silence. The SSML stage should have caught these; if you hit this error, run `bookai ssml --force` to regenerate with transliteration/stripping.
+
+**Post-synthesis verification:** After all chapters are synthesized, the command queries the Silero Docker container logs for `[WARN]`/`[ERROR]` entries generated during the run, matches them to chapters by text snippets, and reports any chapters that had server-side warnings (e.g. SSML parsing failures that produce silence instead of audio). Best-effort: silently skips if Docker is unavailable.
 
 ### Check progress at any time
 

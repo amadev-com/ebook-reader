@@ -103,20 +103,16 @@ func runVerifyGlossary(ctx context.Context, proj *project.Project) error {
 
 	// Report.
 	if len(violations) == 0 {
-		fmt.Fprintf(
-			os.Stdout,
-			"No violations found. All %d glossary terms are consistently translated across %d chapters.\n",
-			len(glossary.Terms),
-			len(translatedIDs),
-		)
+		slog.Default().InfoContext(ctx, "no glossary violations found",
+			"terms", len(glossary.Terms), "chapters", len(translatedIDs))
 		return nil
 	}
 
-	fmt.Fprintf(os.Stdout, "Found %d glossary violation(s) across %d translated chapters:\n\n",
-		len(violations), len(translatedIDs))
+	slog.Default().WarnContext(ctx, "glossary violations found",
+		"violation_count", len(violations), "chapter_count", len(translatedIDs))
 	for _, v := range violations {
-		fmt.Fprintf(os.Stdout, "  Chapter %d: %q appears untranslated (should be %q)\n",
-			v.ChapterID, v.SourceTerm, v.ExpectedTarget)
+		slog.Default().WarnContext(ctx, "glossary term appears untranslated",
+			"chapter", v.ChapterID, "source_term", v.SourceTerm, "expected_target", v.ExpectedTarget)
 	}
 
 	// Write violations to ai/glossary_violations.json for review.
@@ -124,7 +120,7 @@ func runVerifyGlossary(ctx context.Context, proj *project.Project) error {
 	if err = project.SaveJSON(violationsPath, violations); err != nil {
 		return fmt.Errorf("write violations: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "\nViolations written to %s\n", violationsPath)
+	slog.Default().InfoContext(ctx, "violations written to file", "path", violationsPath)
 	return nil
 }
 
