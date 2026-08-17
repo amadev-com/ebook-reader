@@ -240,3 +240,84 @@ func TestBasename(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitByTOCWithStartID(t *testing.T) {
+	t.Parallel()
+	in := SplitInput{
+		StartID: 700,
+		Spine: []SpineItem{
+			makeSpineItem("ch1", "chapter1.html", h(2, "Chapter 701: Beginnings", "ch1"), p("Best of times")),
+			makeSpineItem("ch2", "chapter2.html", h(2, "Chapter 702: Endings", "ch2"), p("The end")),
+		},
+		TOC: []epub.TOCEntry{
+			{Title: "Chapter 701: Beginnings", SrcFile: "chapter1.html", Order: 1},
+			{Title: "Chapter 702: Endings", SrcFile: "chapter2.html", Order: 2},
+		},
+	}
+	res, err := SplitByTOC(in)
+	if err != nil {
+		t.Fatalf("SplitByTOC: %v", err)
+	}
+	if len(res.Chapters) != 2 {
+		t.Fatalf("Chapters length = %d, want 2", len(res.Chapters))
+	}
+	if res.Chapters[0].ID != 701 {
+		t.Errorf("Chapters[0].ID = %d, want 701", res.Chapters[0].ID)
+	}
+	if res.Chapters[1].ID != 702 {
+		t.Errorf("Chapters[1].ID = %d, want 702", res.Chapters[1].ID)
+	}
+	if res.Index.StartID != 700 {
+		t.Errorf("Index.StartID = %d, want 700", res.Index.StartID)
+	}
+}
+
+func TestSplitByHeadingsWithStartID(t *testing.T) {
+	t.Parallel()
+	in := SplitInput{
+		StartID: 700,
+		Spine: []SpineItem{
+			makeSpineItem("all", "all.html",
+				h(2, "Chapter 701: Beginnings", "ch1"), p("Text 1"),
+				h(2, "Chapter 702: Endings", "ch2"), p("Text 2"),
+			),
+		},
+	}
+	res, err := SplitByHeadings(in)
+	if err != nil {
+		t.Fatalf("SplitByHeadings: %v", err)
+	}
+	if len(res.Chapters) != 2 {
+		t.Fatalf("Chapters length = %d, want 2", len(res.Chapters))
+	}
+	if res.Chapters[0].ID != 701 {
+		t.Errorf("Chapters[0].ID = %d, want 701", res.Chapters[0].ID)
+	}
+	if res.Chapters[1].ID != 702 {
+		t.Errorf("Chapters[1].ID = %d, want 702", res.Chapters[1].ID)
+	}
+}
+
+func TestSplitPerItemWithStartID(t *testing.T) {
+	t.Parallel()
+	in := SplitInput{
+		StartID: 700,
+		Spine: []SpineItem{
+			makeSpineItem("ch1", "chapter1.html", h(2, "Chapter 701", "ch1"), p("Text 1")),
+			makeSpineItem("ch2", "chapter2.html", h(2, "Chapter 702", "ch2"), p("Text 2")),
+		},
+	}
+	res, err := SplitPerItem(in)
+	if err != nil {
+		t.Fatalf("SplitPerItem: %v", err)
+	}
+	if len(res.Chapters) != 2 {
+		t.Fatalf("Chapters length = %d, want 2", len(res.Chapters))
+	}
+	if res.Chapters[0].ID != 701 {
+		t.Errorf("Chapters[0].ID = %d, want 701", res.Chapters[0].ID)
+	}
+	if res.Chapters[1].ID != 702 {
+		t.Errorf("Chapters[1].ID = %d, want 702", res.Chapters[1].ID)
+	}
+}

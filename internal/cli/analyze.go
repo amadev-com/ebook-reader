@@ -240,7 +240,7 @@ func submitAnalyzeBatch(
 // filterChapters applies the --chapter/--range filter to the chapter list.
 // If no filter is set, all chapters are returned unchanged.
 func filterChapters(chs []chapters.Chapter, chapter int, chRange string) ([]chapters.Chapter, error) {
-	ids, err := parseChapterFilter(chapter, chRange, len(chs))
+	ids, err := parseChapterFilter(chapter, chRange, len(chs), chs[0].ID-1)
 	if err != nil && !errors.Is(err, errNoChapterFilter) {
 		return nil, err
 	}
@@ -794,7 +794,8 @@ func loadAllChapters(proj *project.Project) ([]chapters.Chapter, error) {
 		return nil, fmt.Errorf("load chapter index: %w", err)
 	}
 	var all []chapters.Chapter
-	for id := 1; id <= idx.ChapterCount; id++ {
+	for i := range idx.ChapterCount {
+		id := idx.StartID + i + 1
 		path := filepath.Join(proj.ChaptersDir(), fmt.Sprintf("chapter_%03d.json", id))
 		var ch chapters.Chapter
 		if err := project.LoadJSON(path, &ch); err != nil {

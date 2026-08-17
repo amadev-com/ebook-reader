@@ -41,6 +41,7 @@ Project layout: `cmd/bookai` (binary) + `internal/{epub,chapters,project,config,
 - TTS: swappable Engine interface (`internal/tts/engine.go`). Default "noop" engine for pipeline testing. `silero-http` engine for real Silero TTS via Docker server. (M3)
 - `bookai import <epub> [name]` auto-creates a project dir (slugified name) in CWD, writes default `config.yaml`, copies EPUB. Other commands use `-p`/`--project` flag (defaults to CWD).
 - Chapter classifier: rules-only in M1 (AI fallback designed but not wired).
+- Chapter IDs: assigned sequentially starting at `StartID+1` (default 0 → IDs 1..N). For a second volume, set `--start-id 700` (or `chapters.start_id: 700` in config) so IDs match actual chapter numbers (701-1400). The `StartID` is persisted in `chapters/_index.json` and used by all downstream commands to compute the valid ID range for `--chapter`/`--range` filters.
 
 ## Milestone 1 — COMPLETE
 

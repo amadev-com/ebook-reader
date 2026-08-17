@@ -115,7 +115,7 @@ func runTranslate(
 	}
 
 	// Determine which chapters to translate.
-	ids, err := parseChapterFilter(chapter, chRange, len(chs))
+	ids, err := parseChapterFilter(chapter, chRange, len(chs), chs[0].ID-1)
 	if err != nil && !errors.Is(err, errNoChapterFilter) {
 		return err
 	}

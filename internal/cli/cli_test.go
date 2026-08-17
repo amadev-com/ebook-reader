@@ -143,7 +143,7 @@ func TestRunImportAndAnalyzeChapters(t *testing.T) {
 	}
 
 	// Analyze chapters.
-	if err = runAnalyzeChapters(t.Context(), proj, true, 0, "", "", nil); err != nil {
+	if err = runAnalyzeChapters(t.Context(), proj, true, 0, "", "", nil, 0); err != nil {
 		t.Fatalf("runAnalyzeChapters: %v", err)
 	}
 	// Expect 2 chapters (cover skipped).
@@ -213,7 +213,7 @@ func TestRunAnalyzeChaptersRequiresImport(t *testing.T) {
 		t.Fatalf("EnsureDirs: %v", err)
 	}
 	// No import done yet -> analyze-chapters should fail with a clear message.
-	err = runAnalyzeChapters(t.Context(), proj, true, 0, "", "", nil)
+	err = runAnalyzeChapters(t.Context(), proj, true, 0, "", "", nil, 0)
 	if err == nil {
 		t.Fatal("analyze-chapters without import succeeded, want error")
 	}
@@ -222,19 +222,19 @@ func TestRunAnalyzeChaptersRequiresImport(t *testing.T) {
 func TestParseChapterFilter(t *testing.T) {
 	t.Parallel()
 	// No filter -> errNoChapterFilter (write all).
-	got, err := parseChapterFilter(0, "", 10)
+	got, err := parseChapterFilter(0, "", 10, 0)
 	if !errors.Is(err, errNoChapterFilter) || got != nil {
 		t.Errorf("no filter: got %v, %v; want nil, errNoChapterFilter", got, err)
 	}
 	// Single chapter.
-	if got, err = parseChapterFilter(3, "", 10); err != nil {
+	if got, err = parseChapterFilter(3, "", 10, 0); err != nil {
 		t.Fatalf("chapter 3: %v", err)
 	}
 	if len(got) != 1 || !got[3] {
 		t.Errorf("chapter 3: got %v, want {3:true}", got)
 	}
 	// Range.
-	if got, err = parseChapterFilter(0, "2-5", 10); err != nil {
+	if got, err = parseChapterFilter(0, "2-5", 10, 0); err != nil {
 		t.Fatalf("range 2-5: %v", err)
 	}
 	for i := 2; i <= 5; i++ {
@@ -246,15 +246,47 @@ func TestParseChapterFilter(t *testing.T) {
 		t.Errorf("range 2-5: ids outside range set: %v", got)
 	}
 	// Out of range.
-	if _, err = parseChapterFilter(11, "", 10); err == nil {
+	if _, err = parseChapterFilter(11, "", 10, 0); err == nil {
 		t.Error("chapter 11 with max 10 should error")
 	}
-	if _, err = parseChapterFilter(0, "1-11", 10); err == nil {
+	if _, err = parseChapterFilter(0, "1-11", 10, 0); err == nil {
 		t.Error("range 1-11 with max 10 should error")
 	}
 	// Bad range format.
-	if _, err = parseChapterFilter(0, "abc", 10); err == nil {
+	if _, err = parseChapterFilter(0, "abc", 10, 0); err == nil {
 		t.Error("range 'abc' should error")
+	}
+}
+
+func TestParseChapterFilterWithStartID(t *testing.T) {
+	t.Parallel()
+	// startID=700 → valid range is 701-1400.
+	// Single chapter in range.
+	got, err := parseChapterFilter(701, "", 700, 700)
+	if err != nil {
+		t.Fatalf("chapter 701: %v", err)
+	}
+	if !got[701] {
+		t.Errorf("chapter 701: got %v, want {701:true}", got)
+	}
+	// Range within bounds.
+	if got, err = parseChapterFilter(0, "701-800", 700, 700); err != nil {
+		t.Fatalf("range 701-800: %v", err)
+	}
+	if !got[701] || !got[800] || got[700] || got[801] {
+		t.Errorf("range 701-800: unexpected set %v", got)
+	}
+	// Out of range — below lower bound.
+	if _, err = parseChapterFilter(700, "", 700, 700); err == nil {
+		t.Error("chapter 700 with startID 700 should error (range 701-1400)")
+	}
+	// Out of range — above upper bound.
+	if _, err = parseChapterFilter(1401, "", 700, 700); err == nil {
+		t.Error("chapter 1401 with startID 700 should error (range 701-1400)")
+	}
+	// Range out of bounds.
+	if _, err = parseChapterFilter(0, "700-800", 700, 700); err == nil {
+		t.Error("range 700-800 with startID 700 should error (lower bound 701)")
 	}
 }
 

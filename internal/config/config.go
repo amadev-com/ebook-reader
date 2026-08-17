@@ -62,6 +62,9 @@ type Chapters struct {
 	// 400 chars of a chapter, everything from the last "***" separator before
 	// the trigger to the end is removed.
 	Strip []string `yaml:"strip"`
+	// StartID is the first chapter ID to assign (default 0 → IDs start at 1).
+	// Set to e.g. 700 for a second volume whose chapters continue from 701.
+	StartID int `yaml:"start_id"`
 }
 
 // GlossaryOverrides holds user-specified translation overrides.

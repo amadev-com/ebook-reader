@@ -65,6 +65,7 @@ type SkippedSection struct {
 // Index is the chapters/_index.json artifact summarizing the analyze run.
 type Index struct {
 	ChapterCount int      `json:"chapter_count"`
+	StartID      int      `json:"start_id,omitempty"` // first chapter ID (default 0 → 1)
 	Strategy     Strategy `json:"strategy"`
 	Warnings     []string `json:"warnings,omitempty"`
 }
@@ -82,6 +83,9 @@ type SpineItem struct {
 type SplitInput struct {
 	Spine []SpineItem
 	TOC   []epub.TOCEntry
+	// StartID is the first chapter ID to assign (default 0 → IDs start at 1).
+	// Set to e.g. 700 for a second volume whose chapters continue from 701.
+	StartID int
 }
 
 // SplitResult is the output of Split: kept chapters + skipped sections + index.
@@ -164,7 +168,7 @@ func SplitByTOC(in SplitInput) (*SplitResult, error) {
 			keptEntries++
 			ch := buildChapterFromTOC(in, i, entry)
 			if ch != nil {
-				ch.ID = keptEntries
+				ch.ID = in.StartID + keptEntries
 				ch.DetectionStrategy = StrategyTOC
 				ch.Status = chapterStatusRaw
 				res.Chapters = append(res.Chapters, *ch)
@@ -199,7 +203,7 @@ func SplitByTOC(in SplitInput) (*SplitResult, error) {
 			})
 		}
 	}
-	res.Index = Index{ChapterCount: len(res.Chapters)}
+	res.Index = Index{ChapterCount: len(res.Chapters), StartID: in.StartID}
 	return res, nil
 }
 
@@ -323,9 +327,9 @@ func SplitByHeadings(in SplitInput) (*SplitResult, error) {
 
 	// Assign sequential IDs.
 	for i := range res.Chapters {
-		res.Chapters[i].ID = i + 1
+		res.Chapters[i].ID = in.StartID + i + 1
 	}
-	res.Index = Index{ChapterCount: len(res.Chapters)}
+	res.Index = Index{ChapterCount: len(res.Chapters), StartID: in.StartID}
 	return res, nil
 }
 
@@ -399,7 +403,7 @@ func SplitPerItem(in SplitInput) (*SplitResult, error) {
 		}
 		id++
 		res.Chapters = append(res.Chapters, Chapter{
-			ID:                id,
+			ID:                in.StartID + id,
 			Title:             title,
 			Source:            blocksToText(si.Blocks),
 			SectionIDs:        []string{si.ID},
@@ -408,7 +412,7 @@ func SplitPerItem(in SplitInput) (*SplitResult, error) {
 			Status:            chapterStatusRaw,
 		})
 	}
-	res.Index = Index{ChapterCount: len(res.Chapters)}
+	res.Index = Index{ChapterCount: len(res.Chapters), StartID: in.StartID}
 	return res, nil
 }
 

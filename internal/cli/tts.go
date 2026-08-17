@@ -59,7 +59,7 @@ func runTTS(ctx context.Context, proj *project.Project, force bool, chapter int,
 		return fmt.Errorf("no chapters found — run `bookai analyze-chapters` first")
 	}
 
-	ids, err := parseChapterFilter(chapter, chRange, len(chs))
+	ids, err := parseChapterFilter(chapter, chRange, len(chs), chs[0].ID-1)
 	if err != nil && !errors.Is(err, errNoChapterFilter) {
 		return err
 	}

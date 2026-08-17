@@ -157,6 +157,14 @@ bookai analyze-chapters -p my-vampire-system
 
 Writes `chapters/chapter_NNN.json` (one per chapter), `chapters/_index.json`, and `chapters/_skipped.json` (non-chapter sections like TOC/notes).
 
+**Continuing from a second volume:** If the book is a continuation (e.g. chapters 701-1400), use `--start-id` so chapter IDs match the actual chapter numbers:
+
+```bash
+bookai analyze-chapters -p my-vampire-system-0701-1400 --start-id 700
+```
+
+This assigns IDs 701-1400 instead of 1-700. All downstream commands (`translate`, `ssml`, `tts`, etc.) automatically detect the ID range from `_index.json`. You can also set `chapters.start_id` in `config.yaml` to avoid passing the flag every time.
+
 If chapters contain promotional text, author notes, or other boilerplate after a `***` separator, strip them with `--strip` (repeatable):
 
 ```bash
@@ -398,6 +406,7 @@ chapters:                         # optional: default --strip patterns for analy
   strip:
     - "For MVS artwork"
     - "Want another mass release"
+  start_id: 0                    # first chapter ID (0 → IDs start at 1; set e.g. 700 for a second volume)
 tts:
   engine: silero-http            # "noop" (default) or "silero-http"
   language: ru

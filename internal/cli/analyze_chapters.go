@@ -41,6 +41,7 @@ func newAnalyzeChaptersCmd() *cobra.Command {
 		chRange  string
 		strategy string
 		strip    []string
+		startID  int
 	)
 	cmd := &cobra.Command{
 		Use:   "analyze-chapters",
@@ -56,7 +57,12 @@ func newAnalyzeChaptersCmd() *cobra.Command {
 			// Merge config defaults with CLI flags: config strip patterns first,
 			// then any additional --strip flags from the command line.
 			allStrip := append(append([]string{}, proj.Cfg.Chapters.Strip...), strip...)
-			return runAnalyzeChapters(ctx, proj, force, chapter, chRange, strategy, allStrip)
+			// --start-id overrides config chapters.start_id if explicitly set.
+			effectiveStartID := proj.Cfg.Chapters.StartID
+			if cmd.Flag("start-id").Changed {
+				effectiveStartID = startID
+			}
+			return runAnalyzeChapters(ctx, proj, force, chapter, chRange, strategy, allStrip, effectiveStartID)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "re-analyze chapters whose JSON already exists")
@@ -65,6 +71,8 @@ func newAnalyzeChaptersCmd() *cobra.Command {
 	cmd.Flags().StringVar(&strategy, "strategy", "", "force detection strategy: toc|heading|per-item")
 	cmd.Flags().
 		StringArrayVar(&strip, "strip", nil, "remove boilerplate trailer from chapter source (repeatable; also see config chapters.strip)")
+	cmd.Flags().
+		IntVar(&startID, "start-id", 0, "first chapter ID to assign (default 1; set e.g. 700 for a second volume starting at 701)")
 	return cmd
 }
 
@@ -76,6 +84,7 @@ func runAnalyzeChapters(
 	chapter int,
 	chRange, strategy string,
 	strip []string,
+	startID int,
 ) error {
 	extractedDir := proj.ExtractedDir()
 	spinePath := filepath.Join(extractedDir, "spine.json")
@@ -88,8 +97,10 @@ func runAnalyzeChapters(
 	if err != nil {
 		return err
 	}
+	in.StartID = startID
 	slog.Default().
-		InfoContext(ctx, "loaded extracted artifacts", "spine_items", len(in.Spine), "toc_entries", len(in.TOC))
+		InfoContext(ctx, "loaded extracted artifacts", "spine_items", len(in.Spine), "toc_entries", len(in.TOC),
+			"start_id", startID)
 
 	// Run the splitter. If --strategy is set, force that single strategy.
 	res, err := splitChapters(in, strategy)
@@ -107,7 +118,7 @@ func runAnalyzeChapters(
 	applyStripFilters(res.Chapters, strip)
 
 	// Determine which chapter ids to write (default: all).
-	ids, err := parseChapterFilter(chapter, chRange, res.Index.ChapterCount)
+	ids, err := parseChapterFilter(chapter, chRange, res.Index.ChapterCount, startID)
 	if err != nil && !errors.Is(err, errNoChapterFilter) {
 		return err
 	}
@@ -116,6 +127,15 @@ func runAnalyzeChapters(
 	chaptersDir := proj.ChaptersDir()
 	if err = os.MkdirAll(chaptersDir, 0o750); err != nil {
 		return fmt.Errorf("create chapters dir: %w", err)
+	}
+
+	// When --force is set and we're writing all chapters, remove stale
+	// chapter_NNN.json files from a previous run that may have used a
+	// different ID range (e.g. old 001-700 vs new 701-1400).
+	if force && writeAll {
+		if err = removeStaleChapters(chaptersDir, res.Chapters); err != nil {
+			return err
+		}
 	}
 
 	written, err := writeChapters(res.Chapters, chaptersDir, ids, writeAll, force)
@@ -159,6 +179,43 @@ func applyStripFilters(chs []chapters.Chapter, strip []string) {
 		}
 	}
 	slog.Default().Info("applied strip filters", "patterns", len(strip), "chapters_modified", stripped)
+}
+
+// removeStaleChapters deletes chapter_NNN.json files from chaptersDir that
+// don't match any chapter ID in chs. This cleans up files from a previous
+// analyze-chapters run that used a different ID range (e.g. old 001-700
+// when re-running with --start-id 700 → new 701-1400).
+func removeStaleChapters(chaptersDir string, chs []chapters.Chapter) error {
+	validIDs := make(map[int]bool, len(chs))
+	for _, ch := range chs {
+		validIDs[ch.ID] = true
+	}
+	entries, err := os.ReadDir(chaptersDir)
+	if err != nil {
+		return fmt.Errorf("read chapters dir: %w", err)
+	}
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Only consider chapter_NNN.json files.
+		var id int
+		if _, scanErr := fmt.Sscanf(name, "chapter_%d.json", &id); scanErr != nil {
+			continue
+		}
+		if !validIDs[id] {
+			if err = os.Remove(filepath.Join(chaptersDir, name)); err != nil {
+				return fmt.Errorf("remove stale chapter %s: %w", name, err)
+			}
+			removed++
+		}
+	}
+	if removed > 0 {
+		slog.Default().Info("removed stale chapter files", "count", removed)
+	}
+	return nil
 }
 
 // writeChapters saves the selected chapters to chaptersDir, skipping those
@@ -246,15 +303,17 @@ func splitWithStrategy(in chapters.SplitInput, s chapters.Strategy) (*chapters.S
 
 // parseChapterFilter interprets --chapter and --range. Returns nil if no
 // filter is set (meaning "all chapters"). Otherwise returns a set keyed by
-// chapter id (1-based).
-func parseChapterFilter(chapter int, chRange string, maxID int) (map[int]bool, error) {
+// chapter id. The valid ID range is [startID+1, startID+count].
+func parseChapterFilter(chapter int, chRange string, count, startID int) (map[int]bool, error) {
 	if chapter == 0 && chRange == "" {
 		return nil, errNoChapterFilter
 	}
+	loBound := startID + 1
+	hiBound := startID + count
 	set := make(map[int]bool)
 	if chapter != 0 {
-		if chapter < 1 || chapter > maxID {
-			return nil, fmt.Errorf("--chapter %d out of range (1-%d)", chapter, maxID)
+		if chapter < loBound || chapter > hiBound {
+			return nil, fmt.Errorf("--chapter %d out of range (%d-%d)", chapter, loBound, hiBound)
 		}
 		set[chapter] = true
 	}
@@ -270,8 +329,8 @@ func parseChapterFilter(chapter int, chRange string, maxID int) (map[int]bool, e
 		if _, err := fmt.Sscanf(parts[1], "%d", &hi); err != nil {
 			return nil, fmt.Errorf("--range upper bound %q is not a number", parts[1])
 		}
-		if lo < 1 || hi > maxID || lo > hi {
-			return nil, fmt.Errorf("--range %d-%d out of range (1-%d)", lo, hi, maxID)
+		if lo < loBound || hi > hiBound || lo > hi {
+			return nil, fmt.Errorf("--range %d-%d out of range (%d-%d)", lo, hi, loBound, hiBound)
 		}
 		for i := lo; i <= hi; i++ {
 			set[i] = true
